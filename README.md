@@ -90,24 +90,20 @@ Download the newest installer from
 The alpha installer is currently unsigned, so Windows SmartScreen may show an
 unknown-publisher warning. Code signing is planned before a wider release.
 
-## Native player requirements
+## Native player
 
-The Standard player works without extra software. The experimental Native player
-requires both:
-
-- [Streamlink](https://streamlink.github.io/install)
-- [mpv](https://mpv.io/installation/)
-
-VioletWire searches common Windows installation locations and `PATH`. Custom
-locations can be supplied with:
+The Windows installer includes pinned, checksum-verified Streamlink and mpv
+runtimes, so the experimental Native player works without installing anything
+else. Custom developer builds can still be supplied with:
 
 ```text
 VIOLETWIRE_STREAMLINK_PATH=C:\path\to\streamlink.exe
 VIOLETWIRE_MPV_PATH=C:\path\to\mpv.exe
 ```
 
-VioletWire currently launches user-installed copies and does **not** bundle or
-redistribute Streamlink or mpv.
+Environment overrides take priority over the bundled runtime. Without an
+override, VioletWire prefers its bundled copies and then falls back to `PATH`
+and common system installation locations.
 
 ## Twitch sign-in
 
@@ -169,8 +165,8 @@ The tag must match the version in `package.json`.
 
 ## Third-party software and attribution
 
-VioletWire invokes Streamlink and mpv as separate executables when the Native
-player is selected.
+VioletWire redistributes and invokes Streamlink and mpv as separate executables
+when the Native player is selected.
 
 - Streamlink is licensed under the
   [BSD 2-Clause License](https://github.com/streamlink/streamlink/blob/master/LICENSE).
@@ -178,8 +174,10 @@ player is selected.
   details are in mpv's
   [Copyright and licensing documentation](https://github.com/mpv-player/mpv/blob/master/Copyright).
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the current integration
-and redistribution boundary.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
+[native runtime source information](third_party/NATIVE_RUNTIME_SOURCES.md) for
+the licenses, exact versions, checksums, build definitions, and corresponding
+source locations.
 
 ## Project license
 

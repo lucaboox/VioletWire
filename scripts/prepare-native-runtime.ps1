@@ -1,0 +1,156 @@
+$ErrorActionPreference = "Stop"
+
+$streamlinkVersion = "8.4.0-1"
+$streamlinkArchiveName = "streamlink-8.4.0-1-py314-x86_64.zip"
+$streamlinkUrl = "https://github.com/streamlink/windows-builds/releases/download/8.4.0-1/$streamlinkArchiveName"
+$streamlinkSha256 = "A8D3BD2B409E6D1B1F7A0E2A5C0CBFBA619775E475DA3F31285AF08D680FB71C"
+
+$mpvVersion = "20260610-git-304426c"
+$mpvArchiveName = "mpv-x86_64-20260610-git-304426c.7z"
+$mpvUrl = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260610/$mpvArchiveName"
+$mpvSha256 = "FACAC536BAA73C7B925771AF5E39A3C9CB16B8D75B59A6E9800DE89799DFFCA7"
+
+$mpvLicenseFiles = @(
+  @{
+    Name = "Copyright"
+    Url = "https://raw.githubusercontent.com/mpv-player/mpv/304426c39/Copyright"
+    Sha256 = "BFE9EE4CCEABCB8ECBFADF208D04156F73D801E6A57369A5606BB8341E204A23"
+  },
+  @{
+    Name = "LICENSE.GPL"
+    Url = "https://raw.githubusercontent.com/mpv-player/mpv/304426c39/LICENSE.GPL"
+    Sha256 = "EDAEF632CBB643E4E7A221717A6C441A4C1A7C918E6E4D56DEBC3D8739B233F6"
+  },
+  @{
+    Name = "LICENSE.LGPL"
+    Url = "https://raw.githubusercontent.com/mpv-player/mpv/304426c39/LICENSE.LGPL"
+    Sha256 = "72B672113D642CBB8EF5DCC76938DB801983C56E50B1400AB930F1A64D6DC8D9"
+  }
+)
+
+$workspace = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$cacheDirectory = Join-Path $workspace ".cache\native-runtime"
+$nativeDirectory = Join-Path $workspace "vendor\native"
+$streamlinkDirectory = Join-Path $nativeDirectory "streamlink"
+$mpvDirectory = Join-Path $nativeDirectory "mpv"
+$manifestPath = Join-Path $nativeDirectory "versions.json"
+$sevenZip = Join-Path $workspace "node_modules\7zip-bin\win\x64\7za.exe"
+
+function Assert-WorkspaceChild([string]$candidate) {
+  $absolute = [System.IO.Path]::GetFullPath($candidate)
+  if (-not $absolute.StartsWith($workspace + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to modify a path outside the workspace: $absolute"
+  }
+}
+
+function Get-VerifiedFile(
+  [string]$url,
+  [string]$destination,
+  [string]$expectedSha256
+) {
+  Assert-WorkspaceChild $destination
+  if (Test-Path -LiteralPath $destination) {
+    $actual = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+    if ($actual -eq $expectedSha256) {
+      return
+    }
+    Remove-Item -LiteralPath $destination -Force
+  }
+
+  $partial = "$destination.partial"
+  if (Test-Path -LiteralPath $partial) {
+    Remove-Item -LiteralPath $partial -Force
+  }
+
+  Write-Host "Downloading $url"
+  Invoke-WebRequest -Uri $url -OutFile $partial
+  $downloadedHash = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash
+  if ($downloadedHash -ne $expectedSha256) {
+    Remove-Item -LiteralPath $partial -Force
+    throw "SHA-256 mismatch for $url. Expected $expectedSha256, received $downloadedHash."
+  }
+  Move-Item -LiteralPath $partial -Destination $destination
+}
+
+function Remove-WorkspaceDirectory([string]$directory) {
+  Assert-WorkspaceChild $directory
+  if (Test-Path -LiteralPath $directory) {
+    Remove-Item -LiteralPath $directory -Recurse -Force
+  }
+}
+
+New-Item -ItemType Directory -Force -Path $cacheDirectory, $nativeDirectory | Out-Null
+
+$streamlinkExecutable = Join-Path $streamlinkDirectory "bin\streamlink.exe"
+$mpvExecutable = Join-Path $mpvDirectory "mpv.exe"
+$expectedManifest = [ordered]@{
+  streamlink = $streamlinkVersion
+  streamlinkFfmpeg = "omitted"
+  mpv = $mpvVersion
+} | ConvertTo-Json
+
+if (
+  (Test-Path -LiteralPath $manifestPath) -and
+  (Test-Path -LiteralPath $streamlinkExecutable) -and
+  (Test-Path -LiteralPath $mpvExecutable) -and
+  ((Get-Content -LiteralPath $manifestPath -Raw).Trim() -eq $expectedManifest.Trim())
+) {
+  Copy-Item -LiteralPath (Join-Path $workspace "third_party\NATIVE_RUNTIME_SOURCES.md") `
+    -Destination (Join-Path $nativeDirectory "NATIVE_RUNTIME_SOURCES.md") -Force
+  Copy-Item -LiteralPath (Join-Path $workspace "THIRD_PARTY_NOTICES.md") `
+    -Destination (Join-Path $nativeDirectory "THIRD_PARTY_NOTICES.md") -Force
+  Write-Host "Bundled native runtime is already prepared."
+  exit 0
+}
+
+if (-not (Test-Path -LiteralPath $sevenZip)) {
+  throw "7zip-bin is missing. Run npm install before preparing the native runtime."
+}
+
+$streamlinkArchive = Join-Path $cacheDirectory $streamlinkArchiveName
+$mpvArchive = Join-Path $cacheDirectory $mpvArchiveName
+Get-VerifiedFile $streamlinkUrl $streamlinkArchive $streamlinkSha256
+Get-VerifiedFile $mpvUrl $mpvArchive $mpvSha256
+
+$streamlinkStaging = Join-Path $nativeDirectory ".streamlink-staging"
+Remove-WorkspaceDirectory $streamlinkStaging
+Remove-WorkspaceDirectory $streamlinkDirectory
+New-Item -ItemType Directory -Force -Path $streamlinkStaging, $streamlinkDirectory | Out-Null
+Expand-Archive -LiteralPath $streamlinkArchive -DestinationPath $streamlinkStaging -Force
+$streamlinkRoot = Get-ChildItem -LiteralPath $streamlinkStaging -Directory | Select-Object -First 1
+if (-not $streamlinkRoot) {
+  throw "The Streamlink portable archive did not contain its expected root directory."
+}
+Get-ChildItem -LiteralPath $streamlinkRoot.FullName -Force |
+  Move-Item -Destination $streamlinkDirectory
+Remove-WorkspaceDirectory $streamlinkStaging
+# Twitch HLS playback does not require Streamlink's optional FFmpeg muxer.
+# mpv decodes the HLS input, so omitting this duplicate saves roughly 200 MB.
+Remove-WorkspaceDirectory (Join-Path $streamlinkDirectory "ffmpeg")
+
+Remove-WorkspaceDirectory $mpvDirectory
+New-Item -ItemType Directory -Force -Path $mpvDirectory | Out-Null
+& $sevenZip x $mpvArchive "-o$mpvDirectory" -y | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  throw "7-Zip could not extract the mpv archive."
+}
+
+$mpvLicensesDirectory = Join-Path $mpvDirectory "licenses"
+New-Item -ItemType Directory -Force -Path $mpvLicensesDirectory | Out-Null
+foreach ($license in $mpvLicenseFiles) {
+  Get-VerifiedFile $license.Url (Join-Path $mpvLicensesDirectory $license.Name) $license.Sha256
+}
+Copy-Item -LiteralPath (Join-Path $workspace "third_party\NATIVE_RUNTIME_SOURCES.md") `
+  -Destination (Join-Path $nativeDirectory "NATIVE_RUNTIME_SOURCES.md") -Force
+Copy-Item -LiteralPath (Join-Path $workspace "THIRD_PARTY_NOTICES.md") `
+  -Destination (Join-Path $nativeDirectory "THIRD_PARTY_NOTICES.md") -Force
+
+if (-not (Test-Path -LiteralPath $streamlinkExecutable)) {
+  throw "Streamlink extraction completed without bin\streamlink.exe."
+}
+if (-not (Test-Path -LiteralPath $mpvExecutable)) {
+  throw "mpv extraction completed without mpv.exe."
+}
+
+Set-Content -LiteralPath $manifestPath -Value $expectedManifest -Encoding utf8
+Write-Host "Prepared Streamlink $streamlinkVersion and mpv $mpvVersion."

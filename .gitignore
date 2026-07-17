@@ -7,3 +7,5 @@ coverage/
 *.log
 .env
 .env.local
+.cache/
+vendor/native/

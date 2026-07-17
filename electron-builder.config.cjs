@@ -14,7 +14,10 @@ module.exports = {
     output: "release",
   },
   files: ["dist/**/*", "dist-electron/**/*", "package.json"],
-  extraResources: [{ from: "build/icon.png", to: "icon.png" }],
+  extraResources: [
+    { from: "build/icon.png", to: "icon.png" },
+    { from: "vendor/native", to: "native" },
+  ],
   win: {
     icon: "build/icon.png",
     executableName: "VioletWire",

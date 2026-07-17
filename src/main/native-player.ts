@@ -1,4 +1,4 @@
-import { BaseWindow, BrowserWindow } from "electron";
+import { app, BaseWindow, BrowserWindow } from "electron";
 import { existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -119,12 +119,16 @@ function resolveFromPath(executable: string): string | null {
 function resolveExecutable(
   environmentVariables: string[],
   executable: string,
+  bundledPaths: string[],
   knownPaths: string[],
 ): string | null {
   for (const environmentVariable of environmentVariables) {
     const override = process.env[environmentVariable]?.trim();
     if (override && existsSync(override)) return override;
   }
+
+  const bundled = bundledPaths.find((candidate) => existsSync(candidate));
+  if (bundled) return bundled;
 
   const fromPath = resolveFromPath(executable);
   if (fromPath) return fromPath;
@@ -135,16 +139,29 @@ function resolveExecutable(
 function getAvailability(): NativePlayerAvailability {
   const localAppData = process.env.LOCALAPPDATA ?? "";
   const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
-  const streamlinkPath = resolveExecutable(["VIOLETWIRE_STREAMLINK_PATH", "GLINT_STREAMLINK_PATH"], "streamlink.exe", [
+  const nativeResources = app.isPackaged
+    ? path.join(process.resourcesPath, "native")
+    : path.join(app.getAppPath(), "vendor", "native");
+  const streamlinkPath = resolveExecutable(
+    ["VIOLETWIRE_STREAMLINK_PATH", "GLINT_STREAMLINK_PATH"],
+    "streamlink.exe",
+    [path.join(nativeResources, "streamlink", "bin", "streamlink.exe")],
+    [
     path.join(programFiles, "Streamlink", "bin", "streamlink.exe"),
     path.join(localAppData, "Programs", "Streamlink", "bin", "streamlink.exe"),
     path.join(localAppData, "Microsoft", "WinGet", "Links", "streamlink.exe"),
-  ]);
-  const mpvPath = resolveExecutable(["VIOLETWIRE_MPV_PATH", "GLINT_MPV_PATH"], "mpv.exe", [
+    ],
+  );
+  const mpvPath = resolveExecutable(
+    ["VIOLETWIRE_MPV_PATH", "GLINT_MPV_PATH"],
+    "mpv.exe",
+    [path.join(nativeResources, "mpv", "mpv.exe")],
+    [
     path.join(localAppData, "Microsoft", "WinGet", "Links", "mpv.exe"),
     path.join(programFiles, "mpv", "mpv.exe"),
     path.join(programFiles, "MPV Player", "mpv.exe"),
-  ]);
+    ],
+  );
 
   if (!streamlinkPath || !mpvPath) {
     const missing = [
@@ -155,7 +172,7 @@ function getAvailability(): NativePlayerAvailability {
       available: false,
       streamlinkPath: streamlinkPath ?? undefined,
       mpvPath: mpvPath ?? undefined,
-      reason: `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not installed.`,
+      reason: `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} unavailable.`,
     };
   }
 
