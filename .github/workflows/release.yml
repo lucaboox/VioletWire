@@ -48,7 +48,7 @@ jobs:
               --repo $env:GITHUB_REPOSITORY `
               --title $version `
               --prerelease `
-              --generate-notes
+              --notes "Initial release."
           }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

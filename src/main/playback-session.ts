@@ -53,7 +53,7 @@ export class PlaybackSessionService {
         }
       : {
           linked: false,
-          message: "Native playback is anonymous.",
+          message: "Twitch website playback is not linked.",
         };
   }
 

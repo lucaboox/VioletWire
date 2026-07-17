@@ -248,6 +248,12 @@ export function App() {
     );
   }, [activeChannel, activeMode]);
 
+  useEffect(() => {
+    document.title = activeChannel
+      ? `${streamMetadata?.displayName ?? activeChannel} - VioletWire`
+      : "VioletWire";
+  }, [activeChannel, streamMetadata?.displayName]);
+
   const loadNextBrowseCategories = useCallback(async () => {
     if (!browseCategoryCursor || browseCategoryLoadPending.current) return;
     browseCategoryLoadPending.current = true;
@@ -973,7 +979,7 @@ export function App() {
   async function linkPlaybackSession() {
     setPlaybackSessionBusy(true);
     setNotice(
-      "Sign in only in the dedicated Twitch window. This experimental session is used only for native playback.",
+      "Sign in only in the dedicated Twitch window. The isolated session is shared with the Standard player and used for Twitch playback requests.",
     );
     try {
       const state = await window.desktop.twitch.linkPlaybackSession();

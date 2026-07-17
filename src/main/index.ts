@@ -29,6 +29,7 @@ import { PlaybackSessionService } from "./playback-session";
 import { SevenTvService } from "./seven-tv-service";
 import { TwitchChatService } from "./twitch-chat-service";
 import { UpdateService } from "./update-service";
+import { startRendererServer, type RendererServer } from "./renderer-server";
 import { chatHistoryLimitSchema, outgoingChatMessageSchema } from "../shared/chat";
 
 // Electron's development console can outlive the shell that launched it. A
@@ -65,6 +66,7 @@ let chatVisible = true;
 let lastChatBounds: Rectangle | null = null;
 let activePlayerMode: PlayerMode | null = null;
 let activeChannelName: string | null = null;
+let rendererServer: RendererServer | null = null;
 const playbackSessionService = new PlaybackSessionService(() => mainWindow);
 const sevenTvService = new SevenTvService();
 function sendToWindow(window: BrowserWindow | null, channel: string, ...args: unknown[]): void {
@@ -211,6 +213,7 @@ async function createNativeControlsWindow(): Promise<void> {
     thickFrame: false,
     webPreferences: {
       preload: path.join(currentDirectory, "../preload/index.cjs"),
+      partition: "persist:glint-twitch-playback",
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -503,6 +506,7 @@ async function createWindow(): Promise<void> {
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(currentDirectory, "../preload/index.cjs"),
+      partition: "persist:glint-twitch-playback",
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -526,7 +530,12 @@ async function createWindow(): Promise<void> {
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl) await mainWindow.loadURL(rendererUrl);
-  else await mainWindow.loadFile(path.join(currentDirectory, "../../dist/renderer/index.html"));
+  else {
+    rendererServer ??= await startRendererServer(
+      path.join(currentDirectory, "../../dist/renderer"),
+    );
+    await mainWindow.loadURL(`${rendererServer.origin}/index.html`);
+  }
 }
 
 ipcMain.handle(
@@ -785,4 +794,9 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("will-quit", () => {
+  if (rendererServer) void rendererServer.close();
+  rendererServer = null;
 });
