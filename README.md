@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/lucaboox/VioletWire/releases"><img alt="Release" src="https://img.shields.io/github/v/release/lucaboox/VioletWire?include_prereleases&color=8b5cf6" /></a>
+  <a href="https://github.com/lucaboox/VioletWire/releases"><img alt="Release" src="https://img.shields.io/github/v/release/lucaboox/VioletWire?color=8b5cf6" /></a>
   <a href="https://github.com/lucaboox/VioletWire/actions/workflows/release.yml"><img alt="Release build" src="https://github.com/lucaboox/VioletWire/actions/workflows/release.yml/badge.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-2563eb" />
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-a855f7" />
