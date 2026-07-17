@@ -1,0 +1,56 @@
+{
+  "name": "violetwire",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "description": "A native-feeling Windows Twitch viewer",
+  "author": "VioletWire contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucaboox/VioletWire.git"
+  },
+  "homepage": "https://github.com/lucaboox/VioletWire#readme",
+  "bugs": {
+    "url": "https://github.com/lucaboox/VioletWire/issues"
+  },
+  "main": "dist-electron/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "package:win": "npm run build && electron-builder --config electron-builder.config.cjs --win --publish never",
+    "release:win": "npm run build && electron-builder --config electron-builder.config.cjs --win --publish always",
+    "preview": "electron-vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json --pretty false"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "electron-updater": "^6.8.9",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "^5.0.4",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "globals": "latest",
+    "prettier": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vite": "^7.3.6",
+    "vitest": "latest"
+  }
+}

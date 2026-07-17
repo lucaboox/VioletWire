@@ -1,0 +1,146 @@
+import { describe, expect, it } from "vitest";
+import {
+  channelActionSchema,
+  chatPresentationSchema,
+  channelNameSchema,
+  nativeQualitySchema,
+  nativePlayerCommandSchema,
+  parseStreamlinkQualityOutput,
+  presentNativePlaybackError,
+  playerBoundsSchema,
+  playerModeSchema,
+} from "./player";
+
+describe("channelNameSchema", () => {
+  it("normalizes valid channel names", () => {
+    expect(channelNameSchema.parse(" TwitchDev ")).toBe("twitchdev");
+  });
+
+  it.each([
+    "https://www.twitch.tv/TwitchDev",
+    "https://twitch.tv/twitchdev/",
+    "twitch.tv/twitchdev",
+    "m.twitch.tv/twitchdev?desktop-redirect=true",
+  ])("accepts Twitch channel URL %s", (value) => {
+    expect(channelNameSchema.parse(value)).toBe("twitchdev");
+  });
+
+  it.each(["", "https://example.com/twitchdev", "https://twitch.tv/directory/game/test", "name with spaces", "../escape", "x".repeat(26)])(
+    "rejects unsafe channel input %s",
+    (value) => expect(() => channelNameSchema.parse(value)).toThrow(),
+  );
+});
+
+describe("playerBoundsSchema", () => {
+  it("accepts a visible integer rectangle", () => {
+    expect(playerBoundsSchema.parse({ x: 0, y: 68, width: 1280, height: 720 })).toEqual({
+      x: 0,
+      y: 68,
+      width: 1280,
+      height: 720,
+    });
+  });
+
+  it("rejects negative or empty bounds", () => {
+    expect(() => playerBoundsSchema.parse({ x: -1, y: 0, width: 0, height: 720 })).toThrow();
+  });
+});
+
+describe("channelActionSchema", () => {
+  it.each(["channel", "subscribe", "clip"])("accepts allowlisted action %s", (action) => {
+    expect(channelActionSchema.parse(action)).toBe(action);
+  });
+
+  it("rejects arbitrary external actions", () => {
+    expect(() => channelActionSchema.parse("https://example.com")).toThrow();
+  });
+});
+
+describe("playerModeSchema", () => {
+  it.each(["official", "native"])("accepts supported player mode %s", (mode) => {
+    expect(playerModeSchema.parse(mode)).toBe(mode);
+  });
+
+  it("rejects unknown player engines", () => {
+    expect(() => playerModeSchema.parse("browser-hack")).toThrow();
+  });
+});
+
+describe("nativePlayerCommandSchema", () => {
+  it("accepts bounded volume and toggle commands", () => {
+    expect(nativePlayerCommandSchema.parse({ command: "set-volume", value: 45 })).toEqual({
+      command: "set-volume",
+      value: 45,
+    });
+    expect(nativePlayerCommandSchema.parse({ command: "toggle-pause" })).toEqual({
+      command: "toggle-pause",
+    });
+    expect(nativePlayerCommandSchema.parse({ command: "go-live" })).toEqual({
+      command: "go-live",
+    });
+    expect(
+      nativePlayerCommandSchema.parse({ command: "set-compressor", enabled: true }),
+    ).toEqual({
+      command: "set-compressor",
+      enabled: true,
+    });
+  });
+
+  it.each([-1, 101, Number.NaN])("rejects unsafe volume value %s", (value) => {
+    expect(() => nativePlayerCommandSchema.parse({ command: "set-volume", value })).toThrow();
+  });
+});
+
+describe("native playback presentation schemas", () => {
+  it.each(["side", "overlay"])("accepts chat presentation %s", (presentation) => {
+    expect(chatPresentationSchema.parse(presentation)).toBe(presentation);
+  });
+
+  it.each(["best", "source", "audio_only", "1080p60", "720p"])(
+    "accepts safe quality selector %s",
+    (quality) => expect(nativeQualitySchema.parse(quality)).toBe(quality),
+  );
+
+  it.each(["1080p;calc.exe", "../best", "", "4k"])(
+    "rejects unsafe or unsupported quality selector %s",
+    (quality) => expect(() => nativeQualitySchema.parse(quality)).toThrow(),
+  );
+});
+
+describe("parseStreamlinkQualityOutput", () => {
+  it("returns real qualities in useful display order", () => {
+    expect(
+      parseStreamlinkQualityOutput(
+        "Available streams: audio_only, 160p30 (worst), 360p30, 480p30, 720p60, 1080p60 (best)",
+      ),
+    ).toEqual([
+      { value: "best", label: "Auto (1080p)" },
+      { value: "1080p60", label: "1080p · 60 FPS" },
+      { value: "720p60", label: "720p · 60 FPS" },
+      { value: "480p30", label: "480p · 30 FPS" },
+      { value: "360p30", label: "360p · 30 FPS" },
+      { value: "160p30", label: "160p · 30 FPS" },
+      { value: "audio_only", label: "Audio only" },
+    ]);
+  });
+
+  it("falls back to automatic quality when discovery output is unavailable", () => {
+    expect(parseStreamlinkQualityOutput("No playable streams found")).toEqual([
+      { value: "best", label: "Auto" },
+    ]);
+  });
+});
+
+describe("presentNativePlaybackError", () => {
+  it("turns Streamlink's offline failure into a clear message", () => {
+    expect(
+      presentNativePlaybackError(
+        "error: No playable streams found on this URL: https://www.twitch.tv/summit1g",
+      ),
+    ).toBe("Stream is offline.");
+  });
+
+  it("preserves unrelated native-player errors", () => {
+    expect(presentNativePlaybackError("mpv could not start")).toBe("mpv could not start");
+  });
+});

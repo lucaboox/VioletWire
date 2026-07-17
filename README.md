@@ -1,0 +1,188 @@
+<p align="center">
+  <img src="build/icon.png" alt="VioletWire icon" width="168" />
+</p>
+
+<h1 align="center">VioletWire</h1>
+
+<p align="center">
+  A native-feeling Twitch viewer for Windows with official and experimental native playback.
+</p>
+
+<p align="center">
+  <a href="https://github.com/lucaboox/VioletWire/releases"><img alt="Release" src="https://img.shields.io/github/v/release/lucaboox/VioletWire?include_prereleases&color=8b5cf6" /></a>
+  <a href="https://github.com/lucaboox/VioletWire/actions/workflows/release.yml"><img alt="Release build" src="https://github.com/lucaboox/VioletWire/actions/workflows/release.yml/badge.svg" /></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-2563eb" />
+  <img alt="Status" src="https://img.shields.io/badge/status-alpha-a855f7" />
+</p>
+
+> [!IMPORTANT]
+> VioletWire is alpha software. Core playback and chat work, but Twitch,
+> Streamlink, and third-party emote APIs can change without notice.
+
+## What is VioletWire?
+
+VioletWire is an Electron, React, and TypeScript Twitch client designed to feel
+like a focused Windows application instead of a generic browser wrapper. Public
+streams can be watched without signing in. Twitch OAuth unlocks followed
+channels, account-aware chat, subscription status, and other authenticated data.
+
+VioletWire is an independent project and is not affiliated with, endorsed by, or
+sponsored by Twitch, 7TV, Streamlink, or mpv.
+
+## Features
+
+### Browse and discover
+
+- Followed channels separated into live and offline groups
+- Twitch-style live channel cards with thumbnails, titles, categories, viewers, and uptime
+- Browse popular Twitch categories
+- Open a category to view its live streams
+- Search channels and categories from the top navigation
+- Infinite pagination with loading and error states
+
+### Playback
+
+- Twitch's official player for maximum website compatibility
+- Experimental Streamlink + mpv Native player
+- Automatic and manual quality selection
+- Source quality when Twitch exposes it
+- Volume, mute, pause, fullscreen, theater mode, and picture-in-picture where available
+- Go-live state and low-latency-oriented native playback
+- Optional dynamic audio compression
+- Resizable side chat and fullscreen chat overlay
+- Controls that hide automatically when the pointer is inactive
+
+### Chat and emotes
+
+- Native Twitch chat reading and sending
+- Twitch badges, colors, emotes, replies, moderation events, and deleted messages
+- 7TV global and channel emotes
+- Channel-aware Twitch emote picker
+- Searchable Twitch and 7TV emote groups
+- Configurable timestamps and recent-message history
+- Pause autoscroll while reading older messages
+- Bounded message history to prevent unbounded memory growth
+- Safe text rendering without arbitrary chat HTML
+
+### Account and privacy
+
+- Official Twitch Device Code OAuth flow
+- Minimum-purpose Twitch scopes
+- Tokens encrypted using Electron `safeStorage` and Windows DPAPI
+- Separate, optional Twitch website playback session
+- Complete sign-out and credential removal
+- No Twitch passwords, copied browser cookies, or hardcoded personal tokens
+
+### Windows experience
+
+- Windows 11-inspired dark interface
+- OLED true-black mode
+- High-DPI and multi-monitor support
+- Keyboard controls
+- NSIS installer
+- GitHub Releases automatic updates
+
+## Installation
+
+Download the newest installer from
+[GitHub Releases](https://github.com/lucaboox/VioletWire/releases).
+
+The alpha installer is currently unsigned, so Windows SmartScreen may show an
+unknown-publisher warning. Code signing is planned before a wider release.
+
+## Native player requirements
+
+The Standard player works without extra software. The experimental Native player
+requires both:
+
+- [Streamlink](https://streamlink.github.io/install)
+- [mpv](https://mpv.io/installation/)
+
+VioletWire searches common Windows installation locations and `PATH`. Custom
+locations can be supplied with:
+
+```text
+VIOLETWIRE_STREAMLINK_PATH=C:\path\to\streamlink.exe
+VIOLETWIRE_MPV_PATH=C:\path\to\mpv.exe
+```
+
+VioletWire currently launches user-installed copies and does **not** bundle or
+redistribute Streamlink or mpv.
+
+## Twitch sign-in
+
+VioletWire uses Twitch's official public Device Code flow. A Client Secret is not
+stored or required.
+
+Requested scopes:
+
+- `user:read:follows`
+- `user:read:subscriptions`
+- `clips:edit`
+- `user:read:chat`
+- `user:write:chat`
+
+Follow and subscription purchases still open Twitch-controlled pages because
+Twitch does not provide public APIs for those mutations.
+
+## Development
+
+Requirements:
+
+- Windows 10 or Windows 11
+- Node.js 22+
+- npm
+
+```powershell
+git clone https://github.com/lucaboox/VioletWire.git
+cd VioletWire
+npm install
+npm run dev
+```
+
+Verification:
+
+```powershell
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+Build the Windows installer:
+
+```powershell
+npm run package:win
+```
+
+Artifacts are written to `release/`.
+
+## Automatic updates
+
+Installed GitHub release builds check for updates shortly after launch and every
+six hours afterward. Updates download in the background and prompt before
+restarting. Development builds and local installers without a configured release
+feed do not contact an update server.
+
+Pushing a version tag such as `v0.1.0-alpha.1` runs the Windows release workflow.
+The tag must match the version in `package.json`.
+
+## Third-party software and attribution
+
+VioletWire invokes Streamlink and mpv as separate executables when the Native
+player is selected.
+
+- Streamlink is licensed under the
+  [BSD 2-Clause License](https://github.com/streamlink/streamlink/blob/master/LICENSE).
+- mpv licensing depends on how a particular build was configured; official
+  details are in mpv's
+  [Copyright and licensing documentation](https://github.com/mpv-player/mpv/blob/master/Copyright).
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the current integration
+and redistribution boundary.
+
+## Project license
+
+No license has been selected for VioletWire itself yet. Until a license is added,
+the source code remains under default copyright. Third-party projects retain
+their own licenses.
