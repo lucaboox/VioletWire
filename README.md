@@ -29,6 +29,39 @@ channels, account-aware chat, subscription status, and other authenticated data.
 VioletWire is an independent project and is not affiliated with, endorsed by, or
 sponsored by Twitch, 7TV, Streamlink, or mpv.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%">
+      <strong>Followed live channels</strong><br />
+      <a href="docs/screenshots/home.png">
+        <img src="docs/screenshots/home.png" alt="VioletWire home page showing followed live channels" />
+      </a>
+    </td>
+    <td width="50%">
+      <strong>Browse categories</strong><br />
+      <a href="docs/screenshots/browse.png">
+        <img src="docs/screenshots/browse.png" alt="VioletWire browse page showing Twitch categories" />
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <strong>Standard Twitch player</strong><br />
+      <a href="docs/screenshots/standard-player.png">
+        <img src="docs/screenshots/standard-player.png" alt="VioletWire using the standard Twitch player with native chat" />
+      </a>
+    </td>
+    <td width="50%">
+      <strong>Experimental Native player</strong><br />
+      <a href="docs/screenshots/native-player.png">
+        <img src="docs/screenshots/native-player.png" alt="VioletWire using its experimental Native player with native chat" />
+      </a>
+    </td>
+  </tr>
+</table>
+
 ## Features
 
 ### Browse and discover
