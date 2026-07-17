@@ -19,7 +19,7 @@
     "build": "npm run typecheck && electron-vite build",
     "prepare:native": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-native-runtime.ps1",
     "package:win": "npm run prepare:native && npm run build && electron-builder --config electron-builder.config.cjs --win --publish never",
-    "release:win": "npm run prepare:native && npm run build && electron-builder --config electron-builder.config.cjs --win --publish always",
+    "release:win": "npm run prepare:native && npm run build && electron-builder --config electron-builder.config.cjs --win --publish never",
     "preview": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
