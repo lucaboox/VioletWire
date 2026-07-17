@@ -43,6 +43,20 @@ function Assert-WorkspaceChild([string]$candidate) {
   }
 }
 
+function Get-Sha256([string]$filePath) {
+  $stream = [System.IO.File]::OpenRead($filePath)
+  try {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      return (($sha256.ComputeHash($stream) | ForEach-Object { $_.ToString("x2") }) -join "").ToUpperInvariant()
+    } finally {
+      $sha256.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 function Get-VerifiedFile(
   [string]$url,
   [string]$destination,
@@ -50,7 +64,7 @@ function Get-VerifiedFile(
 ) {
   Assert-WorkspaceChild $destination
   if (Test-Path -LiteralPath $destination) {
-    $actual = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+    $actual = Get-Sha256 $destination
     if ($actual -eq $expectedSha256) {
       return
     }
@@ -64,7 +78,7 @@ function Get-VerifiedFile(
 
   Write-Host "Downloading $url"
   Invoke-WebRequest -Uri $url -OutFile $partial
-  $downloadedHash = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash
+  $downloadedHash = Get-Sha256 $partial
   if ($downloadedHash -ne $expectedSha256) {
     Remove-Item -LiteralPath $partial -Force
     throw "SHA-256 mismatch for $url. Expected $expectedSha256, received $downloadedHash."
