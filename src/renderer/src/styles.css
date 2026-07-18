@@ -422,17 +422,6 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .player-host { position: relative; min-width: 400px; min-height: 300px; overflow: hidden; background: #0e0e10; }
 .standard-player-frame { display: block; width: 100%; height: 100%; border: 0; background: #050506; }
 .native-texture-canvas { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
-.native-texture-overlay-test { position: absolute; z-index: 40; top: 18px; left: 50%; width: min(360px, calc(100% - 36px)); padding: 13px; border: 1px solid rgb(192 132 252 / 62%); border-radius: 12px; color: #f5f3ff; background: rgb(20 12 29 / 88%); box-shadow: 0 14px 44px rgb(0 0 0 / 48%), 0 0 30px rgb(147 51 234 / 18%); backdrop-filter: blur(14px); transform: translateX(-50%); pointer-events: auto; }
-.native-texture-overlay-test-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.native-texture-overlay-test-heading > span { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 750; }
-.native-texture-overlay-test-heading > button { display: grid; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; color: #d8b4fe; background: transparent; cursor: pointer; place-items: center; }
-.native-texture-overlay-test-heading > button:hover { background: rgb(168 85 247 / 20%); }
-.native-texture-overlay-test p { margin: 8px 0 11px; color: #c4b5d2; font-size: 11px; line-height: 1.45; }
-.native-texture-overlay-test-action { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 34px; border: 1px solid #8b5cf6; border-radius: 8px; color: #fff; background: linear-gradient(135deg, #7c3aed, #a855f7); cursor: pointer; font-size: 12px; font-weight: 700; }
-.native-texture-overlay-test-action:hover { filter: brightness(1.1); }
-.native-texture-overlay-test-action strong { display: grid; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: rgb(0 0 0 / 30%); font-size: 11px; place-items: center; }
-.native-texture-overlay-test-reopen { position: absolute; z-index: 40; top: 18px; left: 50%; display: flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid rgb(168 85 247 / 55%); border-radius: 8px; color: #e9d5ff; background: rgb(24 14 34 / 82%); box-shadow: 0 8px 26px rgb(0 0 0 / 40%); backdrop-filter: blur(12px); cursor: pointer; font-size: 11px; font-weight: 700; transform: translateX(-50%); }
-.native-texture-overlay-test-reopen:hover { border-color: #c084fc; background: rgb(46 25 65 / 92%); }
 .native-player-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px; color: #d4d4d8; background: radial-gradient(circle at center, #25162f 0, #09090b 48%); text-align: center; }
 .native-player-placeholder strong { margin-top: 12px; font-size: 15px; }
 .native-player-placeholder p { max-width: 480px; margin: 7px 0 0; color: #85858e; font-size: 11px; line-height: 1.55; }

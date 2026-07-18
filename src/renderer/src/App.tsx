@@ -484,8 +484,6 @@ export function App() {
   const [activeMode, setActiveMode] = useState<PlayerMode | null>(null);
   const [activeNativeBackend, setActiveNativeBackend] =
     useState<NativeRenderBackend | null>(null);
-  const [textureOverlayTestOpen, setTextureOverlayTestOpen] = useState(false);
-  const [textureOverlayTestClicks, setTextureOverlayTestClicks] = useState(0);
   const [nativeAvailability, setNativeAvailability] =
     useState<NativePlayerAvailability | null>(null);
   const [nativeState, setNativeState] = useState<NativePlayerState>({
@@ -1572,8 +1570,6 @@ export function App() {
     setActiveChannel(channel);
     setActiveMode(optimisticMode);
     setActiveNativeBackend(optimisticBackend);
-    setTextureOverlayTestOpen(optimisticBackend === "texture");
-    setTextureOverlayTestClicks(0);
     setNativeControlsVisible(true);
     setChatVisible(true);
     setChatPresentation("side");
@@ -1595,8 +1591,6 @@ export function App() {
       setActiveChannel(result.channel);
       setActiveMode(result.mode);
       setActiveNativeBackend(result.nativeBackend ?? null);
-      setTextureOverlayTestOpen(result.nativeBackend === "texture");
-      setTextureOverlayTestClicks(0);
       setNativeControlsVisible(true);
       setChatVisible(true);
       setChatPresentation("side");
@@ -1613,7 +1607,6 @@ export function App() {
       setActiveChannel(null);
       setActiveMode(null);
       setActiveNativeBackend(null);
-      setTextureOverlayTestOpen(false);
       setActiveSection(returnSection);
       setError(message || "Unable to open the Twitch player.");
     }
@@ -1628,7 +1621,6 @@ export function App() {
     setActiveChannel(null);
     setActiveMode(null);
     setActiveNativeBackend(null);
-    setTextureOverlayTestOpen(false);
     setReplyingTo(null);
     setEmotePickerOpen(false);
     setActiveSection(playerReturnSection);
@@ -1658,8 +1650,6 @@ export function App() {
       const result = await window.desktop.player.open(activeChannel, mode);
       setActiveMode(result.mode);
       setActiveNativeBackend(result.nativeBackend ?? null);
-      setTextureOverlayTestOpen(result.nativeBackend === "texture");
-      setTextureOverlayTestClicks(0);
       setNativeControlsVisible(true);
       if (result.fallbackReason) {
         setNotice(
@@ -1680,8 +1670,6 @@ export function App() {
     const result = await window.desktop.player.open(activeChannel, "native", nativeState.quality);
     setActiveMode(result.mode);
     setActiveNativeBackend(result.nativeBackend ?? null);
-    setTextureOverlayTestOpen(result.nativeBackend === "texture");
-    setTextureOverlayTestClicks(0);
     setNativeControlsVisible(true);
     if (result.fallbackReason) setNotice(result.fallbackReason);
   }
@@ -2307,46 +2295,6 @@ export function App() {
                       aria-hidden="true"
                     />
                   )}
-                  {activeMode === "native" &&
-                    activeNativeBackend === "texture" &&
-                    textureOverlayTestOpen && (
-                      <div className="native-texture-overlay-test" role="status">
-                        <div className="native-texture-overlay-test-heading">
-                          <span><Layers size={16} /> React overlay test</span>
-                          <button
-                            aria-label="Close texture overlay test"
-                            onClick={() => setTextureOverlayTestOpen(false)}
-                            title="Close test"
-                            type="button"
-                          >
-                            <X size={15} />
-                          </button>
-                        </div>
-                        <p>
-                          If this card stays above the moving video, texture compositing works.
-                          Clicking below also tests mouse input.
-                        </p>
-                        <button
-                          className="native-texture-overlay-test-action"
-                          onClick={() => setTextureOverlayTestClicks((count) => count + 1)}
-                          type="button"
-                        >
-                          Click test
-                          <strong>{textureOverlayTestClicks}</strong>
-                        </button>
-                      </div>
-                    )}
-                  {activeMode === "native" &&
-                    activeNativeBackend === "texture" &&
-                    !textureOverlayTestOpen && (
-                      <button
-                        className="native-texture-overlay-test-reopen"
-                        onClick={() => setTextureOverlayTestOpen(true)}
-                        type="button"
-                      >
-                        <Layers size={14} /> Overlay test
-                      </button>
-                    )}
                   {activeMode === "native" && nativeState.status !== "playing" && (
                     <div className="native-player-placeholder">
                       <span className={`native-status-orb ${nativeState.status}`} />
