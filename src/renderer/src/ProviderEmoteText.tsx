@@ -132,6 +132,7 @@ export function renderProviderText(
         <ChatEmote
           className={emoteClassName}
           imageUrl={variant.url}
+          logicalHeight={variant.height / Math.max(variant.scale, 1)}
           name={segment.emote.name}
           provider={segment.emote.provider}
         />

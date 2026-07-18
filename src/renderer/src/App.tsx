@@ -67,7 +67,11 @@ import type {
   ChatMessage,
   TwitchPickerEmote,
 } from "../../shared/chat";
-import { formatChatTimestamp, messageMentionsLogin } from "../../shared/chat";
+import {
+  formatChatTimestamp,
+  formatModerationAction,
+  messageMentionsLogin,
+} from "../../shared/chat";
 import { applyChatMessage } from "../../shared/chat-messages";
 import { getChatMentionCandidates } from "../../shared/chat-content";
 import { parseChangelog } from "../../shared/changelog";
@@ -79,7 +83,10 @@ import {
   type ChatScrollAnchor,
 } from "./chat-scroll";
 import { EmotePicker } from "./EmotePicker";
+import { ReactTooltipLayer } from "./ReactTooltipLayer";
 import { ChatEmote } from "./ChatEmote";
+import { ChatBadge } from "./ChatBadge";
+import { ReplyThread } from "./ReplyThread";
 import { renderProviderText } from "./ProviderEmoteText";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
@@ -229,8 +236,10 @@ interface ChatMessageRowProps {
   oledMode: boolean;
   mentioned: boolean;
   deletedRevealed: boolean;
+  deletedMessageStyle: AppPreferences["chatDeletedMessageStyle"];
   onRevealDeleted: (id: string) => void;
   onReply: (message: ChatMessage) => void;
+  onOpenThread: (message: ChatMessage) => void;
   providerEmotes: Map<string, ProviderEmote>;
 }
 
@@ -243,8 +252,10 @@ const ChatMessageRow = memo(function ChatMessageRow({
   oledMode,
   mentioned,
   deletedRevealed,
+  deletedMessageStyle,
   onRevealDeleted,
   onReply,
+  onOpenThread,
   providerEmotes,
 }: ChatMessageRowProps) {
   if (message.notice) {
@@ -293,17 +304,23 @@ const ChatMessageRow = memo(function ChatMessageRow({
   }
   return (
     <div
-      className={mentioned ? "native-chat-message mentioned" : "native-chat-message"}
+      className={[
+        "native-chat-message",
+        mentioned ? "mentioned" : "",
+        message.deleted && deletedMessageStyle === "dimmed" ? "deleted-dimmed" : "",
+      ].filter(Boolean).join(" ")}
       data-chat-message-id={message.id}
     >
       {message.reply && (
-        <span
+        <button
           className="chat-reply-parent"
+          onClick={() => onOpenThread(message)}
           title={message.reply.parentMessageBody}
+          type="button"
         >
           Replying to {message.reply.parentDisplayName || message.reply.parentUserLogin}:{" "}
           {message.reply.parentMessageBody}
-        </span>
+        </button>
       )}
       {showTimestamp && (
         <time
@@ -317,15 +334,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
         <span className="native-chat-badges" title={message.badges.join(", ")}>
           {message.badges.slice(0, 4).map((badgeKey) => {
             const badge = badges.get(badgeKey);
-            return badge ? (
-              <img
-                alt={badge.title}
-                key={badgeKey}
-                loading="lazy"
-                src={badge.imageUrl}
-                title={badge.title}
-              />
-            ) : null;
+            return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
           })}
         </span>
       )}
@@ -341,17 +350,26 @@ const ChatMessageRow = memo(function ChatMessageRow({
       </strong>
       <span className="chat-colon">:</span>{" "}
       <span className="native-chat-text">
-        {message.deleted && !deletedRevealed ? (
+        {message.deleted && deletedMessageStyle === "placeholder" && !deletedRevealed ? (
           <button
             className="deleted-message-toggle"
             onClick={() => onRevealDeleted(message.id)}
             title="Show the deleted message locally"
             type="button"
           >
-            &lt;deleted&gt;
+            &lt;{formatModerationAction(message)}&gt;
           </button>
         ) : (
-          renderChatMessageText(message, providerEmotes)
+          <>
+            <span className={message.deleted ? "deleted-original-content" : undefined}>
+              {renderChatMessageText(message, providerEmotes)}
+            </span>
+            {message.deleted && deletedMessageStyle === "dimmed" && (
+              <span className="moderation-reason">
+                {" "}({formatModerationAction(message)})
+              </span>
+            )}
+          </>
         )}
       </span>
       {!message.deleted && (
@@ -424,6 +442,7 @@ export function App() {
     useState<ChatConnectionState>("disconnected");
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
   const [providerEmoteMaps, setProviderEmoteMaps] = useState(emptyProviderEmoteMaps);
   const [providerChannelNames, setProviderChannelNames] = useState(
     emptyProviderChannelNames,
@@ -447,6 +466,8 @@ export function App() {
     const stored = Number(window.localStorage.getItem("glint.chat.emoteSize"));
     return Number.isInteger(stored) && stored >= 18 && stored <= 48 ? stored : 27;
   });
+  const [chatDeletedMessageStyle, setChatDeletedMessageStyle] =
+    useState<AppPreferences["chatDeletedMessageStyle"]>("placeholder");
   const [chatOnLeft, setChatOnLeft] = useState(
     () => window.localStorage.getItem("glint.chat.onLeft") === "true",
   );
@@ -463,17 +484,18 @@ export function App() {
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
   const [preferredMode, setPreferredMode] = useState<PlayerMode>(() =>
-    window.localStorage.getItem("glint.playback.default") === "native" ? "native" : "official",
+    window.localStorage.getItem("glint.playback.default") === "official" ? "official" : "native",
   );
-  const [experimentalTexturePlayer, setExperimentalTexturePlayer] = useState(false);
+  const [experimentalTexturePlayer, setExperimentalTexturePlayer] = useState(true);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const legacyPreferences = useRef({
     preferredPlayerMode: preferredMode,
-    experimentalTexturePlayer: false,
+    experimentalTexturePlayer: true,
     chatTimestamps,
     chatHistoryLimit,
     chatFontSize,
     chatEmoteSize,
+    chatDeletedMessageStyle,
     chatOnLeft,
     chatOverlayOpacity: chatOpacity,
     mentionSoundEnabled,
@@ -532,7 +554,7 @@ export function App() {
         !target.closest(".native-detached-emote-picker")
       ) {
         setEmotePickerOpen(false);
-        if (activeMode === "native") {
+        if (activeMode === "native" && activeNativeBackend === "window") {
           window.desktop.player.setNativeEmotePicker(false);
         }
       }
@@ -546,7 +568,7 @@ export function App() {
     };
     document.addEventListener("pointerdown", closeOpenChatMenus, true);
     return () => document.removeEventListener("pointerdown", closeOpenChatMenus, true);
-  }, [activeMode, chatSettingsOpen, emotePickerOpen]);
+  }, [activeMode, activeNativeBackend, chatSettingsOpen, emotePickerOpen]);
 
   const revealNativeControls = useCallback(() => {
     if (!activeChannel || activeMode !== "native") return;
@@ -704,6 +726,11 @@ export function App() {
     return window.desktop.player.onNativeState(setNativeState);
   }, []);
 
+  useEffect(
+    () => window.desktop.player.onFullscreenChanged(setFullscreen),
+    [],
+  );
+
   useEffect(() => {
     let disposed = false;
     const applyPreferences = (preferences: AppPreferences) => {
@@ -714,6 +741,7 @@ export function App() {
       setChatHistoryLimit(preferences.chatHistoryLimit);
       setChatFontSize(preferences.chatFontSize);
       setChatEmoteSize(preferences.chatEmoteSize);
+      setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
       setChatOnLeft(preferences.chatOnLeft);
       setChatOpacity(preferences.chatOverlayOpacity);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
@@ -742,6 +770,7 @@ export function App() {
         chatHistoryLimit,
         chatFontSize,
         chatEmoteSize,
+        chatDeletedMessageStyle,
         chatOnLeft,
         chatOverlayOpacity: chatOpacity,
         mentionSoundEnabled,
@@ -752,6 +781,7 @@ export function App() {
     chatHistoryLimit,
     chatFontSize,
     chatEmoteSize,
+    chatDeletedMessageStyle,
     chatOnLeft,
     chatOpacity,
     chatTimestamps,
@@ -827,6 +857,11 @@ export function App() {
     if (!activeChannel) return;
     let cancelled = false;
     const broadcasterId = streamMetadata?.broadcasterId;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setProviderEmoteMaps(emptyProviderEmoteMaps());
+      setProviderChannelNames(emptyProviderChannelNames());
+    });
     const requests: Array<Promise<EmoteSetResult>> = [
       window.desktop.emotes.getSevenTvGlobal(),
       window.desktop.emotes.getFfzGlobal(),
@@ -839,25 +874,32 @@ export function App() {
         window.desktop.emotes.getBttvChannel(broadcasterId),
       );
     }
-    void Promise.allSettled(requests).then((results) => {
-      if (cancelled) return;
-      const nextMaps = emptyProviderEmoteMaps();
-      const nextChannelNames = emptyProviderChannelNames();
-      // Read channel responses first so channel assignments win name conflicts
-      // within the same provider.
-      for (const result of [...results].reverse()) {
-        if (result.status !== "fulfilled") continue;
-        for (const emote of result.value.emotes) {
-          const providerMap = nextMaps.get(result.value.provider)!;
-          if (!providerMap.has(emote.name)) providerMap.set(emote.name, emote);
-          if (result.value.scope === "channel") {
-            nextChannelNames.get(result.value.provider)!.add(emote.name);
+    for (const request of requests) {
+      void request.then((result) => {
+        if (cancelled) return;
+        setProviderEmoteMaps((current) => {
+          const next = new Map(current);
+          const providerMap = new Map(next.get(result.provider));
+          for (const emote of result.emotes) {
+            if (result.scope === "channel" || !providerMap.has(emote.name)) {
+              providerMap.set(emote.name, emote);
+            }
           }
+          next.set(result.provider, providerMap);
+          return next;
+        });
+        if (result.scope === "channel") {
+          setProviderChannelNames((current) => {
+            const next = new Map(current);
+            next.set(result.provider, new Set(result.emotes.map((emote) => emote.name)));
+            return next;
+          });
         }
-      }
-      setProviderEmoteMaps(nextMaps);
-      setProviderChannelNames(nextChannelNames);
-    });
+      }).catch(() => {
+        // Providers are optional. A slow or unavailable provider must not delay
+        // emotes returned by the others.
+      });
+    }
     return () => {
       cancelled = true;
     };
@@ -1796,6 +1838,7 @@ export function App() {
         "--chat-emote-size": `${chatEmoteSize}px`,
       } as CSSProperties}
     >
+      <ReactTooltipLayer />
       {notice && (
         <div className="app-toast" key={notice} role="status" aria-live="polite">
           {notice}
@@ -1976,6 +2019,19 @@ export function App() {
           <div className="top-actions">
           <div className="mode-switch top-mode-switch" aria-label="Playback engine">
             <button
+              aria-pressed={(activeChannel ? activeMode : preferredMode) === "native"}
+              className={(activeChannel ? activeMode : preferredMode) === "native" ? "active experimental" : "experimental"}
+              onClick={() =>
+                activeChannel
+                  ? void switchPlayerMode("native")
+                  : void choosePreferredMode("native")
+              }
+              title="Use the Native player"
+              type="button"
+            >
+              Native
+            </button>
+            <button
               aria-pressed={(activeChannel ? activeMode : preferredMode) === "official"}
               className={(activeChannel ? activeMode : preferredMode) === "official" ? "active" : ""}
               onClick={() =>
@@ -1987,23 +2043,6 @@ export function App() {
               type="button"
             >
               Standard
-            </button>
-            <button
-              aria-pressed={(activeChannel ? activeMode : preferredMode) === "native"}
-              className={
-                (activeChannel ? activeMode : preferredMode) === "native"
-                  ? "active experimental"
-                  : "experimental"
-              }
-              onClick={() =>
-                activeChannel
-                  ? void switchPlayerMode("native")
-                  : void choosePreferredMode("native")
-              }
-              title="Use the Native player"
-              type="button"
-            >
-              Native
             </button>
           </div>
           <button
@@ -2379,6 +2418,18 @@ export function App() {
                               type="checkbox"
                             />
                           </label>
+                          <label className="chat-toggle-setting">
+                            <span>Dim deleted messages</span>
+                            <input
+                              checked={chatDeletedMessageStyle === "dimmed"}
+                              onChange={(event) =>
+                                setChatDeletedMessageStyle(
+                                  event.target.checked ? "dimmed" : "placeholder",
+                                )
+                              }
+                              type="checkbox"
+                            />
+                          </label>
                           <label>
                             <span>Font size: {chatFontSize}px</span>
                             <input
@@ -2472,6 +2523,18 @@ export function App() {
                               type="checkbox"
                             />
                           </label>
+                          <label className="chat-toggle-setting">
+                            <span>Dim deleted messages</span>
+                            <input
+                              checked={chatDeletedMessageStyle === "dimmed"}
+                              onChange={(event) =>
+                                setChatDeletedMessageStyle(
+                                  event.target.checked ? "dimmed" : "placeholder",
+                                )
+                              }
+                              type="checkbox"
+                            />
+                          </label>
                           <label>
                             <span>Font size: {chatFontSize}px</span>
                             <input
@@ -2538,11 +2601,13 @@ export function App() {
                         <Fragment key={message.id}>
                         <ChatMessageRow
                           badges={twitchBadges}
+                          deletedMessageStyle={chatDeletedMessageStyle}
                           deletedRevealed={revealedDeletedMessages.has(message.id)}
                           mentioned={messageMentionsLogin(message, viewerLogin)}
                           message={message}
                           oledMode={oledMode}
                           onRevealDeleted={revealDeletedMessage}
+                          onOpenThread={setOpenReplyThread}
                           onReply={beginReply}
                           providerEmotes={chatProviderEmotes}
                           showTimestamp={chatTimestamps}
@@ -2555,6 +2620,18 @@ export function App() {
                         </Fragment>
                       ))}
                     </div>
+                    {openReplyThread && (
+                      <ReplyThread
+                        badges={twitchBadges}
+                        messages={chatMessages}
+                        oledMode={oledMode}
+                        onClose={() => setOpenReplyThread(null)}
+                        onReply={beginReply}
+                        renderText={(message) =>
+                          renderChatMessageText(message, chatProviderEmotes)}
+                        selected={openReplyThread}
+                      />
+                    )}
                     {!chatAutoScroll && (
                       <button
                         className="scroll-to-current"
@@ -2568,7 +2645,7 @@ export function App() {
                       {replyingTo && (
                         <div className="chat-reply-composer">
                           <div className="chat-reply-heading">
-                            <span><Reply size={13} /> Replying to @{replyingTo.login}:</span>
+                            <span><Reply size={15} /> Replying to {replyingTo.displayName}:</span>
                             <button
                               aria-label="Cancel reply"
                               onClick={() => setReplyingTo(null)}
@@ -2581,9 +2658,7 @@ export function App() {
                           <div className="chat-reply-preview">
                             {replyingTo.badges.slice(0, 1).map((badgeKey) => {
                               const badge = twitchBadges.get(badgeKey);
-                              return badge ? (
-                                <img alt={badge.title} key={badgeKey} src={badge.imageUrl} />
-                              ) : null;
+                              return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
                             })}
                             <strong
                               style={{
@@ -2609,7 +2684,7 @@ export function App() {
                           placeholder={
                             authState.status === "signed-in"
                               ? replyingTo
-                                ? `@${replyingTo.login}`
+                                ? "Write a reply"
                                 : "Send a message"
                               : "Sign in to send messages"
                           }
@@ -2627,7 +2702,10 @@ export function App() {
                               onClick={() => {
                                 const next = !emotePickerOpen;
                                 setEmotePickerOpen(next);
-                                if (activeMode === "native") {
+                                if (
+                                  activeMode === "native" &&
+                                  activeNativeBackend === "window"
+                                ) {
                                   window.desktop.player.setNativeEmotePicker(next);
                                 }
                               }}
@@ -2636,7 +2714,11 @@ export function App() {
                             >
                               <Smile size={17} />
                             </button>
-                            {emotePickerOpen && activeMode !== "native" && (
+                            {emotePickerOpen &&
+                              !(
+                                activeMode === "native" &&
+                                activeNativeBackend === "window"
+                              ) && (
                               <>
                                 <EmotePicker
                                   channelAvatarUrl={streamMetadata?.profileImageUrl}
@@ -3153,15 +3235,6 @@ export function App() {
               </span>
               <div className="mode-switch">
                 <button
-                  aria-pressed={preferredMode === "official"}
-                  className={preferredMode === "official" ? "active" : ""}
-                  onClick={() => void choosePreferredMode("official")}
-                  type="button"
-                >
-                  {preferredMode === "official" && <Check size={13} />}
-                  Standard
-                </button>
-                <button
                   aria-pressed={preferredMode === "native"}
                   className={preferredMode === "native" ? "active experimental" : "experimental"}
                   onClick={() => void choosePreferredMode("native")}
@@ -3169,6 +3242,15 @@ export function App() {
                 >
                   {preferredMode === "native" && <Check size={13} />}
                   Native
+                </button>
+                <button
+                  aria-pressed={preferredMode === "official"}
+                  className={preferredMode === "official" ? "active" : ""}
+                  onClick={() => void choosePreferredMode("official")}
+                  type="button"
+                >
+                  {preferredMode === "official" && <Check size={13} />}
+                  Standard
                 </button>
               </div>
             </div>
@@ -3415,20 +3497,20 @@ export function App() {
                     </span>
                     <div className="mode-switch">
                       <button
-                        aria-pressed={preferredMode === "official"}
-                        className={preferredMode === "official" ? "active" : ""}
-                        onClick={() => void choosePreferredMode("official")}
-                        type="button"
-                      >
-                        Standard
-                      </button>
-                      <button
                         aria-pressed={preferredMode === "native"}
                         className={preferredMode === "native" ? "active experimental" : "experimental"}
                         onClick={() => void choosePreferredMode("native")}
                         type="button"
                       >
                         Native
+                      </button>
+                      <button
+                        aria-pressed={preferredMode === "official"}
+                        className={preferredMode === "official" ? "active" : ""}
+                        onClick={() => void choosePreferredMode("official")}
+                        type="button"
+                      >
+                        Standard
                       </button>
                     </div>
                   </div>

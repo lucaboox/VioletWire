@@ -195,6 +195,7 @@ export interface DesktopApi {
     setChatVisible(visible: boolean): void;
     setChatPresentation(presentation: ChatPresentation): void;
     setFullscreen(fullscreen: boolean): Promise<boolean>;
+    onFullscreenChanged(listener: (fullscreen: boolean) => void): () => void;
     openChannelAction(channel: string, action: ChannelAction): Promise<void>;
     onChannelActionState(
       listener: (action: ChannelAction, state: ChannelActionWindowState) => void,

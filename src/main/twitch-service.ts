@@ -136,7 +136,10 @@ const sendChatResponseSchema = z.object({
 function cloneChatAssets(assets: TwitchChatAssets): TwitchChatAssets {
   return {
     broadcasterId: assets.broadcasterId,
-    badges: assets.badges.map((badge) => ({ ...badge })),
+    badges: assets.badges.map((badge) => ({
+      ...badge,
+      imageUrls: badge.imageUrls ? [...badge.imageUrls] : undefined,
+    })),
     emotes: assets.emotes.map((emote) => ({ ...emote })),
   };
 }
@@ -155,7 +158,9 @@ const badgeResponseSchema = z.object({
         z.object({
           id: z.string(),
           title: z.string(),
+          image_url_1x: z.string().url().optional(),
           image_url_2x: z.string().url(),
+          image_url_4x: z.string().url().optional(),
         }),
       ),
     }),
@@ -645,7 +650,17 @@ export class TwitchService {
     for (const set of [...globalBadges.data, ...channelBadges.data]) {
       for (const version of set.versions) {
         const key = `${set.set_id}/${version.id}`;
-        badges.set(key, { key, title: version.title, imageUrl: version.image_url_2x });
+        badges.set(key, {
+          key,
+          title: version.title,
+          imageUrl: version.image_url_2x,
+          imageUrls: [
+            version.image_url_2x,
+            version.image_url_4x,
+            version.image_url_1x,
+          ].filter((url, index, urls): url is string =>
+            Boolean(url) && urls.indexOf(url) === index),
+        });
       }
     }
     const emotes = new Map<string, TwitchChatAssets["emotes"][number]>();
@@ -672,13 +687,20 @@ export class TwitchService {
       });
     }
     if (this.token?.scopes.includes("user:read:emotes") && this.account) {
-      const available = await this.getAvailableUserEmotes(
-        this.account.id,
-        broadcaster.id,
-      );
-      if (available.length > 0) {
-        emotes.clear();
-        for (const emote of available) emotes.set(emote.id, emote);
+      try {
+        const available = await this.getAvailableUserEmotes(
+          this.account.id,
+          broadcaster.id,
+        );
+        if (available.length > 0) {
+          emotes.clear();
+          for (const emote of available) emotes.set(emote.id, emote);
+        }
+      } catch (error) {
+        // Available user emotes are an authenticated enhancement. A malformed
+        // owner ID or temporary failure must not take down badges and the
+        // channel/global emotes that were already loaded successfully.
+        console.warn("Unable to load the complete Twitch emote library:", error);
       }
     }
     return {
@@ -711,7 +733,9 @@ export class TwitchService {
     } while (cursor);
 
     const ownerIds = [...new Set(
-      data.map((emote) => emote.owner_id).filter((id) => id && id !== "0"),
+      data
+        .map((emote) => emote.owner_id)
+        .filter((id): id is string => /^\d+$/.test(id) && id !== "0"),
     )];
     const owners = new Map(
       (await this.getUsersByIds(ownerIds)).map((owner) => [owner.id, owner]),
@@ -897,7 +921,7 @@ export class TwitchService {
   }
 
   private async getUsersByIds(ids: string[]): Promise<z.infer<typeof twitchUserSchema>[]> {
-    const uniqueIds = [...new Set(ids)];
+    const uniqueIds = [...new Set(ids.filter((id) => /^\d+$/.test(id)))];
     const users: z.infer<typeof twitchUserSchema>[] = [];
     for (let index = 0; index < uniqueIds.length; index += 100) {
       const query = uniqueIds

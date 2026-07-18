@@ -141,6 +141,12 @@ const api: DesktopApi = {
     setChatPresentation: (presentation: ChatPresentation) =>
       ipcRenderer.send("player:set-chat-presentation", presentation),
     setFullscreen: (fullscreen) => ipcRenderer.invoke("window:set-fullscreen", fullscreen),
+    onFullscreenChanged: (listener: (fullscreen: boolean) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, fullscreen: boolean) =>
+        listener(fullscreen);
+      ipcRenderer.on("window:fullscreen-changed", handler);
+      return () => ipcRenderer.removeListener("window:fullscreen-changed", handler);
+    },
     openChannelAction: (channel: string, action: ChannelAction) =>
       ipcRenderer.invoke("channel:open-action", channel, action),
     onChannelActionState: (

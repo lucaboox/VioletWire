@@ -4,14 +4,46 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0-alpha.1] - 2026-07-18
+
 ### Additions
 
+- Added an embedded Native playback backend that renders libmpv through
+  Electron's shared D3D11 texture pipeline, keeping video and React controls,
+  menus, chat, and overlays in one composited window.
+- Added GPU-accelerated OpenGL rendering for embedded Native playback, with
+  orientation correction, bounded frame transport, renderer recovery, and the
+  existing external-window Native backend retained as a fallback.
+- Made Native playback and the embedded renderer the defaults for new
+  installations while keeping the official Twitch Standard player available.
+- Added clickable Twitch reply threads that show retained conversation context,
+  badges, emotes, timestamps, and reply actions in side and overlay chat.
+- Added timeout and permanent-ban handling with a persistent choice between
+  revealable placeholders and dimmed moderated messages.
+- Replaced native browser tooltips with a consistent app-wide React tooltip
+  layer that works above the embedded player.
 - Added Twitch stream tags to followed-live and category stream cards.
 - Added an in-app changelog viewer beside update controls, with an automatic
   once-per-version What's New popup after an update.
 
 ### Fixes
 
+- Fixed Native overlays, quality menus, fullscreen chat, and keyboard shortcuts
+  freezing or disappearing over video, and added M as the mute shortcut.
+- Fixed Standard fullscreen recovery so Escape and F11 cannot leave the app
+  trapped in Chromium's HTML fullscreen state.
+- Fixed missing Twitch badges by retrying multiple official CDN image sizes and
+  hiding assets cleanly when every variant fails.
+- Improved emote startup by loading 7TV, FrankerFaceZ, and BetterTTV
+  independently, preserving provider priority, and lazily loading picker images
+  below the visible rows.
+- Fixed malformed Twitch emote-owner identifiers preventing otherwise valid
+  badges and emotes from loading.
+- Fixed small provider emotes being enlarged to the normal emote height.
+- Fixed chat reply previews, deleted-message explanations, event-card hover
+  styling, and Scroll to current positioning as the composer changes height.
+- Fixed custom tooltips disappearing whenever live chat generated a scroll
+  event; tooltips now remain attached to their hovered or focused controls.
 - Fixed category pages failing when Twitch returns a null stream-tags field.
 - Made Standard playback retry its initial play request and recover from
   Chromium blocking audible autoplay.

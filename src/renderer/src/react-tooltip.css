@@ -1,0 +1,37 @@
+.violetwire-react-tooltip {
+  position: fixed;
+  z-index: 2147483647;
+  max-width: min(320px, calc(100vw - 20px));
+  padding: 7px 9px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 6px;
+  color: #f4f4f5;
+  background: rgb(30 30 35 / 98%);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 55%);
+  font-family: Inter, "Segoe UI", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  text-align: center;
+  animation: violetwire-tooltip-in 110ms ease-out;
+}
+
+@keyframes violetwire-tooltip-in {
+  from {
+    opacity: 0;
+    scale: .96;
+  }
+
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .violetwire-react-tooltip {
+    animation: none;
+  }
+}

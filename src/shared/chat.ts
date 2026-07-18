@@ -47,6 +47,10 @@ export interface ChatMessage {
     threadUserLogin?: string;
   };
   deleted?: boolean;
+  moderation?: {
+    type: "message-deleted" | "timeout" | "ban";
+    durationSeconds?: number;
+  };
   historical?: boolean;
 }
 
@@ -55,6 +59,18 @@ export function formatChatTimestamp(sentAt: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+export function formatModerationAction(message: ChatMessage): string {
+  if (message.moderation?.type === "timeout") {
+    const seconds = message.moderation.durationSeconds ?? 0;
+    if (seconds >= 86_400 && seconds % 86_400 === 0) return `timed out for ${seconds / 86_400}d`;
+    if (seconds >= 3_600 && seconds % 3_600 === 0) return `timed out for ${seconds / 3_600}h`;
+    if (seconds >= 60 && seconds % 60 === 0) return `timed out for ${seconds / 60}m`;
+    return `timed out for ${seconds}s`;
+  }
+  if (message.moderation?.type === "ban") return "permanently banned";
+  return "deleted";
 }
 
 // True when `message` @-mentions `login` (or is a reply to them). `login` is
@@ -73,6 +89,7 @@ export interface ChatBadgeAsset {
   key: string;
   title: string;
   imageUrl: string;
+  imageUrls?: string[];
 }
 
 export interface TwitchPickerEmote {

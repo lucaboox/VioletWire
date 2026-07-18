@@ -639,6 +639,38 @@ describe("TwitchService chat assets", () => {
       }),
     ]);
   });
+
+  it("keeps badges and emotes when Twitch returns a non-user emote owner ID", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/chat/emotes/user?")) {
+        return json({
+          data: [{
+            id: "event-emote",
+            name: "EventHype",
+            owner_id: "twitch",
+            emote_type: "limitedtime",
+            format: ["static"],
+            scale: ["2.0"],
+            theme_mode: ["dark"],
+          }],
+          template: "https://static-cdn.jtvnw.net/emoticons/v2/{{id}}/{{format}}/{{theme_mode}}/{{scale}}",
+          pagination: {},
+        });
+      }
+      return chatAssetRoutes(url);
+    });
+    const { service, internals } = createAuthenticatedService();
+    if (!internals.token) throw new Error("Expected test token.");
+    internals.token.scopes = ["user:read:emotes"];
+
+    const result = await service.getChatAssets("somechannel");
+
+    expect(result.badges).toHaveLength(1);
+    expect(result.emotes).toEqual([
+      expect.objectContaining({ id: "event-emote", name: "EventHype" }),
+    ]);
+    expect(requestCount("/helix/users?id=twitch")).toBe(0);
+  });
 });
 
 describe("TwitchService chat replies", () => {

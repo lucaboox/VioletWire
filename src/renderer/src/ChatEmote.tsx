@@ -6,6 +6,7 @@ type ChatEmoteProvider = EmoteProvider | "twitch";
 interface ChatEmoteProps {
   className: string;
   imageUrl: string;
+  logicalHeight?: number;
   name: string;
   provider: ChatEmoteProvider;
 }
@@ -20,6 +21,7 @@ const providerLabels: Record<ChatEmoteProvider, string> = {
 export function ChatEmote({
   className,
   imageUrl,
+  logicalHeight,
   name,
   provider,
 }: ChatEmoteProps) {
@@ -57,6 +59,16 @@ export function ChatEmote({
         decoding="async"
         loading="lazy"
         src={imageUrl}
+        style={
+          logicalHeight
+            ? {
+                height: `calc(var(--chat-emote-size, 27px) * ${Math.min(
+                  1,
+                  logicalHeight / (provider === "bttv" ? 28 : 32),
+                )})`,
+              }
+            : undefined
+        }
       />
       {tooltip &&
         createPortal(

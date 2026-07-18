@@ -24,6 +24,28 @@ describe("TwitchChatService replies", () => {
     });
   });
 
+  it("parses timeout duration and permanent bans from CLEARCHAT", () => {
+    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const internals = service as unknown as TwitchChatServiceInternals;
+    const timeout = internals.parseMessageLine(
+      "@ban-duration=600;target-user-id=42;tmi-sent-ts=1720000000000 :tmi.twitch.tv CLEARCHAT #channel :TroubleMaker",
+    );
+    const ban = internals.parseMessageLine(
+      "@target-user-id=42;tmi-sent-ts=1720000001000 :tmi.twitch.tv CLEARCHAT #channel :TroubleMaker",
+    );
+
+    expect(timeout).toMatchObject({
+      login: "troublemaker",
+      deleted: true,
+      moderation: { type: "timeout", durationSeconds: 600 },
+    });
+    expect(ban).toMatchObject({
+      login: "troublemaker",
+      deleted: true,
+      moderation: { type: "ban" },
+    });
+  });
+
   it("parses subscription USERNOTICE metadata and the subscriber message", () => {
     const service = new TwitchChatService(vi.fn(), vi.fn());
     const internals = service as unknown as TwitchChatServiceInternals;

@@ -71,6 +71,29 @@ describe("applyChatMessage", () => {
     expect(unmatched).toBe(next);
   });
 
+  it("marks every visible message from a timed-out user with the moderation details", () => {
+    const original = [
+      makeMessage("a", 1_000, { login: "target" }),
+      makeMessage("b", 2_000, { login: "someone-else" }),
+      makeMessage("c", 3_000, { login: "TARGET" }),
+    ];
+    const next = applyChatMessage(
+      original,
+      makeMessage("moderation-target", 4_000, {
+        login: "target",
+        deleted: true,
+        moderation: { type: "timeout", durationSeconds: 600 },
+      }),
+    );
+
+    expect(next[0]).toMatchObject({
+      deleted: true,
+      moderation: { type: "timeout", durationSeconds: 600 },
+    });
+    expect(next[1]).toBe(original[1]);
+    expect(next[2].deleted).toBe(true);
+  });
+
   it("retains only the newest 500 messages", () => {
     let messages: ChatMessage[] = [];
     for (let index = 0; index < CHAT_MESSAGE_LIMIT + 25; index += 1) {

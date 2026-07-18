@@ -339,7 +339,7 @@ export function EmotePicker({
 
       <div className="vw-emote-body">
         <div className="vw-emote-scroll" ref={scrollHost}>
-          {sections.map((section) => (
+            {sections.map((section, sectionIndex) => (
               <section
                 className="vw-emote-section"
                 key={section.id}
@@ -380,8 +380,8 @@ export function EmotePicker({
                         <img
                           alt=""
                           decoding="async"
-                          fetchPriority={index < 24 ? "high" : "auto"}
-                          loading="eager"
+                          fetchPriority={sectionIndex === 0 && index < 24 ? "high" : "auto"}
+                          loading={sectionIndex === 0 && index < 24 ? "eager" : "lazy"}
                           src={emote.imageUrl}
                         />
                       )}

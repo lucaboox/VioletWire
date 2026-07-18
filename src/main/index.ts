@@ -678,6 +678,40 @@ async function createWindow(): Promise<void> {
       backgroundThrottling: false,
     },
   });
+  const createdWindow = mainWindow;
+  let htmlFullscreen = false;
+  mainWindow.webContents.on("enter-html-full-screen", () => {
+    htmlFullscreen = true;
+    sendToWindow(createdWindow, "window:fullscreen-changed", true);
+  });
+  mainWindow.webContents.on("leave-html-full-screen", () => {
+    htmlFullscreen = false;
+    sendToWindow(createdWindow, "window:fullscreen-changed", false);
+  });
+  mainWindow.on("enter-full-screen", () => {
+    sendToWindow(createdWindow, "window:fullscreen-changed", true);
+  });
+  mainWindow.on("leave-full-screen", () => {
+    sendToWindow(createdWindow, "window:fullscreen-changed", false);
+  });
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (
+      input.type !== "keyDown" ||
+      (input.key !== "Escape" && input.key !== "F11") ||
+      (!htmlFullscreen && !createdWindow.isFullScreen())
+    ) {
+      return;
+    }
+    event.preventDefault();
+    htmlFullscreen = false;
+    void createdWindow.webContents
+      .executeJavaScript(
+        "document.fullscreenElement ? document.exitFullscreen() : undefined",
+      )
+      .catch(() => undefined);
+    createdWindow.setFullScreen(false);
+    sendToWindow(createdWindow, "window:fullscreen-changed", false);
+  });
 
   mainWindow.on("closed", () => {
     destroyPlayer();

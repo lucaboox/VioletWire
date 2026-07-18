@@ -15,10 +15,29 @@ export function applyChatMessage(
   limit = CHAT_MESSAGE_LIMIT,
 ): ChatMessage[] {
   if (message.deleted) {
+    if (message.moderation?.type === "timeout" || message.moderation?.type === "ban") {
+      let changed = false;
+      const next = current.map((item) => {
+        if (item.login.toLowerCase() !== message.login.toLowerCase() || item.deleted) {
+          return item;
+        }
+        changed = true;
+        return {
+          ...item,
+          deleted: true,
+          moderation: message.moderation,
+        };
+      });
+      return changed ? next : current;
+    }
     const index = current.findIndex((item) => item.id === message.id);
     if (index < 0) return current;
     const next = current.slice();
-    next[index] = { ...next[index], deleted: true };
+    next[index] = {
+      ...next[index],
+      deleted: true,
+      moderation: message.moderation ?? { type: "message-deleted" },
+    };
     return next;
   }
 

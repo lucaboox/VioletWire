@@ -30,6 +30,8 @@ const bttvEmoteSchema = z.object({
   imageType: z.string().optional(),
   animated: z.boolean().optional(),
   modifier: z.boolean().optional().default(false),
+  width: z.number().positive().optional(),
+  height: z.number().positive().optional(),
 });
 const bttvGlobalSchema = z.array(bttvEmoteSchema);
 const bttvChannelSchema = z.object({
@@ -83,7 +85,7 @@ export class ThirdPartyEmoteService {
   }
 
   getBttvGlobal(): Promise<EmoteSetResult> {
-    return this.getSet("bttv:global", "bttv", "global", async () =>
+    return this.getSet("bttv:v2:global", "bttv", "global", async () =>
       bttvGlobalSchema
         .parse(
           await this.fetchJson(
@@ -97,7 +99,7 @@ export class ThirdPartyEmoteService {
 
   getBttvChannel(broadcasterId: string): Promise<EmoteSetResult> {
     const id = z.string().regex(/^\d+$/).parse(broadcasterId);
-    return this.getSet(`bttv:channel:${id}`, "bttv", "channel", async () => {
+    return this.getSet(`bttv:v2:channel:${id}`, "bttv", "channel", async () => {
       const payload = bttvChannelSchema.parse(
         await this.fetchJson(
           `https://api.betterttv.net/3/cached/users/twitch/${encodeURIComponent(id)}`,
@@ -205,10 +207,12 @@ export class ThirdPartyEmoteService {
   }
 
   private mapBttvEmote(emote: z.infer<typeof bttvEmoteSchema>): ProviderEmote {
+    const logicalWidth = emote.width ?? 28;
+    const logicalHeight = emote.height ?? 28;
     const variants: EmoteImageVariant[] = [1, 2, 3].map((scale) => ({
       url: `https://cdn.betterttv.net/emote/${encodeURIComponent(emote.id)}/${scale}x.webp`,
-      width: 28 * scale,
-      height: 28 * scale,
+      width: logicalWidth * scale,
+      height: logicalHeight * scale,
       format: "webp",
       scale,
     }));

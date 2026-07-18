@@ -9,6 +9,7 @@ export const appPreferencesSchema = z.object({
   chatHistoryLimit: chatHistoryLimitSchema,
   chatFontSize: z.number().int().min(14).max(25),
   chatEmoteSize: z.number().int().min(18).max(48),
+  chatDeletedMessageStyle: z.enum(["placeholder", "dimmed"]),
   chatOnLeft: z.boolean(),
   chatOverlayOpacity: z.number().int().min(25).max(100),
   mentionSoundEnabled: z.boolean(),
@@ -22,12 +23,13 @@ export type AppPreferences = z.infer<typeof appPreferencesSchema>;
 export type AppPreferencesPatch = z.infer<typeof appPreferencesPatchSchema>;
 
 export const defaultAppPreferences: AppPreferences = {
-  preferredPlayerMode: "official",
-  experimentalTexturePlayer: false,
+  preferredPlayerMode: "native",
+  experimentalTexturePlayer: true,
   chatTimestamps: true,
   chatHistoryLimit: 20,
   chatFontSize: 14,
   chatEmoteSize: 27,
+  chatDeletedMessageStyle: "placeholder",
   chatOnLeft: false,
   chatOverlayOpacity: 88,
   mentionSoundEnabled: false,

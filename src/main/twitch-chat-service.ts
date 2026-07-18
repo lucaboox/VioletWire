@@ -135,6 +135,28 @@ export class TwitchChatService {
   }
 
   private parseMessageLine(line: string): ChatMessage | null {
+    const clearChatMatch =
+      /^(?:@([^ ]+) )?:[^ ]+ CLEARCHAT #([^ ]+)(?: :?([\s\S]+))?$/.exec(line);
+    if (clearChatMatch?.[3]) {
+      const tags = this.parseTags(clearChatMatch[1] ?? "");
+      const durationSeconds = Number(tags["ban-duration"]);
+      const login = clearChatMatch[3].trim().toLowerCase();
+      return {
+        id: `moderation-${login}-${tags["tmi-sent-ts"] || Date.now()}`,
+        channel: clearChatMatch[2],
+        login,
+        displayName: login,
+        color: "#a1a1aa",
+        text: "",
+        badges: [],
+        sentAt: Number(tags["tmi-sent-ts"]) || Date.now(),
+        twitchEmotes: [],
+        deleted: true,
+        moderation: Number.isFinite(durationSeconds) && durationSeconds > 0
+          ? { type: "timeout", durationSeconds }
+          : { type: "ban" },
+      };
+    }
     const deletionMatch =
       /^(?:@([^ ]+) )?:[^ ]+ CLEARMSG #([^ ]+)(?: :?[\s\S]*)?$/.exec(line);
     if (deletionMatch) {
@@ -152,6 +174,7 @@ export class TwitchChatService {
         sentAt: Number(tags["tmi-sent-ts"]) || Date.now(),
         twitchEmotes: [],
         deleted: true,
+        moderation: { type: "message-deleted" },
       };
     }
     const userNoticeMatch =
