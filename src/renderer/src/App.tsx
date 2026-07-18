@@ -44,6 +44,7 @@ import type {
   ChatPresentation,
   ChannelActionWindowState,
   NativePlayerAvailability,
+  NativeRenderBackend,
   NativePlayerState,
   PlayerMode,
 } from "../../shared/player";
@@ -464,9 +465,11 @@ export function App() {
   const [preferredMode, setPreferredMode] = useState<PlayerMode>(() =>
     window.localStorage.getItem("glint.playback.default") === "native" ? "native" : "official",
   );
+  const [experimentalTexturePlayer, setExperimentalTexturePlayer] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const legacyPreferences = useRef({
     preferredPlayerMode: preferredMode,
+    experimentalTexturePlayer: false,
     chatTimestamps,
     chatHistoryLimit,
     chatFontSize,
@@ -479,6 +482,10 @@ export function App() {
       window.localStorage.getItem("glint.playback.audioCompression") === "true",
   });
   const [activeMode, setActiveMode] = useState<PlayerMode | null>(null);
+  const [activeNativeBackend, setActiveNativeBackend] =
+    useState<NativeRenderBackend | null>(null);
+  const [textureOverlayTestOpen, setTextureOverlayTestOpen] = useState(false);
+  const [textureOverlayTestClicks, setTextureOverlayTestClicks] = useState(0);
   const [nativeAvailability, setNativeAvailability] =
     useState<NativePlayerAvailability | null>(null);
   const [nativeState, setNativeState] = useState<NativePlayerState>({
@@ -704,6 +711,7 @@ export function App() {
     const applyPreferences = (preferences: AppPreferences) => {
       if (disposed) return;
       setPreferredMode(preferences.preferredPlayerMode);
+      setExperimentalTexturePlayer(preferences.experimentalTexturePlayer);
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
       setChatFontSize(preferences.chatFontSize);
@@ -731,6 +739,7 @@ export function App() {
     void window.desktop.preferences
       .update({
         preferredPlayerMode: preferredMode,
+        experimentalTexturePlayer,
         chatTimestamps,
         chatHistoryLimit,
         chatFontSize,
@@ -751,6 +760,7 @@ export function App() {
     mentionSoundEnabled,
     oledMode,
     preferredMode,
+    experimentalTexturePlayer,
     preferencesReady,
   ]);
 
@@ -1555,12 +1565,19 @@ export function App() {
       setActiveSection("home");
       setActiveChannel(result.channel);
       setActiveMode(result.mode);
+      setActiveNativeBackend(result.nativeBackend ?? null);
+      setTextureOverlayTestOpen(result.nativeBackend === "texture");
+      setTextureOverlayTestClicks(0);
       setNativeControlsVisible(true);
       setChatVisible(true);
       setChatPresentation("side");
       setTheaterMode(false);
       if (result.fallbackReason) {
-        setNotice(`Native player unavailable: ${result.fallbackReason} Using the official player.`);
+        setNotice(
+          result.mode === "native"
+            ? result.fallbackReason
+            : `Native player unavailable: ${result.fallbackReason} Using the official player.`,
+        );
       }
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -1576,6 +1593,8 @@ export function App() {
     setTheaterMode(false);
     setActiveChannel(null);
     setActiveMode(null);
+    setActiveNativeBackend(null);
+    setTextureOverlayTestOpen(false);
     setReplyingTo(null);
     setEmotePickerOpen(false);
     setActiveSection(playerReturnSection);
@@ -1604,9 +1623,16 @@ export function App() {
     try {
       const result = await window.desktop.player.open(activeChannel, mode);
       setActiveMode(result.mode);
+      setActiveNativeBackend(result.nativeBackend ?? null);
+      setTextureOverlayTestOpen(result.nativeBackend === "texture");
+      setTextureOverlayTestClicks(0);
       setNativeControlsVisible(true);
       if (result.fallbackReason) {
-        setNotice(`Native player unavailable: ${result.fallbackReason} Using the official player.`);
+        setNotice(
+          result.mode === "native"
+            ? result.fallbackReason
+            : `Native player unavailable: ${result.fallbackReason} Using the official player.`,
+        );
       } else {
         setNotice(mode === "native" ? "Experimental native player started." : "Official player restored.");
       }
@@ -1619,6 +1645,9 @@ export function App() {
     if (!activeChannel) return;
     const result = await window.desktop.player.open(activeChannel, "native", nativeState.quality);
     setActiveMode(result.mode);
+    setActiveNativeBackend(result.nativeBackend ?? null);
+    setTextureOverlayTestOpen(result.nativeBackend === "texture");
+    setTextureOverlayTestClicks(0);
     setNativeControlsVisible(true);
     if (result.fallbackReason) setNotice(result.fallbackReason);
   }
@@ -2237,6 +2266,53 @@ export function App() {
                       title={`Official Twitch player for ${activeChannel}`}
                     />
                   )}
+                  {activeMode === "native" && activeNativeBackend === "texture" && (
+                    <canvas
+                      className="native-texture-canvas"
+                      data-native-texture-canvas
+                      aria-hidden="true"
+                    />
+                  )}
+                  {activeMode === "native" &&
+                    activeNativeBackend === "texture" &&
+                    textureOverlayTestOpen && (
+                      <div className="native-texture-overlay-test" role="status">
+                        <div className="native-texture-overlay-test-heading">
+                          <span><Layers size={16} /> React overlay test</span>
+                          <button
+                            aria-label="Close texture overlay test"
+                            onClick={() => setTextureOverlayTestOpen(false)}
+                            title="Close test"
+                            type="button"
+                          >
+                            <X size={15} />
+                          </button>
+                        </div>
+                        <p>
+                          If this card stays above the moving video, texture compositing works.
+                          Clicking below also tests mouse input.
+                        </p>
+                        <button
+                          className="native-texture-overlay-test-action"
+                          onClick={() => setTextureOverlayTestClicks((count) => count + 1)}
+                          type="button"
+                        >
+                          Click test
+                          <strong>{textureOverlayTestClicks}</strong>
+                        </button>
+                      </div>
+                    )}
+                  {activeMode === "native" &&
+                    activeNativeBackend === "texture" &&
+                    !textureOverlayTestOpen && (
+                      <button
+                        className="native-texture-overlay-test-reopen"
+                        onClick={() => setTextureOverlayTestOpen(true)}
+                        type="button"
+                      >
+                        <Layers size={14} /> Overlay test
+                      </button>
+                    )}
                   {activeMode === "native" && nativeState.status !== "playing" && (
                     <div className="native-player-placeholder">
                       <span className={`native-status-orb ${nativeState.status}`} />
@@ -3114,6 +3190,29 @@ export function App() {
                 </button>
               </div>
             </div>
+            <div className="settings-card">
+              <div>
+                <strong>Embedded Native texture prototype</strong>
+                <span>
+                  Render libmpv inside VioletWire so React menus can cover the video normally.
+                  This experimental Windows path automatically falls back to the existing Native
+                  window if it cannot start.
+                  {nativeAvailability?.textureAvailable === false &&
+                    ` ${nativeAvailability.textureReason ?? ""}`}
+                </span>
+              </div>
+              <button
+                aria-pressed={experimentalTexturePlayer}
+                className={
+                  experimentalTexturePlayer ? "settings-switch active" : "settings-switch"
+                }
+                onClick={() => setExperimentalTexturePlayer((current) => !current)}
+                title="Toggle the experimental embedded Native renderer"
+                type="button"
+              >
+                <span />
+              </button>
+            </div>
           </section>
         ) : (
           <section className="following-home">
@@ -3350,6 +3449,30 @@ export function App() {
                         Native
                       </button>
                     </div>
+                  </div>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Embedded Native texture prototype</strong>
+                      <span>
+                        Draw libmpv inside the app compositor instead of a separate Windows
+                        surface. Applies the next time Native playback starts and falls back
+                        automatically.
+                        {nativeAvailability?.textureAvailable === false &&
+                          ` ${nativeAvailability.textureReason ?? ""}`}
+                      </span>
+                    </div>
+                    <button
+                      aria-pressed={experimentalTexturePlayer}
+                      className={
+                        experimentalTexturePlayer
+                          ? "settings-switch active"
+                          : "settings-switch"
+                      }
+                      onClick={() => setExperimentalTexturePlayer((current) => !current)}
+                      type="button"
+                    >
+                      <span />
+                    </button>
                   </div>
                 </section>
                 <section>

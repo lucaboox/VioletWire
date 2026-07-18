@@ -27,6 +27,7 @@ describe("PreferencesService", () => {
 
     const migrated = await service.getOrMigrate({
       preferredPlayerMode: "native",
+      experimentalTexturePlayer: true,
       chatTimestamps: false,
       chatHistoryLimit: 70,
       chatFontSize: 18,
@@ -40,6 +41,7 @@ describe("PreferencesService", () => {
 
     expect(migrated).toMatchObject({
       preferredPlayerMode: "native",
+      experimentalTexturePlayer: true,
       chatTimestamps: false,
       chatHistoryLimit: 70,
       chatFontSize: 18,
@@ -55,6 +57,7 @@ describe("PreferencesService", () => {
     await first.initialize();
     await first.update({
       preferredPlayerMode: "native",
+      experimentalTexturePlayer: true,
       chatTimestamps: false,
       chatHistoryLimit: 100,
       chatFontSize: 21,
@@ -71,6 +74,7 @@ describe("PreferencesService", () => {
 
     expect(await second.getOrMigrate()).toEqual({
       preferredPlayerMode: "native",
+      experimentalTexturePlayer: true,
       chatTimestamps: false,
       chatHistoryLimit: 100,
       chatFontSize: 21,

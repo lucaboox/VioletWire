@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, sharedTexture } from "electron";
 import type {
   ChannelAction,
   ChannelActionWindowState,
@@ -21,6 +21,27 @@ import type {
   AppPreferencesPatch,
   PreferencesApi,
 } from "../shared/preferences";
+
+let lastTextureSequence = -1;
+sharedTexture.setSharedTextureReceiver(async (received, sequence: unknown) => {
+  const imported = received.importedSharedTexture;
+  const frame = imported.getVideoFrame();
+  try {
+    if (typeof sequence === "number" && sequence < lastTextureSequence) return;
+    if (typeof sequence === "number") lastTextureSequence = sequence;
+    const canvas = document.querySelector<HTMLCanvasElement>("[data-native-texture-canvas]");
+    if (!canvas) return;
+    const width = frame.codedWidth;
+    const height = frame.codedHeight;
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false, desynchronized: true });
+    context?.drawImage(frame, 0, 0, width, height);
+  } finally {
+    frame.close();
+    imported.release();
+  }
+});
 
 const api: DesktopApi = {
   system: {

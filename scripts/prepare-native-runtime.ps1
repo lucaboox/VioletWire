@@ -9,6 +9,9 @@ $mpvVersion = "20260610-git-304426c"
 $mpvArchiveName = "mpv-x86_64-20260610-git-304426c.7z"
 $mpvUrl = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260610/$mpvArchiveName"
 $mpvSha256 = "FACAC536BAA73C7B925771AF5E39A3C9CB16B8D75B59A6E9800DE89799DFFCA7"
+$mpvDevArchiveName = "mpv-dev-x86_64-20260610-git-304426c.7z"
+$mpvDevUrl = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260610/$mpvDevArchiveName"
+$mpvDevSha256 = "8CBB25EA784F01AFBB3F904217CAB1317430A8BCFD5680FD827A866367F71CC9"
 
 $mpvLicenseFiles = @(
   @{
@@ -33,6 +36,7 @@ $cacheDirectory = Join-Path $workspace ".cache\native-runtime"
 $nativeDirectory = Join-Path $workspace "vendor\native"
 $streamlinkDirectory = Join-Path $nativeDirectory "streamlink"
 $mpvDirectory = Join-Path $nativeDirectory "mpv"
+$mpvDevDirectory = Join-Path $nativeDirectory "mpv-dev"
 $manifestPath = Join-Path $nativeDirectory "versions.json"
 $sevenZip = Join-Path $workspace "node_modules\7zip-bin\win\x64\7za.exe"
 
@@ -97,16 +101,21 @@ New-Item -ItemType Directory -Force -Path $cacheDirectory, $nativeDirectory | Ou
 
 $streamlinkExecutable = Join-Path $streamlinkDirectory "bin\streamlink.exe"
 $mpvExecutable = Join-Path $mpvDirectory "mpv.exe"
+$mpvHeader = Join-Path $mpvDevDirectory "include\mpv\client.h"
+$libmpvDll = Join-Path $mpvDevDirectory "libmpv-2.dll"
 $expectedManifest = [ordered]@{
   streamlink = $streamlinkVersion
   streamlinkFfmpeg = "omitted"
   mpv = $mpvVersion
+  mpvDev = $mpvVersion
 } | ConvertTo-Json
 
 if (
   (Test-Path -LiteralPath $manifestPath) -and
   (Test-Path -LiteralPath $streamlinkExecutable) -and
   (Test-Path -LiteralPath $mpvExecutable) -and
+  (Test-Path -LiteralPath $mpvHeader) -and
+  (Test-Path -LiteralPath $libmpvDll) -and
   ((Get-Content -LiteralPath $manifestPath -Raw).Trim() -eq $expectedManifest.Trim())
 ) {
   Copy-Item -LiteralPath (Join-Path $workspace "third_party\NATIVE_RUNTIME_SOURCES.md") `
@@ -123,8 +132,50 @@ if (-not (Test-Path -LiteralPath $sevenZip)) {
 
 $streamlinkArchive = Join-Path $cacheDirectory $streamlinkArchiveName
 $mpvArchive = Join-Path $cacheDirectory $mpvArchiveName
+$mpvDevArchive = Join-Path $cacheDirectory $mpvDevArchiveName
+
+# Existing VioletWire checkouts may already have the exact Streamlink and mpv
+# runtime in use by a running dev app. Add only the new libmpv SDK in that case
+# instead of replacing locked playback executables.
+$existingManifest = $null
+if (Test-Path -LiteralPath $manifestPath) {
+  try {
+    $existingManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  } catch {
+    $existingManifest = $null
+  }
+}
+if (
+  $existingManifest -and
+  $existingManifest.streamlink -eq $streamlinkVersion -and
+  $existingManifest.mpv -eq $mpvVersion -and
+  (Test-Path -LiteralPath $streamlinkExecutable) -and
+  (Test-Path -LiteralPath $mpvExecutable)
+) {
+  if (
+    -not (Test-Path -LiteralPath $mpvHeader) -or
+    -not (Test-Path -LiteralPath $libmpvDll)
+  ) {
+    Get-VerifiedFile $mpvDevUrl $mpvDevArchive $mpvDevSha256
+    Remove-WorkspaceDirectory $mpvDevDirectory
+    New-Item -ItemType Directory -Force -Path $mpvDevDirectory | Out-Null
+    & $sevenZip x $mpvDevArchive "-o$mpvDevDirectory" -y | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "7-Zip could not extract the mpv development archive."
+    }
+  }
+  Set-Content -LiteralPath $manifestPath -Value $expectedManifest -Encoding utf8
+  Copy-Item -LiteralPath (Join-Path $workspace "third_party\NATIVE_RUNTIME_SOURCES.md") `
+    -Destination (Join-Path $nativeDirectory "NATIVE_RUNTIME_SOURCES.md") -Force
+  Copy-Item -LiteralPath (Join-Path $workspace "THIRD_PARTY_NOTICES.md") `
+    -Destination (Join-Path $nativeDirectory "THIRD_PARTY_NOTICES.md") -Force
+  Write-Host "Bundled native runtime and libmpv SDK are prepared."
+  exit 0
+}
+
 Get-VerifiedFile $streamlinkUrl $streamlinkArchive $streamlinkSha256
 Get-VerifiedFile $mpvUrl $mpvArchive $mpvSha256
+Get-VerifiedFile $mpvDevUrl $mpvDevArchive $mpvDevSha256
 
 $streamlinkStaging = Join-Path $nativeDirectory ".streamlink-staging"
 Remove-WorkspaceDirectory $streamlinkStaging
@@ -149,6 +200,13 @@ if ($LASTEXITCODE -ne 0) {
   throw "7-Zip could not extract the mpv archive."
 }
 
+Remove-WorkspaceDirectory $mpvDevDirectory
+New-Item -ItemType Directory -Force -Path $mpvDevDirectory | Out-Null
+& $sevenZip x $mpvDevArchive "-o$mpvDevDirectory" -y | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  throw "7-Zip could not extract the mpv development archive."
+}
+
 $mpvLicensesDirectory = Join-Path $mpvDirectory "licenses"
 New-Item -ItemType Directory -Force -Path $mpvLicensesDirectory | Out-Null
 foreach ($license in $mpvLicenseFiles) {
@@ -164,6 +222,12 @@ if (-not (Test-Path -LiteralPath $streamlinkExecutable)) {
 }
 if (-not (Test-Path -LiteralPath $mpvExecutable)) {
   throw "mpv extraction completed without mpv.exe."
+}
+if (-not (Test-Path -LiteralPath $mpvHeader)) {
+  throw "mpv development extraction completed without include\mpv\client.h."
+}
+if (-not (Test-Path -LiteralPath $libmpvDll)) {
+  throw "mpv development extraction completed without libmpv-2.dll."
 }
 
 Set-Content -LiteralPath $manifestPath -Value $expectedManifest -Encoding utf8

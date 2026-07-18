@@ -17,7 +17,15 @@ module.exports = {
   extraResources: [
     { from: "build/icon.png", to: "icon.png" },
     { from: "THIRD_PARTY_NOTICES.md", to: "THIRD_PARTY_NOTICES.md" },
-    { from: "vendor/native", to: "native" },
+    {
+      from: "vendor/native",
+      to: "native",
+      filter: ["**/*", "!mpv-dev/include/**", "!mpv-dev/*.a"],
+    },
+    {
+      from: "native/texture-player/build/Release/violetwire_texture_player.node",
+      to: "native/texture-player/violetwire_texture_player.node",
+    },
   ],
   win: {
     icon: "build/icon.png",

@@ -23,9 +23,11 @@ import {
   type ChannelAction,
   type ChannelActionWindowState,
   type NativeControlsContext,
+  type NativeRenderBackend,
   type PlayerMode,
 } from "../shared/player";
 import { NativePlayer } from "./native-player";
+import { TextureNativePlayer } from "./texture-native-player";
 import { TwitchService } from "./twitch-service";
 import { PlaybackSessionService } from "./playback-session";
 import { SevenTvService } from "./seven-tv-service";
@@ -81,6 +83,7 @@ let chatPresentation: ChatPresentation = "side";
 let chatVisible = true;
 let lastChatBounds: Rectangle | null = null;
 let activePlayerMode: PlayerMode | null = null;
+let activeNativeBackend: NativeRenderBackend | null = null;
 let activeChannelName: string | null = null;
 let rendererServer: RendererServer | null = null;
 const playbackSessionService = new PlaybackSessionService(
@@ -107,7 +110,7 @@ const updateService = new UpdateService(
 
 function suspendDetachedNativeSurfaces(): void {
   if (activePlayerMode !== "native") return;
-  nativePlayer.suspendSurface();
+  if (activeNativeBackend === "window") nativePlayer.suspendSurface();
   if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) nativeControlsWindow.hide();
   if (chatOverlayWindow && !chatOverlayWindow.isDestroyed()) chatOverlayWindow.hide();
   if (
@@ -121,7 +124,7 @@ function suspendDetachedNativeSurfaces(): void {
 
 function restoreDetachedNativeSurfaces(): void {
   if (activePlayerMode !== "native") return;
-  nativePlayer.resumeSurface();
+  if (activeNativeBackend === "window") nativePlayer.resumeSurface();
   applyChatBounds();
   applyNativeControlsBounds();
   if (
@@ -176,6 +179,15 @@ const nativePlayer = new NativePlayer(
       nativeControlsWindow.moveTop();
     }
   },
+  () => playbackSessionService.getToken(),
+);
+const textureNativePlayer = new TextureNativePlayer(
+  () => mainWindow,
+  (state) => {
+    sendToWindow(mainWindow, "native-player:state", state);
+    sendToWindow(nativeControlsWindow, "native-player:state", state);
+  },
+  () => nativePlayer.getAvailability().streamlinkPath,
   () => playbackSessionService.getToken(),
 );
 const twitchService = new TwitchService();
@@ -598,9 +610,11 @@ function destroyPlayer(): void {
   channelActionWindow = null;
   channelActionKind = null;
   nativePlayer.destroy();
+  textureNativePlayer.destroy();
   twitchChatService.disconnect();
   destroyNativeControlsWindow();
   activePlayerMode = null;
+  activeNativeBackend = null;
   activeChannelName = null;
   if (chatView) {
     if (chatOverlayWindow && !chatOverlayWindow.isDestroyed()) {
@@ -673,13 +687,29 @@ ipcMain.handle(
   activeChannelName = channel;
 
   let mode = requestedMode;
+  let nativeBackend: NativeRenderBackend | undefined;
   let fallbackReason: string | undefined;
   if (requestedMode === "native") {
-    const result = nativePlayer.start(channel, requestedQuality);
+    const useTextureBackend = preferencesService.get().experimentalTexturePlayer;
+    const textureResult = useTextureBackend
+      ? await textureNativePlayer.start(channel, requestedQuality)
+      : null;
+    const result =
+      textureResult?.ok
+        ? textureResult
+        : nativePlayer.start(channel, requestedQuality);
     if (!result.ok) {
       mode = "official";
-      fallbackReason = result.reason;
+      fallbackReason =
+        textureResult && !textureResult.ok
+          ? `${textureResult.reason} Window-hosted Native also failed: ${result.reason}`
+          : result.reason;
     } else {
+      nativeBackend = textureResult?.ok ? "texture" : "window";
+      activeNativeBackend = nativeBackend;
+      if (textureResult && !textureResult.ok) {
+        fallbackReason = `Embedded Native unavailable: ${textureResult.reason} Using the window-hosted Native player.`;
+      }
       await createNativeControlsWindow();
     }
   }
@@ -690,7 +720,7 @@ ipcMain.handle(
   chatVisible = true;
   twitchChatService.connect(channel);
 
-  return { channel, mode, fallbackReason };
+  return { channel, mode, nativeBackend, fallbackReason };
   },
 );
 
@@ -701,7 +731,8 @@ ipcMain.on("player:set-bounds", (_event, input: unknown) => {
   if (!result.success) return;
   lastPlayerBounds = result.data;
   if (activePlayerMode === "native") {
-    nativePlayer.setBounds(result.data);
+    if (activeNativeBackend === "texture") textureNativePlayer.setBounds(result.data);
+    else nativePlayer.setBounds(result.data);
     applyNativeControlsBounds();
   }
   applySubscriptionDrawerBounds();
@@ -736,7 +767,15 @@ ipcMain.on("player:set-chat-presentation", (_event, input: unknown) => {
   if (result.success) setChatPresentation(result.data);
 });
 
-ipcMain.handle("native-player:get-availability", () => nativePlayer.getAvailability());
+ipcMain.handle("native-player:get-availability", () => {
+  const availability = nativePlayer.getAvailability();
+  const textureAvailability = textureNativePlayer.getAvailability();
+  return {
+    ...availability,
+    textureAvailable: textureAvailability.available,
+    textureReason: textureAvailability.reason,
+  };
+});
 
 ipcMain.handle("native-player:get-qualities", (_event, input: unknown) => {
   const channel = channelNameSchema.parse(input);
@@ -745,18 +784,23 @@ ipcMain.handle("native-player:get-qualities", (_event, input: unknown) => {
 
 ipcMain.handle(
   "native-player:set-quality",
-  (_event, channelInput: unknown, qualityInput: unknown) => {
+  async (_event, channelInput: unknown, qualityInput: unknown) => {
     if (activePlayerMode !== "native") return;
     const channel = channelNameSchema.parse(channelInput);
     const quality = nativeQualitySchema.parse(qualityInput);
-    const result = nativePlayer.start(channel, quality);
+    const result =
+      activeNativeBackend === "texture"
+        ? await textureNativePlayer.start(channel, quality)
+        : nativePlayer.start(channel, quality);
     if (!result.ok) throw new Error(result.reason);
   },
 );
 
 ipcMain.on("native-player:control", (_event, input: unknown) => {
   const result = nativePlayerCommandSchema.safeParse(input);
-  if (result.success && activePlayerMode === "native") nativePlayer.control(result.data);
+  if (!result.success || activePlayerMode !== "native") return;
+  if (activeNativeBackend === "texture") textureNativePlayer.control(result.data);
+  else nativePlayer.control(result.data);
 });
 
 ipcMain.on("native-controls:set-visible", (_event, input: unknown) => {

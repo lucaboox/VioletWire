@@ -9,3 +9,4 @@ coverage/
 .env.local
 .cache/
 vendor/native/
+native/*/build/

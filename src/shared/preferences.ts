@@ -4,6 +4,7 @@ import { playerModeSchema } from "./player";
 
 export const appPreferencesSchema = z.object({
   preferredPlayerMode: playerModeSchema,
+  experimentalTexturePlayer: z.boolean(),
   chatTimestamps: z.boolean(),
   chatHistoryLimit: chatHistoryLimitSchema,
   chatFontSize: z.number().int().min(14).max(25),
@@ -22,6 +23,7 @@ export type AppPreferencesPatch = z.infer<typeof appPreferencesPatchSchema>;
 
 export const defaultAppPreferences: AppPreferences = {
   preferredPlayerMode: "official",
+  experimentalTexturePlayer: false,
   chatTimestamps: true,
   chatHistoryLimit: 20,
   chatFontSize: 14,

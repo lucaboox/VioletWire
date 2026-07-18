@@ -41,6 +41,7 @@ export const playerBoundsSchema = z.object({
 
 export const channelActionSchema = z.enum(["channel", "subscribe", "clip"]);
 export const playerModeSchema = z.enum(["official", "native"]);
+export const nativeRenderBackendSchema = z.enum(["window", "texture"]);
 export const chatPresentationSchema = z.enum(["side", "overlay"]);
 export const nativeControlActionSchema = z.enum([
   "activity",
@@ -79,6 +80,7 @@ export type PlayerBounds = z.infer<typeof playerBoundsSchema>;
 export type ChannelAction = z.infer<typeof channelActionSchema>;
 export type ChannelActionWindowState = "closed" | "loading" | "open";
 export type PlayerMode = z.infer<typeof playerModeSchema>;
+export type NativeRenderBackend = z.infer<typeof nativeRenderBackendSchema>;
 export type ChatPresentation = z.infer<typeof chatPresentationSchema>;
 export type NativeControlAction = z.infer<typeof nativeControlActionSchema>;
 export type NativeQualityValue = z.infer<typeof nativeQualitySchema>;
@@ -156,6 +158,8 @@ export interface NativePlayerAvailability {
   streamlinkPath?: string;
   mpvPath?: string;
   reason?: string;
+  textureAvailable?: boolean;
+  textureReason?: string;
 }
 
 export interface NativePlayerState {
@@ -182,6 +186,7 @@ export interface DesktopApi {
     open(channel: string, mode: PlayerMode, quality?: NativeQualityValue): Promise<{
       channel: string;
       mode: PlayerMode;
+      nativeBackend?: NativeRenderBackend;
       fallbackReason?: string;
     }>;
     close(): Promise<void>;
