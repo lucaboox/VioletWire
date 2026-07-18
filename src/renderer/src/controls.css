@@ -151,6 +151,18 @@ input {
   overflow-wrap: anywhere;
 }
 
+.native-video-chat-message.mentioned {
+  margin: 1px 0;
+  padding-left: 8px;
+  border-radius: 5px;
+  background: #9147ff33;
+  box-shadow: inset 3px 0 0 #a970ff;
+}
+
+.controls-surface.oled-mode .native-video-chat-message.mentioned {
+  background: #9147ff40;
+}
+
 .native-chat-reply-parent {
   display: block;
   overflow: hidden;

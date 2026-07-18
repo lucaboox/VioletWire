@@ -68,6 +68,10 @@ let channelActionKind: ChannelAction | null = null;
 let nativeControlsVisible = true;
 let nativeControlsExpanded = false;
 let nativeEmotePickerOpen = false;
+// Measured position of the detached emote picker inside the controls window,
+// reported by the renderer so the clickable window region hugs the visible
+// picker instead of a fixed-size guess.
+let nativeEmotePickerBounds: Rectangle | null = null;
 let nativeControlsContext: NativeControlsContext | null = null;
 let lastPlayerBounds: Rectangle | null = null;
 let chatPresentation: ChatPresentation = "side";
@@ -232,13 +236,28 @@ function applyNativeControlsBounds(): void {
       height: Math.min(78, playerHeight),
     },
   ];
+  // Prefer the renderer-measured picker rectangle (plus a small margin for
+  // the resize handle) so no invisible interactive band surrounds the picker
+  // and swallows clicks meant for the chat behind it. The fixed rectangle is
+  // only a fallback for the first frame before a measurement arrives.
+  const pickerMargin = 8;
+  const measuredPicker = nativeEmotePickerBounds;
   const pickerShape = detachedPickerOverSideChat
-    ? [{
-        x: Math.max(0, width - Math.min(640, width)),
-        y: Math.max(0, height - 790),
-        width: Math.min(640, width),
-        height: Math.min(720, height),
-      }]
+    ? [
+        measuredPicker
+          ? {
+              x: Math.max(0, measuredPicker.x - pickerMargin),
+              y: Math.max(0, measuredPicker.y - pickerMargin),
+              width: Math.min(width, measuredPicker.width + pickerMargin * 2),
+              height: Math.min(height, measuredPicker.height + pickerMargin * 2),
+            }
+          : {
+              x: Math.max(0, width - Math.min(640, width)),
+              y: Math.max(0, height - 790),
+              width: Math.min(640, width),
+              height: Math.min(720, height),
+            },
+      ]
     : [];
   nativeControlsWindow.setShape(
     nativeControlsExpanded || nativeChatOverlay
@@ -305,6 +324,7 @@ function destroyNativeControlsWindow(): void {
   nativeControlsVisible = true;
   nativeControlsExpanded = false;
   nativeEmotePickerOpen = false;
+  nativeEmotePickerBounds = null;
   nativeControlsContext = null;
   lastPlayerBounds = null;
 }
@@ -729,6 +749,7 @@ ipcMain.on("native-controls:set-expanded", (_event, input: unknown) => {
 ipcMain.on("native-controls:set-emote-picker", (_event, input: unknown) => {
   if (typeof input !== "boolean" || activePlayerMode !== "native") return;
   nativeEmotePickerOpen = input;
+  if (!input) nativeEmotePickerBounds = null;
   sendToWindow(mainWindow, "native-controls:emote-picker", input);
   sendToWindow(nativeControlsWindow, "native-controls:emote-picker", input);
   if (!nativeControlsWindow) return;
@@ -743,10 +764,22 @@ ipcMain.on("native-controls:set-emote-picker", (_event, input: unknown) => {
   }
 });
 
+ipcMain.on("native-controls:set-emote-picker-bounds", (_event, input: unknown) => {
+  if (input === null) {
+    nativeEmotePickerBounds = null;
+    return;
+  }
+  const result = playerBoundsSchema.safeParse(input);
+  if (!result.success) return;
+  nativeEmotePickerBounds = result.data;
+  if (nativeEmotePickerOpen) applyNativeControlsBounds();
+});
+
 ipcMain.on("native-controls:emote-selected", (_event, input: unknown) => {
   const result = outgoingChatMessageSchema.safeParse(input);
   if (!result.success) return;
   nativeEmotePickerOpen = false;
+  nativeEmotePickerBounds = null;
   sendToWindow(mainWindow, "native-controls:emote-selected", result.data);
   sendToWindow(mainWindow, "native-controls:emote-picker", false);
   sendToWindow(nativeControlsWindow, "native-controls:emote-picker", false);

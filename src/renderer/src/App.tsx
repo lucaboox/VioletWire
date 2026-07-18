@@ -63,7 +63,7 @@ import type {
   ChatMessage,
   TwitchPickerEmote,
 } from "../../shared/chat";
-import { formatChatTimestamp } from "../../shared/chat";
+import { formatChatTimestamp, messageMentionsLogin } from "../../shared/chat";
 import { applyChatMessage } from "../../shared/chat-messages";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
@@ -172,18 +172,12 @@ function playMentionPing(): void {
   }).catch(() => undefined);
 }
 
-function messageMentionsLogin(message: ChatMessage, login: string): boolean {
-  if (!login || message.login.toLowerCase() === login) return false;
-  if (message.reply?.parentUserLogin.toLowerCase() === login) return true;
-  const escaped = login.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:])`, "i").test(message.text);
-}
-
 interface ChatMessageRowProps {
   message: ChatMessage;
   showTimestamp: boolean;
   badges: Map<string, ChatBadgeAsset>;
   oledMode: boolean;
+  mentioned: boolean;
   deletedRevealed: boolean;
   onRevealDeleted: (id: string) => void;
   onReply: (message: ChatMessage) => void;
@@ -197,13 +191,14 @@ const ChatMessageRow = memo(function ChatMessageRow({
   showTimestamp,
   badges,
   oledMode,
+  mentioned,
   deletedRevealed,
   onRevealDeleted,
   onReply,
   sevenTvEmotes,
 }: ChatMessageRowProps) {
   return (
-    <div className="native-chat-message">
+    <div className={mentioned ? "native-chat-message mentioned" : "native-chat-message"}>
       {message.reply && (
         <span
           className="chat-reply-parent"
@@ -569,12 +564,15 @@ export function App() {
     window.desktop.chat.setHistoryLimit(chatHistoryLimit);
   }, [chatHistoryLimit, preferencesReady]);
 
+  const viewerLogin =
+    authState.status === "signed-in" ? authState.account.login.toLowerCase() : "";
+
   useEffect(() => {
     mentionSettings.current = {
       enabled: mentionSoundEnabled,
-      login: authState.status === "signed-in" ? authState.account.login.toLowerCase() : "",
+      login: viewerLogin,
     };
-  }, [authState, mentionSoundEnabled]);
+  }, [mentionSoundEnabled, viewerLogin]);
 
   useEffect(() => {
     const removeMessageListener = window.desktop.chat.onMessage((message) => {
@@ -986,6 +984,7 @@ export function App() {
       theaterMode,
       chatVisible,
       chatPresentation,
+      viewerLogin,
     });
     window.desktop.player.setNativeControlsVisible(nativeControlsVisible);
   }, [
@@ -996,6 +995,7 @@ export function App() {
     fullscreen,
     nativeControlsVisible,
     theaterMode,
+    viewerLogin,
   ]);
 
   useEffect(
@@ -2055,6 +2055,7 @@ export function App() {
                         <ChatMessageRow
                           badges={twitchBadges}
                           deletedRevealed={revealedDeletedMessages.has(message.id)}
+                          mentioned={messageMentionsLogin(message, viewerLogin)}
                           message={message}
                           oledMode={oledMode}
                           onRevealDeleted={revealDeletedMessage}

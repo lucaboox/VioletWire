@@ -39,6 +39,16 @@ export function formatChatTimestamp(sentAt: number): string {
   });
 }
 
+// True when `message` @-mentions `login` (or is a reply to them). `login` is
+// expected already lowercased; an empty login (signed out) never matches, and
+// the viewer's own messages are excluded.
+export function messageMentionsLogin(message: ChatMessage, login: string): boolean {
+  if (!login || message.login.toLowerCase() === login) return false;
+  if (message.reply?.parentUserLogin.toLowerCase() === login) return true;
+  const escaped = login.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:])`, "i").test(message.text);
+}
+
 export type ChatConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting";
 
 export interface ChatBadgeAsset {

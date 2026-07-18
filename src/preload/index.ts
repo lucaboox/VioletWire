@@ -119,6 +119,8 @@ const api: DesktopApi = {
       ipcRenderer.send("native-controls:set-expanded", expanded),
     setNativeEmotePicker: (open: boolean) =>
       ipcRenderer.send("native-controls:set-emote-picker", open),
+    setNativeEmotePickerBounds: (bounds: PlayerBounds | null) =>
+      ipcRenderer.send("native-controls:set-emote-picker-bounds", bounds),
     setNativeControlsContext: (context: NativeControlsContext) =>
       ipcRenderer.send("native-controls:set-context", context),
     onNativeControlsVisibility: (listener: (visible: boolean) => void) => {

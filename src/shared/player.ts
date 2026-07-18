@@ -56,6 +56,7 @@ export const nativeControlsContextSchema = z.object({
   theaterMode: z.boolean(),
   chatVisible: z.boolean(),
   chatPresentation: chatPresentationSchema,
+  viewerLogin: z.string().max(25).regex(/^[a-z0-9_]*$/).optional(),
 });
 export const nativeQualitySchema = z
   .string()
@@ -93,6 +94,7 @@ export interface NativeControlsContext {
   theaterMode: boolean;
   chatVisible: boolean;
   chatPresentation: ChatPresentation;
+  viewerLogin?: string;
 }
 
 function formatQualityLabel(quality: NativeQualityValue): string {
@@ -194,6 +196,7 @@ export interface DesktopApi {
     setNativeControlsVisible(visible: boolean): void;
     setNativeControlsExpanded(expanded: boolean): void;
     setNativeEmotePicker(open: boolean): void;
+    setNativeEmotePickerBounds(bounds: PlayerBounds | null): void;
     setNativeControlsContext(context: NativeControlsContext): void;
     onNativeControlsVisibility(listener: (visible: boolean) => void): () => void;
     sendNativeControlAction(action: NativeControlAction): void;

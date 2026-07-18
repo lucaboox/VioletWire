@@ -416,6 +416,8 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-messages.scroll-paused { overflow-anchor: none; transition: none; }
 .chat-empty-state { display: grid; min-height: 100%; place-content: center; padding: 24px; color: #777781; font-size: 12px; line-height: 1.5; text-align: center; }
 .native-chat-message { position: relative; padding: 3px 29px 3px 2px; color: #e4e4e7; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.native-chat-message.mentioned { margin: 1px 0; padding-left: 8px; border-radius: 5px; background: #9147ff29; box-shadow: inset 3px 0 0 #a970ff; }
+.oled-mode .native-chat-message.mentioned { background: #9147ff33; }
 .native-chat-message strong { font-weight: 750; }
 .chat-reply-parent { display: block; overflow: hidden; margin: 1px 0 2px; padding-left: 7px; border-left: 2px solid #8b5cf6; color: #92929d; font-size: 10px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .chat-message-reply { position: absolute; top: 2px; right: 1px; display: grid; width: 25px; height: 25px; padding: 0; place-items: center; border: 1px solid #484850; border-radius: 6px; color: #d4d4d8; background: #242429f2; cursor: pointer; opacity: 0; transform: translateY(-2px); transition: opacity 100ms ease, transform 100ms ease, background 100ms ease; }

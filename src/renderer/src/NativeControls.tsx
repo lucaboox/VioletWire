@@ -38,6 +38,7 @@ import type {
 } from "../../shared/player";
 import {
   formatChatTimestamp,
+  messageMentionsLogin,
   type ChatBadgeAsset,
   type ChatMessage,
   type TwitchPickerEmote,
@@ -108,6 +109,7 @@ interface OverlayChatMessageRowProps {
   showTimestamp: boolean;
   badges: Map<string, ChatBadgeAsset>;
   oledMode: boolean;
+  mentioned: boolean;
   deletedRevealed: boolean;
   onRevealDeleted: (id: string) => void;
   onReply: (message: ChatMessage) => void;
@@ -121,13 +123,18 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
   showTimestamp,
   badges,
   oledMode,
+  mentioned,
   deletedRevealed,
   onRevealDeleted,
   onReply,
   sevenTvEmotes,
 }: OverlayChatMessageRowProps) {
   return (
-    <div className="native-video-chat-message">
+    <div
+      className={
+        mentioned ? "native-video-chat-message mentioned" : "native-video-chat-message"
+      }
+    >
       {message.reply && (
         <span className="native-chat-reply-parent" title={message.reply.parentMessageBody}>
           Replying to {message.reply.parentDisplayName || message.reply.parentUserLogin}:{" "}
@@ -244,10 +251,42 @@ export function NativeControls() {
   const chatMessagesHost = useRef<HTMLDivElement>(null);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
+  const detachedPickerHost = useRef<HTMLDivElement>(null);
   const currentChannel = useRef<string | null>(null);
   const channel = context?.channel;
 
   useEffect(() => window.desktop.player.onNativeState(setState), []);
+
+  // Report the detached picker's real rectangle so the main process can make
+  // exactly that area of this transparent window clickable, instead of a
+  // fixed-size region whose invisible edges swallow clicks meant for the
+  // chat behind it.
+  useEffect(() => {
+    if (!detachedEmotePickerOpen) return;
+    const picker = detachedPickerHost.current?.querySelector<HTMLElement>(".vw-emote-picker");
+    if (!picker) return;
+    const reportPickerBounds = () => {
+      const bounds = picker.getBoundingClientRect();
+      if (bounds.width < 1 || bounds.height < 1) return;
+      window.desktop.player.setNativeEmotePickerBounds({
+        x: Math.max(0, Math.round(bounds.x)),
+        y: Math.max(0, Math.round(bounds.y)),
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+      });
+    };
+    const observer = new ResizeObserver(reportPickerBounds);
+    observer.observe(picker);
+    // The picker is anchored right/bottom, so window resizes move it without
+    // resizing it; ResizeObserver alone would miss those.
+    window.addEventListener("resize", reportPickerBounds);
+    reportPickerBounds();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", reportPickerBounds);
+      window.desktop.player.setNativeEmotePickerBounds(null);
+    };
+  }, [detachedEmotePickerOpen, channel]);
   useEffect(
     () => window.desktop.player.onNativeControlsVisibility(setControlsVisible),
     [],
@@ -541,6 +580,7 @@ export function NativeControls() {
 
   const qualityLabel =
     qualities.find((quality) => quality.value === state.quality)?.label ?? state.quality;
+  const viewerLogin = context.viewerLogin ?? "";
   const chatHistoryBoundary = chatMessages.reduce(
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
     -1,
@@ -569,7 +609,7 @@ export function NativeControls() {
       onPointerMove={reportPointerActivity}
     >
       {detachedEmotePickerOpen && channel && (
-        <div className="native-detached-emote-picker">
+        <div className="native-detached-emote-picker" ref={detachedPickerHost}>
           <EmotePicker
             channelName={channel}
             onClose={() => window.desktop.player.setNativeEmotePicker(false)}
@@ -678,6 +718,7 @@ export function NativeControls() {
               <OverlayChatMessageRow
                 badges={chatBadges}
                 deletedRevealed={revealedDeletedMessages.has(message.id)}
+                mentioned={messageMentionsLogin(message, viewerLogin)}
                 message={message}
                 oledMode={oledMode}
                 onRevealDeleted={revealDeletedMessage}
