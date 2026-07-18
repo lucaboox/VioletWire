@@ -350,6 +350,10 @@ async function createNativeControlsWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The transparent controls/chat window can fully cover the player in
+      // fullscreen. Keep Chromium compositing the imported VideoFrames while
+      // that owned window is above the main renderer.
+      backgroundThrottling: false,
     },
   });
   nativeControlsWindow.setMenu(null);
@@ -755,9 +759,11 @@ ipcMain.on("player:set-bounds", (_event, input: unknown) => {
   const result = playerBoundsSchema.safeParse(input);
   if (!result.success) return;
   lastPlayerBounds = result.data;
+  // The optimistic renderer mounts before Streamlink resolves. Retain those
+  // initial measurements so the texture addon starts at the real player size.
+  textureNativePlayer.setBounds(result.data);
   if (activePlayerMode === "native") {
-    if (activeNativeBackend === "texture") textureNativePlayer.setBounds(result.data);
-    else nativePlayer.setBounds(result.data);
+    if (activeNativeBackend === "window") nativePlayer.setBounds(result.data);
     applyNativeControlsBounds();
   }
   applySubscriptionDrawerBounds();

@@ -1544,6 +1544,14 @@ export function App() {
   }
 
   async function watchChannel(channel: string) {
+    const returnSection = activeChannel ? playerReturnSection : activeSection;
+    const optimisticMode = preferredMode;
+    const optimisticBackend =
+      optimisticMode === "native"
+        ? experimentalTexturePlayer
+          ? "texture"
+          : "window"
+        : null;
     setSettingsOpen(false);
     setError(null);
     setStreamMetadata(null);
@@ -1555,14 +1563,33 @@ export function App() {
     chatScrollAnchor.current = null;
     setChatAutoScroll(true);
     setChannelInput(channel);
+    // Mount the player shell immediately so clicking a card feels instant and
+    // the texture receiver has a canvas before Streamlink finishes resolving.
+    setPlayerReturnSection(returnSection);
+    setActiveSection("home");
+    setActiveChannel(channel);
+    setActiveMode(optimisticMode);
+    setActiveNativeBackend(optimisticBackend);
+    setTextureOverlayTestOpen(optimisticBackend === "texture");
+    setTextureOverlayTestClicks(0);
+    setNativeControlsVisible(true);
+    setChatVisible(true);
+    setChatPresentation("side");
+    setTheaterMode(false);
     try {
       const savedPreferences = await window.desktop.preferences.getOrMigrate();
+      setActiveMode(savedPreferences.preferredPlayerMode);
+      setActiveNativeBackend(
+        savedPreferences.preferredPlayerMode === "native"
+          ? savedPreferences.experimentalTexturePlayer
+            ? "texture"
+            : "window"
+          : null,
+      );
       const result = await window.desktop.player.open(
         channel,
         savedPreferences.preferredPlayerMode,
       );
-      setPlayerReturnSection(activeSection);
-      setActiveSection("home");
       setActiveChannel(result.channel);
       setActiveMode(result.mode);
       setActiveNativeBackend(result.nativeBackend ?? null);
@@ -1581,6 +1608,11 @@ export function App() {
       }
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
+      setActiveChannel(null);
+      setActiveMode(null);
+      setActiveNativeBackend(null);
+      setTextureOverlayTestOpen(false);
+      setActiveSection(returnSection);
       setError(message || "Unable to open the Twitch player.");
     }
   }
