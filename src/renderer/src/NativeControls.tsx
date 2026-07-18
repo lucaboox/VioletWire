@@ -1,7 +1,9 @@
 import {
   Fragment,
+  memo,
   type FormEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -39,6 +41,7 @@ import {
   type TwitchPickerEmote,
 } from "../../shared/chat";
 import type { ProviderEmote } from "../../shared/emotes";
+import { applyChatMessage } from "../../shared/chat-messages";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
 
@@ -95,6 +98,74 @@ function renderOverlayText(
   if (cursor < message.text.length) appendText(message.text.slice(cursor), `${message.id}-tail`);
   return output;
 }
+
+interface OverlayChatMessageRowProps {
+  message: ChatMessage;
+  showTimestamp: boolean;
+  badges: Map<string, ChatBadgeAsset>;
+  oledMode: boolean;
+  deletedRevealed: boolean;
+  onRevealDeleted: (id: string) => void;
+  sevenTvEmotes: Map<string, ProviderEmote>;
+}
+
+// Memoized so a new chat message only renders its own row instead of
+// re-rendering (and re-tokenizing emotes for) every message in the overlay.
+const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
+  message,
+  showTimestamp,
+  badges,
+  oledMode,
+  deletedRevealed,
+  onRevealDeleted,
+  sevenTvEmotes,
+}: OverlayChatMessageRowProps) {
+  return (
+    <div className="native-video-chat-message">
+      {showTimestamp && (
+        <time
+          className="native-chat-timestamp"
+          dateTime={new Date(message.sentAt).toISOString()}
+        >
+          {formatChatTimestamp(message.sentAt)}
+        </time>
+      )}
+      {message.badges.length > 0 && (
+        <span className="native-video-chat-badges">
+          {message.badges.slice(0, 4).map((badgeKey) => {
+            const badge = badges.get(badgeKey);
+            return badge ? (
+              <img alt={badge.title} key={badgeKey} src={badge.imageUrl} />
+            ) : null;
+          })}
+        </span>
+      )}
+      <strong
+        style={{
+          color: readableUsernameColor(
+            message.color,
+            oledMode ? "#000000" : "#18181b",
+          ),
+        }}
+      >
+        {message.displayName}
+      </strong>
+      <span>: </span>
+      {message.deleted && !deletedRevealed ? (
+        <button
+          className="deleted-message-toggle"
+          onClick={() => onRevealDeleted(message.id)}
+          title="Show the deleted message locally"
+          type="button"
+        >
+          &lt;deleted&gt;
+        </button>
+      ) : (
+        renderOverlayText(message, sevenTvEmotes)
+      )}
+    </div>
+  );
+});
 
 export function NativeControls() {
   const [context, setContext] = useState<NativeControlsContext | null>(null);
@@ -209,20 +280,7 @@ export function NativeControls() {
             return next;
           });
         }
-        setChatMessages((current) => {
-          const existingIndex = current.findIndex((item) => item.id === message.id);
-          if (message.deleted) {
-            if (existingIndex < 0) return current;
-            return current.map((item, index) =>
-              index === existingIndex ? { ...item, deleted: true } : item,
-            );
-          }
-          return existingIndex >= 0
-            ? current
-            : [...current, message]
-                .sort((left, right) => left.sentAt - right.sentAt)
-                .slice(-500);
-        });
+        setChatMessages((current) => applyChatMessage(current, message));
       }),
     [],
   );
@@ -343,6 +401,14 @@ export function NativeControls() {
     syncComposerSpace();
     return () => observer.disconnect();
   }, [nativeChatOverlay]);
+
+  const revealDeletedMessage = useCallback((id: string) => {
+    setRevealedDeletedMessages((revealed) => {
+      const next = new Set(revealed);
+      next.add(id);
+      return next;
+    });
+  }, []);
 
   function handleChatScroll() {
     const host = chatMessagesHost.current;
@@ -567,55 +633,15 @@ export function NativeControls() {
           >
             {chatMessages.map((message, index) => (
               <Fragment key={message.id}>
-              <div className="native-video-chat-message">
-                {chatTimestamps && (
-                  <time
-                    className="native-chat-timestamp"
-                    dateTime={new Date(message.sentAt).toISOString()}
-                  >
-                    {formatChatTimestamp(message.sentAt)}
-                  </time>
-                )}
-                {message.badges.length > 0 && (
-                  <span className="native-video-chat-badges">
-                    {message.badges.slice(0, 4).map((badgeKey) => {
-                      const badge = chatBadges.get(badgeKey);
-                      return badge ? (
-                        <img alt={badge.title} key={badgeKey} src={badge.imageUrl} />
-                      ) : null;
-                    })}
-                  </span>
-                )}
-                <strong
-                  style={{
-                    color: readableUsernameColor(
-                      message.color,
-                      oledMode ? "#000000" : "#18181b",
-                    ),
-                  }}
-                >
-                  {message.displayName}
-                </strong>
-                <span>: </span>
-                {message.deleted && !revealedDeletedMessages.has(message.id) ? (
-                  <button
-                    className="deleted-message-toggle"
-                    onClick={() =>
-                      setRevealedDeletedMessages((revealed) => {
-                        const next = new Set(revealed);
-                        next.add(message.id);
-                        return next;
-                      })
-                    }
-                    title="Show the deleted message locally"
-                    type="button"
-                  >
-                    &lt;deleted&gt;
-                  </button>
-                ) : (
-                  renderOverlayText(message, sevenTvEmotes)
-                )}
-              </div>
+              <OverlayChatMessageRow
+                badges={chatBadges}
+                deletedRevealed={revealedDeletedMessages.has(message.id)}
+                message={message}
+                oledMode={oledMode}
+                onRevealDeleted={revealDeletedMessage}
+                sevenTvEmotes={sevenTvEmotes}
+                showTimestamp={chatTimestamps}
+              />
               {index === chatHistoryBoundary && (
                 <div className="live-chat-divider" role="separator">
                   <span>Live chat</span>

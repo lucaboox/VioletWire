@@ -1,0 +1,486 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { z } from "zod";
+import type { TwitchAccount } from "../shared/twitch";
+
+vi.mock("electron", async () => {
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const userDataDirectory = join(tmpdir(), "violetwire-twitch-service-tests");
+  return {
+    app: { getPath: () => userDataDirectory },
+    safeStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(value, "utf8"),
+      decryptString: (buffer: Buffer) => buffer.toString("utf8"),
+    },
+    shell: { openExternal: vi.fn() },
+  };
+});
+
+import { TwitchService, VALIDATION_LIFETIME } from "./twitch-service";
+
+const CLIENT_ID = "muthgxeegar3t0hj2qwm0ozocqbt8o";
+// Must match the directory built inside the electron mock factory above.
+const userDataDirectory = join(tmpdir(), "violetwire-twitch-service-tests");
+const tokenFilePath = join(userDataDirectory, "twitch-auth.bin");
+
+interface StoredTokenShape {
+  accessToken: string;
+  refreshToken: string;
+  scopes: string[];
+  expiresAt: number;
+}
+
+interface TwitchServiceInternals {
+  token: StoredTokenShape | null;
+  account: TwitchAccount | null;
+  validatedAt: number;
+  sessionGeneration: number;
+  validationTimer: NodeJS.Timeout | null;
+  ensureAuthenticated(): Promise<void>;
+  refreshToken(clientId: string): Promise<void>;
+  writeToken(token: StoredTokenShape): Promise<void>;
+  helix(
+    requestPath: string,
+    schema: z.ZodType<unknown>,
+    init?: RequestInit,
+    validateFirst?: boolean,
+  ): Promise<unknown>;
+}
+
+const testAccount: TwitchAccount = {
+  id: "42",
+  login: "tester",
+  displayName: "Tester",
+  profileImageUrl: "https://example.com/avatar.png",
+};
+
+const validatePayload = {
+  client_id: CLIENT_ID,
+  login: "tester",
+  user_id: "42",
+  scopes: [],
+  expires_in: 12_000,
+};
+
+const refreshedTokenPayload = {
+  access_token: "access-2",
+  refresh_token: "refresh-2",
+  expires_in: 12_000,
+  scope: [],
+};
+
+const accountPayload = {
+  data: [
+    {
+      id: "42",
+      login: "tester",
+      display_name: "Tester",
+      profile_image_url: "https://example.com/avatar.png",
+    },
+  ],
+};
+
+const broadcasterPayload = {
+  data: [
+    {
+      id: "77",
+      login: "somechannel",
+      display_name: "SomeChannel",
+      profile_image_url: "https://example.com/channel.png",
+    },
+  ],
+};
+
+function json(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function defaultRoutes(url: string): Response {
+  if (url.includes("/oauth2/validate")) return json(validatePayload);
+  if (url.includes("/oauth2/token")) return json(refreshedTokenPayload);
+  if (url.includes("/helix/users")) return json(accountPayload);
+  throw new Error(`Unexpected request in test: ${url}`);
+}
+
+function chatAssetRoutes(url: string): Response {
+  if (url.includes("/helix/users?login=")) return json(broadcasterPayload);
+  if (url.includes("/helix/chat/badges/global")) {
+    return json({
+      data: [
+        {
+          set_id: "subscriber",
+          versions: [
+            { id: "1", title: "Subscriber", image_url_2x: "https://example.com/badge.png" },
+          ],
+        },
+      ],
+    });
+  }
+  if (url.includes("/helix/chat/badges?")) return json({ data: [] });
+  if (url.includes("/helix/chat/emotes/global")) {
+    return json({
+      data: [
+        { id: "e1", name: "GlobalEmote", images: { url_2x: "https://example.com/emote.png" } },
+      ],
+    });
+  }
+  if (url.includes("/helix/chat/emotes?")) return json({ data: [] });
+  return defaultRoutes(url);
+}
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
+function installFetch(
+  handler: (url: string, init?: RequestInit) => Response | Promise<Response>,
+): void {
+  fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+    handler(String(input), init),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+function requestCount(urlFragment: string): number {
+  return fetchMock.mock.calls.filter(([input]) => String(input).includes(urlFragment)).length;
+}
+
+function createService(tokenOverrides: Partial<StoredTokenShape> = {}): {
+  service: TwitchService;
+  internals: TwitchServiceInternals;
+} {
+  const service = new TwitchService();
+  const internals = service as unknown as TwitchServiceInternals;
+  internals.token = {
+    accessToken: "access-1",
+    refreshToken: "refresh-1",
+    scopes: [],
+    expiresAt: Date.now() + 3_600_000,
+    ...tokenOverrides,
+  };
+  return { service, internals };
+}
+
+beforeEach(async () => {
+  delete process.env.TWITCH_CLIENT_ID;
+  await fs.rm(userDataDirectory, { recursive: true, force: true });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe("TwitchService authentication", () => {
+  it("reuses a successful validation within the cache interval", async () => {
+    installFetch(defaultRoutes);
+    const { service } = createService();
+
+    await service.getAuthState();
+    await service.getAuthState();
+
+    expect(requestCount("/oauth2/validate")).toBe(1);
+    expect(requestCount("/helix/users")).toBe(1);
+  });
+
+  it("validates again once the cached validation is stale", async () => {
+    installFetch(defaultRoutes);
+    const { service, internals } = createService();
+
+    await service.getAuthState();
+    internals.validatedAt = Date.now() - 56 * 60_000;
+    await service.getAuthState();
+
+    expect(requestCount("/oauth2/validate")).toBe(2);
+  });
+
+  it("shares one validation between concurrent authentication checks", async () => {
+    let releaseValidate!: () => void;
+    const validateGate = new Promise<void>((resolve) => {
+      releaseValidate = resolve;
+    });
+    installFetch(async (url) => {
+      if (url.includes("/oauth2/validate")) {
+        await validateGate;
+        return json(validatePayload);
+      }
+      return defaultRoutes(url);
+    });
+    const { service } = createService();
+
+    const pending = Promise.all([service.getAuthState(), service.getAuthState()]);
+    releaseValidate();
+    const [first, second] = await pending;
+
+    expect(first.status).toBe("signed-in");
+    expect(second.status).toBe("signed-in");
+    expect(requestCount("/oauth2/validate")).toBe(1);
+  });
+
+  it("shares one refresh between concurrent expired-token requests", async () => {
+    installFetch(defaultRoutes);
+    const { service, internals } = createService({ expiresAt: Date.now() - 1_000 });
+
+    await Promise.all([service.getAuthState(), service.getAuthState()]);
+
+    expect(requestCount("/oauth2/token")).toBe(1);
+    expect(internals.token?.accessToken).toBe("access-2");
+    expect(internals.token?.refreshToken).toBe("refresh-2");
+  });
+
+  it("propagates one refresh failure to all concurrent callers without a second refresh", async () => {
+    installFetch(async (url) => {
+      if (url.includes("/oauth2/token")) return json({ message: "Invalid refresh token" }, 400);
+      return defaultRoutes(url);
+    });
+    const { internals } = createService();
+
+    const first = internals.refreshToken(CLIENT_ID);
+    const second = internals.refreshToken(CLIENT_ID);
+
+    await expect(first).rejects.toThrow("Invalid refresh token");
+    await expect(second).rejects.toThrow("Invalid refresh token");
+    expect(requestCount("/oauth2/token")).toBe(1);
+    expect(internals.token?.refreshToken).toBe("refresh-1");
+  });
+
+  it("retries a Helix request exactly once after a 401", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/users")) return json({ message: "Invalid OAuth token" }, 401);
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await expect(service.getStreamMetadata("somechannel")).rejects.toThrow(
+      "Invalid OAuth token",
+    );
+
+    expect(requestCount("/helix/users")).toBe(2);
+    expect(requestCount("/oauth2/token")).toBe(1);
+  });
+
+  it("does not record a validation timestamp after a failed validation", async () => {
+    installFetch((url) => {
+      if (url.includes("/oauth2/validate")) return json({ message: "unavailable" }, 500);
+      return defaultRoutes(url);
+    });
+    const { internals } = createService();
+
+    await expect(internals.ensureAuthenticated()).rejects.toThrow();
+    expect(internals.validatedAt).toBe(0);
+  });
+
+  it("stays signed out when sign-out happens during a delayed refresh", async () => {
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    installFetch(async (url) => {
+      if (url.includes("/oauth2/token")) {
+        await refreshGate;
+        return json(refreshedTokenPayload);
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService({ expiresAt: Date.now() - 1_000 });
+
+    const pendingAuth = service.getAuthState();
+    const pendingSignOut = service.signOut();
+    releaseRefresh();
+    const signOutState = await pendingSignOut;
+    const staleAuthState = await pendingAuth;
+
+    expect(signOutState.status).toBe("signed-out");
+    expect(staleAuthState.status).toBe("signed-out");
+    expect(internals.token).toBeNull();
+    expect((await service.getAuthState()).status).toBe("signed-out");
+    // The stale refresh result must never recreate the credential file.
+    await expect(fs.access(tokenFilePath)).rejects.toThrow();
+    expect(requestCount("/oauth2/token")).toBe(1);
+  });
+
+  it("keeps credentials across a transient scheduled-validation failure", async () => {
+    vi.useFakeTimers();
+    let failValidate = false;
+    installFetch((url) => {
+      if (url.includes("/oauth2/validate") && failValidate) {
+        return json({ message: "service unavailable" }, 500);
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+
+    await service.getAuthState();
+    failValidate = true;
+    await vi.advanceTimersByTimeAsync(VALIDATION_LIFETIME + 1_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(internals.token).not.toBeNull();
+    expect((await service.getAuthState()).status).toBe("signed-in");
+  });
+});
+
+describe("TwitchService scheduled validation", () => {
+  it("revalidates on the hourly timer without duplicate timers", async () => {
+    vi.useFakeTimers();
+    installFetch(defaultRoutes);
+    const { service, internals } = createService();
+
+    await service.getAuthState();
+    expect(requestCount("/oauth2/validate")).toBe(1);
+    expect(internals.validationTimer).not.toBeNull();
+    const firstTimer = internals.validationTimer;
+
+    await vi.advanceTimersByTimeAsync(VALIDATION_LIFETIME + 1_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(requestCount("/oauth2/validate")).toBe(2);
+    // The successful scheduled check must reuse the timer, not add another.
+    expect(internals.validationTimer).toBe(firstTimer);
+  });
+
+  it("stops the validation timer on sign-out", async () => {
+    vi.useFakeTimers();
+    installFetch(defaultRoutes);
+    const { service, internals } = createService();
+
+    await service.getAuthState();
+    expect(internals.validationTimer).not.toBeNull();
+
+    await service.signOut();
+    expect(internals.validationTimer).toBeNull();
+
+    fetchMock.mockClear();
+    await vi.advanceTimersByTimeAsync(3 * VALIDATION_LIFETIME);
+    expect(requestCount("/oauth2/validate")).toBe(0);
+  });
+});
+
+describe("TwitchService credential storage", () => {
+  it("writes the credential file atomically without leaving temporary files", async () => {
+    installFetch(defaultRoutes);
+    const { internals } = createService();
+    const stored = {
+      accessToken: "stored-access",
+      refreshToken: "stored-refresh",
+      scopes: [],
+      expiresAt: 123,
+    };
+
+    await internals.writeToken(stored);
+
+    const entries = await fs.readdir(userDataDirectory);
+    expect(entries).toContain("twitch-auth.bin");
+    expect(entries.filter((name) => name.endsWith(".tmp"))).toHaveLength(0);
+    // The mock encrypter is an identity transform, so the file is JSON.
+    const persisted = JSON.parse((await fs.readFile(tokenFilePath)).toString("utf8"));
+    expect(persisted).toEqual(stored);
+  });
+});
+
+describe("TwitchService Helix 401 coordination", () => {
+  it("shares one refresh across delayed concurrent 401 responses", async () => {
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const authorizationOf = (init?: RequestInit): string =>
+      (init?.headers as Record<string, string> | undefined)?.Authorization ?? "";
+    installFetch(async (url, init) => {
+      if (url.includes("/helix/first")) {
+        return authorizationOf(init) === "Bearer access-2"
+          ? json({ ok: true })
+          : json({ message: "unauthorized" }, 401);
+      }
+      if (url.includes("/helix/second")) {
+        if (authorizationOf(init) === "Bearer access-2") return json({ ok: true });
+        await secondGate;
+        return json({ message: "unauthorized" }, 401);
+      }
+      return defaultRoutes(url);
+    });
+    const { internals } = createService();
+    const schema = z.object({ ok: z.boolean() });
+
+    const firstRequest = internals.helix("/first", schema, undefined, false);
+    const secondRequest = internals.helix("/second", schema, undefined, false);
+    const firstResult = await firstRequest;
+    // The second request's 401 arrives only after the first already
+    // refreshed and replaced the token.
+    releaseSecond();
+    const secondResult = await secondRequest;
+
+    expect(firstResult).toEqual({ ok: true });
+    expect(secondResult).toEqual({ ok: true });
+    expect(requestCount("/oauth2/token")).toBe(1);
+    expect(requestCount("/helix/first")).toBe(2);
+    expect(requestCount("/helix/second")).toBe(2);
+  });
+});
+
+describe("TwitchService chat assets", () => {
+  function createAuthenticatedService(): {
+    service: TwitchService;
+    internals: TwitchServiceInternals;
+  } {
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+    return { service, internals };
+  }
+
+  it("deduplicates concurrent chat-asset requests for the same channel", async () => {
+    installFetch(chatAssetRoutes);
+    const { service } = createAuthenticatedService();
+
+    const [first, second] = await Promise.all([
+      service.getChatAssets("SomeChannel"),
+      service.getChatAssets("somechannel"),
+    ]);
+
+    expect(requestCount("/helix/users?login=")).toBe(1);
+    expect(requestCount("/helix/chat/badges/global")).toBe(1);
+    expect(requestCount("/helix/chat/emotes/global")).toBe(1);
+    expect(first).toEqual(second);
+    expect(first.broadcasterId).toBe("77");
+  });
+
+  it("hands out copies so callers cannot mutate the cached assets", async () => {
+    installFetch(chatAssetRoutes);
+    const { service } = createAuthenticatedService();
+
+    const first = await service.getChatAssets("somechannel");
+    first.badges.push({ key: "tampered", title: "Tampered", imageUrl: "https://example.com/x" });
+    first.emotes[0].name = "Tampered";
+
+    const second = await service.getChatAssets("somechannel");
+    expect(second.badges).toHaveLength(1);
+    expect(second.emotes[0].name).toBe("GlobalEmote");
+  });
+
+  it("evicts failed chat-asset requests so they can be retried", async () => {
+    let failBroadcasterLookup = true;
+    installFetch((url) => {
+      if (url.includes("/helix/users?login=") && failBroadcasterLookup) {
+        return json({ message: "boom" }, 500);
+      }
+      return chatAssetRoutes(url);
+    });
+    const { service } = createAuthenticatedService();
+
+    await expect(service.getChatAssets("somechannel")).rejects.toThrow("boom");
+
+    failBroadcasterLookup = false;
+    const result = await service.getChatAssets("somechannel");
+
+    expect(result.broadcasterId).toBe("77");
+    expect(requestCount("/helix/users?login=")).toBe(2);
+  });
+});

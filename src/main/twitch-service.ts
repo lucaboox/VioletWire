@@ -130,6 +130,16 @@ const sendChatResponseSchema = z.object({
   ),
 });
 
+// Cached chat assets are shared between callers; hand out copies so a caller
+// mutating its result cannot corrupt what later callers receive.
+function cloneChatAssets(assets: TwitchChatAssets): TwitchChatAssets {
+  return {
+    broadcasterId: assets.broadcasterId,
+    badges: assets.badges.map((badge) => ({ ...badge })),
+    emotes: assets.emotes.map((emote) => ({ ...emote })),
+  };
+}
+
 function resizeTwitchBoxArt(url: string, width = 570, height = 760): string {
   return url
     .replace("{width}", String(width))
@@ -178,11 +188,42 @@ class TwitchRequestError extends Error {
   }
 }
 
+// Twitch requires hourly token validation; revalidating slightly earlier keeps
+// the app inside that window without a network round trip per Helix request.
+export const VALIDATION_LIFETIME = 55 * 60_000;
+const CHAT_ASSETS_LIFETIME = 10 * 60_000;
+const SESSION_CHANGED_MESSAGE =
+  "The Twitch session changed; the stale result was discarded.";
+
+// Only a confirmed-invalid session may erase saved credentials; transient
+// network or server failures must leave them untouched.
+function isAuthInvalidError(error: unknown): boolean {
+  if (error instanceof TwitchRequestError) {
+    return error.status === 400 || error.status === 401 || error.status === 403;
+  }
+  return (
+    error instanceof Error &&
+    error.message === "The saved Twitch session belongs to another application."
+  );
+}
+
 export class TwitchService {
   private pendingDevice: PendingDeviceAuthorization | null = null;
   private signInController: AbortController | null = null;
   private token: StoredToken | null = null;
   private account: TwitchAccount | null = null;
+  private validatedAt = 0;
+  private authCheck: Promise<void> | null = null;
+  private refreshInFlight: Promise<void> | null = null;
+  // Bumped on sign-out and on installing a newly authorized token, so
+  // in-flight validation/refresh work from a previous session is discarded
+  // instead of restoring stale credentials.
+  private sessionGeneration = 0;
+  private validationTimer: NodeJS.Timeout | null = null;
+  private readonly chatAssetsCache = new Map<
+    string,
+    { expiresAt: number; result: Promise<TwitchChatAssets> }
+  >();
 
   private get tokenPath(): string {
     return path.join(app.getPath("userData"), "twitch-auth.bin");
@@ -196,8 +237,8 @@ export class TwitchService {
     if (!this.token) return;
     try {
       await this.ensureAuthenticated();
-    } catch {
-      await this.clearToken();
+    } catch (error) {
+      if (isAuthInvalidError(error)) await this.clearToken();
     }
   }
 
@@ -208,9 +249,16 @@ export class TwitchService {
       return this.account
         ? { status: "signed-in", account: this.account }
         : { status: "signed-out", account: null };
-    } catch {
-      await this.clearToken();
-      return { status: "signed-out", account: null };
+    } catch (error) {
+      if (isAuthInvalidError(error)) {
+        await this.clearToken();
+        return { status: "signed-out", account: null };
+      }
+      // Transient failure: keep the saved session and report the best-known
+      // state instead of signing the user out.
+      return this.account
+        ? { status: "signed-in", account: this.account }
+        : { status: "signed-out", account: null };
     }
   }
 
@@ -271,14 +319,20 @@ export class TwitchService {
           throw new TwitchRequestError(this.errorMessage(payload, "Twitch sign-in failed."), response.status);
         }
         const received = tokenResponseSchema.parse(payload);
+        // A newly authorized token starts a fresh session; anything still in
+        // flight for the previous one must not overwrite it.
+        this.sessionGeneration += 1;
+        this.stopValidationTimer();
         this.token = {
           accessToken: received.access_token,
           refreshToken: received.refresh_token,
           scopes: received.scope,
           expiresAt: Date.now() + received.expires_in * 1000,
         };
+        this.validatedAt = 0;
         await this.writeToken(this.token);
         this.account = await this.fetchAccount();
+        this.scheduleValidation();
         return { status: "signed-in", account: this.account };
       }
       throw new Error("The Twitch sign-in code expired. Please try again.");
@@ -519,6 +573,23 @@ export class TwitchService {
   }
 
   async getChatAssets(channel: string): Promise<TwitchChatAssets> {
+    const login = channel.trim().toLowerCase();
+    const cached = this.chatAssetsCache.get(login);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cloneChatAssets(await cached.result);
+    }
+    if (cached) this.chatAssetsCache.delete(login);
+    const result = this.fetchChatAssets(login);
+    const entry = { expiresAt: Date.now() + CHAT_ASSETS_LIFETIME, result };
+    this.chatAssetsCache.set(login, entry);
+    result.catch(() => {
+      // Failed lookups must stay retryable instead of caching the error.
+      if (this.chatAssetsCache.get(login) === entry) this.chatAssetsCache.delete(login);
+    });
+    return cloneChatAssets(await result);
+  }
+
+  private async fetchChatAssets(channel: string): Promise<TwitchChatAssets> {
     const users = await this.helix(
       `/users?login=${encodeURIComponent(channel)}`,
       usersResponseSchema,
@@ -602,14 +673,42 @@ export class TwitchService {
 
   private async ensureAuthenticated(): Promise<void> {
     if (!this.token) throw new Error("Sign in with Twitch to use this feature.");
-    const clientId = await this.requireClientId();
+    if (
+      this.account &&
+      this.validatedAt + VALIDATION_LIFETIME > Date.now() &&
+      this.token.expiresAt > Date.now() + 60_000
+    ) {
+      return;
+    }
+    // Single-flight: concurrent callers share one validate/refresh round trip.
+    if (!this.authCheck) {
+      const pending = this.performAuthCheck().finally(() => {
+        // Guarded so a sign-out that already detached this check cannot
+        // clear a newer session's in-flight authentication.
+        if (this.authCheck === pending) this.authCheck = null;
+      });
+      this.authCheck = pending;
+    }
+    return this.authCheck;
+  }
+
+  private async performAuthCheck(): Promise<void> {
+    const generation = this.sessionGeneration;
+    if (!this.token) throw new Error("Sign in with Twitch to use this feature.");
+    const clientId = this.requireClientId();
     if (this.token.expiresAt <= Date.now() + 60_000) await this.refreshToken(clientId);
+    if (this.sessionGeneration !== generation || !this.token) {
+      throw new Error(SESSION_CHANGED_MESSAGE);
+    }
 
     let response = await fetch("https://id.twitch.tv/oauth2/validate", {
       headers: { Authorization: `OAuth ${this.token.accessToken}` },
     });
     if (response.status === 401) {
       await this.refreshToken(clientId);
+      if (this.sessionGeneration !== generation || !this.token) {
+        throw new Error(SESSION_CHANGED_MESSAGE);
+      }
       response = await fetch("https://id.twitch.tv/oauth2/validate", {
         headers: { Authorization: `OAuth ${this.token.accessToken}` },
       });
@@ -618,15 +717,34 @@ export class TwitchService {
     if (!response.ok) throw new TwitchRequestError("Your Twitch session is no longer valid.", response.status);
     const validation = validateResponseSchema.parse(payload);
     if (validation.client_id !== clientId) throw new Error("The saved Twitch session belongs to another application.");
+    if (this.sessionGeneration !== generation || !this.token) {
+      throw new Error(SESSION_CHANGED_MESSAGE);
+    }
     this.token.expiresAt = Date.now() + validation.expires_in * 1000;
+    this.validatedAt = Date.now();
     this.account ??= await this.fetchAccount();
+    this.scheduleValidation();
   }
 
-  private async refreshToken(clientId: string): Promise<void> {
-    if (!this.token) throw new Error("There is no Twitch session to refresh.");
+  private refreshToken(clientId: string): Promise<void> {
+    // Twitch rotates refresh tokens: a second concurrent refresh would submit
+    // an already-consumed token and invalidate the session. Share one attempt.
+    if (!this.refreshInFlight) {
+      const pending = this.performTokenRefresh(clientId).finally(() => {
+        if (this.refreshInFlight === pending) this.refreshInFlight = null;
+      });
+      this.refreshInFlight = pending;
+    }
+    return this.refreshInFlight;
+  }
+
+  private async performTokenRefresh(clientId: string): Promise<void> {
+    const generation = this.sessionGeneration;
+    const tokenAtStart = this.token;
+    if (!tokenAtStart) throw new Error("There is no Twitch session to refresh.");
     const body = new URLSearchParams({
       grant_type: "refresh_token",
-      refresh_token: this.token.refreshToken,
+      refresh_token: tokenAtStart.refreshToken,
       client_id: clientId,
     });
     const response = await fetch("https://id.twitch.tv/oauth2/token", {
@@ -637,13 +755,37 @@ export class TwitchService {
     const payload = await this.readJson(response);
     if (!response.ok) throw new TwitchRequestError(this.errorMessage(payload, "Unable to refresh Twitch sign-in."), response.status);
     const received = tokenResponseSchema.parse(payload);
+    if (this.sessionGeneration !== generation || this.token !== tokenAtStart) {
+      // The session was signed out or replaced while this refresh was in
+      // flight; installing or persisting the result would resurrect it.
+      throw new Error(SESSION_CHANGED_MESSAGE);
+    }
     this.token = {
       accessToken: received.access_token,
       refreshToken: received.refresh_token,
       scopes: received.scope,
       expiresAt: Date.now() + received.expires_in * 1000,
     };
+    this.validatedAt = 0;
     await this.writeToken(this.token);
+  }
+
+  private scheduleValidation(): void {
+    if (this.validationTimer) return;
+    const timer = setInterval(() => {
+      if (!this.token) return;
+      void this.ensureAuthenticated().catch(() => {
+        // Transient failures retry at the next interval; a confirmed-invalid
+        // session is handled by the callers that surface auth state.
+      });
+    }, VALIDATION_LIFETIME);
+    timer.unref?.();
+    this.validationTimer = timer;
+  }
+
+  private stopValidationTimer(): void {
+    if (this.validationTimer) clearInterval(this.validationTimer);
+    this.validationTimer = null;
   }
 
   private async fetchAccount(): Promise<TwitchAccount> {
@@ -697,18 +839,31 @@ export class TwitchService {
     schema: z.ZodType<T>,
     init?: RequestInit,
     validateFirst = true,
+    retryOnUnauthorized = true,
   ): Promise<T> {
     if (validateFirst) await this.ensureAuthenticated();
     if (!this.token) throw new Error("Sign in with Twitch to use this feature.");
-    const clientId = await this.requireClientId();
+    const clientId = this.requireClientId();
+    const requestToken = this.token;
     const response = await fetch(`https://api.twitch.tv/helix${requestPath}`, {
       ...init,
       headers: {
-        Authorization: `Bearer ${this.token.accessToken}`,
+        Authorization: `Bearer ${requestToken.accessToken}`,
         "Client-Id": clientId,
         ...init?.headers,
       },
     });
+    if (response.status === 401 && retryOnUnauthorized) {
+      if (this.token === requestToken) {
+        // The cached validation is no longer trustworthy. Refresh once before
+        // the single retry; a second 401 propagates as-is.
+        this.validatedAt = 0;
+        await this.refreshToken(clientId);
+      }
+      // Otherwise another request already replaced the token while this 401
+      // was in flight — retry once with the current token, no extra refresh.
+      return this.helix(requestPath, schema, init, validateFirst, false);
+    }
     const payload = await this.readJson(response);
     if (!response.ok) {
       throw new TwitchRequestError(this.errorMessage(payload, `Twitch request failed (${response.status}).`), response.status);
@@ -730,13 +885,40 @@ export class TwitchService {
     if (!safeStorage.isEncryptionAvailable()) {
       throw new Error("Windows protected storage is unavailable; Twitch credentials were not saved.");
     }
-    await fs.mkdir(path.dirname(this.tokenPath), { recursive: true });
-    await fs.writeFile(this.tokenPath, safeStorage.encryptString(JSON.stringify(token)), { mode: 0o600 });
+    const directory = path.dirname(this.tokenPath);
+    await fs.mkdir(directory, { recursive: true });
+    // Write-then-rename so a crash or concurrent reader can never observe a
+    // partially written credential file.
+    const temporaryPath = path.join(
+      directory,
+      `twitch-auth-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`,
+    );
+    try {
+      await fs.writeFile(temporaryPath, safeStorage.encryptString(JSON.stringify(token)), {
+        mode: 0o600,
+      });
+      await fs.rename(temporaryPath, this.tokenPath);
+    } catch (error) {
+      await fs.rm(temporaryPath, { force: true });
+      throw error;
+    }
   }
 
   private async clearToken(): Promise<void> {
+    // Invalidate the session before touching disk so in-flight validation or
+    // refresh work discards its result instead of restoring credentials.
+    this.sessionGeneration += 1;
+    this.stopValidationTimer();
+    const pendingRefresh = this.refreshInFlight;
+    const pendingCheck = this.authCheck;
+    this.refreshInFlight = null;
+    this.authCheck = null;
     this.token = null;
     this.account = null;
+    this.validatedAt = 0;
+    // Let detached in-flight work settle (the generation bump discards its
+    // result) so a delayed refresh cannot recreate the file removed below.
+    await Promise.allSettled([pendingRefresh, pendingCheck]);
     try {
       await fs.unlink(this.tokenPath);
     } catch (error) {

@@ -1,6 +1,7 @@
 import {
   FormEvent,
   Fragment,
+  memo,
   type ReactNode,
   useCallback,
   useEffect,
@@ -60,6 +61,7 @@ import type {
   TwitchPickerEmote,
 } from "../../shared/chat";
 import { formatChatTimestamp } from "../../shared/chat";
+import { applyChatMessage } from "../../shared/chat-messages";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
 import type { AppUpdateStatus } from "../../shared/updates";
@@ -74,9 +76,9 @@ const signedOutState: TwitchAuthState = { status: "signed-out", account: null };
 const anonymousPlaybackState: PlaybackSessionState = { linked: false };
 const emptySearchResults: TwitchSearchResults = { channels: [], categories: [] };
 
-function formatUptime(startedAt?: string): string {
+function formatUptime(startedAt: string | undefined, now: number): string {
   if (!startedAt) return "";
-  const elapsed = Math.max(0, Date.now() - new Date(startedAt).getTime());
+  const elapsed = Math.max(0, now - new Date(startedAt).getTime());
   const hours = Math.floor(elapsed / 3_600_000);
   const minutes = Math.floor((elapsed % 3_600_000) / 60_000);
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
@@ -138,6 +140,82 @@ function renderChatMessageText(
   return output;
 }
 
+interface ChatMessageRowProps {
+  message: ChatMessage;
+  showTimestamp: boolean;
+  badges: Map<string, ChatBadgeAsset>;
+  oledMode: boolean;
+  deletedRevealed: boolean;
+  onRevealDeleted: (id: string) => void;
+  sevenTvEmotes: Map<string, ProviderEmote>;
+}
+
+// Memoized so a new chat message only renders its own row instead of
+// re-rendering (and re-tokenizing emotes for) every message in the list.
+const ChatMessageRow = memo(function ChatMessageRow({
+  message,
+  showTimestamp,
+  badges,
+  oledMode,
+  deletedRevealed,
+  onRevealDeleted,
+  sevenTvEmotes,
+}: ChatMessageRowProps) {
+  return (
+    <div className="native-chat-message">
+      {showTimestamp && (
+        <time
+          className="chat-timestamp"
+          dateTime={new Date(message.sentAt).toISOString()}
+        >
+          {formatChatTimestamp(message.sentAt)}
+        </time>
+      )}
+      {message.badges.length > 0 && (
+        <span className="native-chat-badges" title={message.badges.join(", ")}>
+          {message.badges.slice(0, 4).map((badgeKey) => {
+            const badge = badges.get(badgeKey);
+            return badge ? (
+              <img
+                alt={badge.title}
+                key={badgeKey}
+                loading="lazy"
+                src={badge.imageUrl}
+                title={badge.title}
+              />
+            ) : null;
+          })}
+        </span>
+      )}
+      <strong
+        style={{
+          color: readableUsernameColor(
+            message.color,
+            oledMode ? "#000000" : "#18181b",
+          ),
+        }}
+      >
+        {message.displayName}
+      </strong>
+      <span className="chat-colon">:</span>{" "}
+      <span className="native-chat-text">
+        {message.deleted && !deletedRevealed ? (
+          <button
+            className="deleted-message-toggle"
+            onClick={() => onRevealDeleted(message.id)}
+            title="Show the deleted message locally"
+            type="button"
+          >
+            &lt;deleted&gt;
+          </button>
+        ) : (
+          renderChatMessageText(message, sevenTvEmotes)
+        )}
+      </span>
+    </div>
+  );
+});
+
 export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("home");
   const [playerReturnSection, setPlayerReturnSection] = useState<AppSection>("home");
@@ -154,10 +232,13 @@ export function App() {
   const [fullscreen, setFullscreen] = useState(false);
   const [nativeControlsVisible, setNativeControlsVisible] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  // The real version arrives from the main process via updates.getStatus();
+  // an empty placeholder avoids hardcoding a release version in the renderer.
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus>({
     state: "disabled",
-    currentVersion: "0.1.0-alpha.1",
+    currentVersion: "",
   });
+  const [uptimeNow, setUptimeNow] = useState(() => Date.now());
   const [authState, setAuthState] = useState<TwitchAuthState>(signedOutState);
   const [authBusy, setAuthBusy] = useState(true);
   const [deviceAuthorization, setDeviceAuthorization] =
@@ -405,20 +486,7 @@ export function App() {
           return next;
         });
       }
-      setChatMessages((current) => {
-        const existingIndex = current.findIndex((item) => item.id === message.id);
-        if (message.deleted) {
-          if (existingIndex < 0) return current;
-          return current.map((item, index) =>
-            index === existingIndex ? { ...item, deleted: true } : item,
-          );
-        }
-        return existingIndex >= 0
-          ? current
-          : [...current, message]
-              .sort((left, right) => left.sentAt - right.sentAt)
-              .slice(-500);
-      });
+      setChatMessages((current) => applyChatMessage(current, message));
     });
     const removeStateListener = window.desktop.chat.onState(setChatConnectionState);
     return () => {
@@ -549,6 +617,14 @@ export function App() {
     syncComposerSpace();
     return () => observer.disconnect();
   }, [activeChannel, chatPresentation, chatVisible]);
+
+  const revealDeletedMessage = useCallback((id: string) => {
+    setRevealedDeletedMessages((revealed) => {
+      const next = new Set(revealed);
+      next.add(id);
+      return next;
+    });
+  }, []);
 
   function handleChatScroll() {
     const host = chatMessagesHost.current;
@@ -764,6 +840,13 @@ export function App() {
     const timeout = window.setTimeout(() => setNotice(null), 3500);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+
+  // One shared tick keeps every visible uptime label fresh without a
+  // per-card interval.
+  useEffect(() => {
+    const timer = window.setInterval(() => setUptimeNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!activeChannel) return;
@@ -1539,7 +1622,7 @@ export function App() {
                   </span>
                   <span className="toolbar-uptime" title="Stream uptime">
                     <Clock size={13} />
-                    {formatUptime(streamMetadata.startedAt)}
+                    {formatUptime(streamMetadata.startedAt, uptimeNow)}
                   </span>
                 </div>
               )}
@@ -1839,64 +1922,15 @@ export function App() {
                       )}
                       {chatMessages.map((message, index) => (
                         <Fragment key={message.id}>
-                        <div className="native-chat-message">
-                          {chatTimestamps && (
-                            <time
-                              className="chat-timestamp"
-                              dateTime={new Date(message.sentAt).toISOString()}
-                            >
-                              {formatChatTimestamp(message.sentAt)}
-                            </time>
-                          )}
-                          {message.badges.length > 0 && (
-                            <span className="native-chat-badges" title={message.badges.join(", ")}>
-                              {message.badges.slice(0, 4).map((badgeKey) => {
-                                const badge = twitchBadges.get(badgeKey);
-                                return badge ? (
-                                  <img
-                                    alt={badge.title}
-                                    key={badgeKey}
-                                    loading="lazy"
-                                    src={badge.imageUrl}
-                                    title={badge.title}
-                                  />
-                                ) : null;
-                              })}
-                            </span>
-                          )}
-                          <strong
-                            style={{
-                              color: readableUsernameColor(
-                                message.color,
-                                oledMode ? "#000000" : "#18181b",
-                              ),
-                            }}
-                          >
-                            {message.displayName}
-                          </strong>
-                          <span className="chat-colon">:</span>{" "}
-                          <span className="native-chat-text">
-                            {message.deleted &&
-                            !revealedDeletedMessages.has(message.id) ? (
-                              <button
-                                className="deleted-message-toggle"
-                                onClick={() =>
-                                  setRevealedDeletedMessages((revealed) => {
-                                    const next = new Set(revealed);
-                                    next.add(message.id);
-                                    return next;
-                                  })
-                                }
-                                title="Show the deleted message locally"
-                                type="button"
-                              >
-                                &lt;deleted&gt;
-                              </button>
-                            ) : (
-                              renderChatMessageText(message, sevenTvEmotes)
-                            )}
-                          </span>
-                        </div>
+                        <ChatMessageRow
+                          badges={twitchBadges}
+                          deletedRevealed={revealedDeletedMessages.has(message.id)}
+                          message={message}
+                          oledMode={oledMode}
+                          onRevealDeleted={revealDeletedMessage}
+                          sevenTvEmotes={sevenTvEmotes}
+                          showTimestamp={chatTimestamps}
+                        />
                         {index === chatHistoryBoundary && (
                           <div className="live-chat-divider" role="separator">
                             <span>Live chat</span>
@@ -2129,7 +2163,7 @@ export function App() {
                               maximumFractionDigits: 1,
                             }).format(stream.viewerCount)} viewers
                           </span>
-                          <span className="stream-card-uptime">{formatUptime(stream.startedAt)}</span>
+                          <span className="stream-card-uptime">{formatUptime(stream.startedAt, uptimeNow)}</span>
                           <span className="stream-card-play">
                             <Play fill="currentColor" size={21} />
                           </span>
@@ -2346,8 +2380,9 @@ export function App() {
                 <div>
                   <strong>VioletWire updates</strong>
                   <span>
-                    Version {updateStatus.currentVersion}
-                    {" · "}
+                    {updateStatus.currentVersion
+                      ? `Version ${updateStatus.currentVersion} · `
+                      : ""}
                     {updateStatus.message ??
                       (updateStatus.state === "idle"
                         ? "Automatically checks GitHub Releases."
@@ -2497,7 +2532,7 @@ export function App() {
                           maximumFractionDigits: 1,
                         }).format(channel.viewerCount)} viewers
                       </span>
-                      <span className="stream-card-uptime">{formatUptime(channel.startedAt)}</span>
+                      <span className="stream-card-uptime">{formatUptime(channel.startedAt, uptimeNow)}</span>
                       <span className="stream-card-play">
                         <Play fill="currentColor" size={21} />
                       </span>
