@@ -1,0 +1,276 @@
+.vw-emote-picker {
+  position: absolute;
+  z-index: 100;
+  right: 0;
+  bottom: calc(100% + 9px);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 48px 57px;
+  min-width: 330px;
+  min-height: 360px;
+  max-width: min(600px, calc(100vw - 20px));
+  max-height: min(700px, calc(100vh - 90px));
+  overflow: hidden;
+  border: 1px solid #414149;
+  border-radius: 12px;
+  color: #e4e4e7;
+  background: rgb(24 24 27 / 98%);
+  box-shadow: 0 20px 65px rgb(0 0 0 / 76%);
+}
+
+.oled-mode .vw-emote-picker {
+  background: rgb(0 0 0 / 98%);
+}
+
+.vw-emote-resize {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  display: grid;
+  width: 25px;
+  min-width: 25px !important;
+  height: 25px;
+  padding: 0 !important;
+  place-items: center;
+  border: 0 !important;
+  border-radius: 0 0 7px !important;
+  color: #92929d !important;
+  background: #242429e8 !important;
+  cursor: nwse-resize !important;
+  touch-action: none;
+}
+
+.vw-emote-resize:hover {
+  color: white !important;
+  background: #3a2948 !important;
+}
+
+.vw-emote-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  min-height: 0;
+}
+
+.vw-emote-scroll {
+  min-height: 0;
+  padding: 25px 8px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.vw-emote-section {
+  scroll-margin-top: 8px;
+}
+
+.vw-emote-section + .vw-emote-section {
+  margin-top: 5px;
+  border-top: 1px solid #303037;
+}
+
+.vw-emote-section header {
+  position: sticky;
+  z-index: 2;
+  top: -25px;
+  display: flex;
+  height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px;
+  color: #f4f4f5;
+  background: #18181bf2;
+  backdrop-filter: blur(9px);
+}
+
+.oled-mode .vw-emote-section header {
+  background: #000e;
+}
+
+.vw-emote-section header strong {
+  position: absolute;
+  right: 34px;
+  left: 34px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vw-emote-section header span {
+  margin-left: auto;
+  color: #a78bfa;
+  font-size: 10px;
+}
+
+.vw-emote-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(43px, 1fr));
+  align-content: start;
+  gap: 4px;
+  min-height: 50px;
+  padding: 3px 2px 10px;
+}
+
+.vw-emote-grid > button {
+  position: relative;
+  display: grid !important;
+  min-width: 43px !important;
+  width: auto !important;
+  height: 43px !important;
+  padding: 4px !important;
+  place-items: center;
+  border: 0 !important;
+  border-radius: 7px !important;
+  color: #d4d4d8 !important;
+  background: #222227 !important;
+}
+
+.vw-emote-grid > button:hover {
+  background: #34343b !important;
+}
+
+.vw-emote-grid > button.wide {
+  grid-column: span 2;
+}
+
+.vw-emote-grid img {
+  max-width: 100%;
+  max-height: 35px;
+  object-fit: contain;
+}
+
+.vw-emote-grid .subscription-only::after {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  padding: 1px 3px;
+  border-radius: 3px;
+  color: #e9d5ff;
+  background: #3b1d55e6;
+  content: "SUB";
+  font-size: 6px;
+  font-weight: 850;
+}
+
+.vw-emote-grid .favorite-mark {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  color: #fbbf24;
+  fill: #fbbf24;
+  filter: drop-shadow(0 1px 2px #000);
+}
+
+.vw-emote-empty {
+  grid-column: 1 / -1;
+  padding: 24px 8px;
+  color: #777781;
+  font-size: 11px;
+  text-align: center;
+}
+
+.vw-emote-rail {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 27px 5px 7px;
+  overflow-y: auto;
+  border-left: 1px solid #303037;
+  background: #151519;
+}
+
+.vw-emote-rail button,
+.vw-emote-providers button {
+  display: grid !important;
+  min-width: 36px !important;
+  width: 36px !important;
+  height: 36px !important;
+  padding: 0 !important;
+  place-items: center;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  color: #b8b8c1 !important;
+  background: #25252b !important;
+  font-size: 10px !important;
+  font-weight: 850 !important;
+}
+
+.vw-emote-rail button:hover,
+.vw-emote-providers button:hover:not(:disabled),
+.vw-emote-providers button.active {
+  border-color: #7652a2 !important;
+  color: white !important;
+  background: #4c1d72 !important;
+}
+
+.vw-emote-rail img {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.vw-emote-providers {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-top: 1px solid #34343b;
+  background: #1b1b20;
+}
+
+.vw-emote-providers button:disabled {
+  cursor: not-allowed !important;
+  filter: saturate(.25);
+  opacity: .38;
+}
+
+.vw-emote-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 8px 10px 10px;
+  padding: 0 11px;
+  border: 1px solid #45454d;
+  border-radius: 8px;
+  color: #92929d;
+  background: #0e0e10;
+}
+
+.vw-emote-search:focus-within {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 1px #8b5cf644;
+}
+
+.vw-emote-search input {
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 39px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: 0 !important;
+  color: #f4f4f5 !important;
+  background: transparent !important;
+  font: inherit !important;
+  font-size: 12px !important;
+}
+
+.vw-emote-unavailable {
+  display: grid;
+  min-height: 100%;
+  place-content: center;
+  gap: 7px;
+  color: #92929d;
+  text-align: center;
+}
+
+.vw-emote-unavailable strong {
+  color: #e4e4e7;
+  font-size: 16px;
+}

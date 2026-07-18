@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const outgoingChatMessageSchema = z.string().trim().min(1).max(500);
+export const chatReplyParentIdSchema = z.string().uuid();
 export const chatHistoryLimitSchema = z.number().int().min(20).max(100);
 
 export interface TwitchChatEmoteRange {
@@ -19,6 +20,14 @@ export interface ChatMessage {
   badges: string[];
   sentAt: number;
   twitchEmotes: TwitchChatEmoteRange[];
+  reply?: {
+    parentMessageId: string;
+    parentUserLogin: string;
+    parentDisplayName: string;
+    parentMessageBody: string;
+    threadMessageId?: string;
+    threadUserLogin?: string;
+  };
   deleted?: boolean;
   historical?: boolean;
 }
@@ -44,6 +53,9 @@ export interface TwitchPickerEmote {
   imageUrl: string;
   scope: "global" | "channel";
   subscriptionOnly: boolean;
+  ownerId?: string;
+  ownerName?: string;
+  ownerImageUrl?: string;
 }
 
 export interface TwitchChatAssets {
@@ -53,7 +65,7 @@ export interface TwitchChatAssets {
 }
 
 export interface ChatApi {
-  send(channel: string, message: string): Promise<void>;
+  send(channel: string, message: string, replyParentMessageId?: string): Promise<void>;
   getAssets(channel: string): Promise<TwitchChatAssets>;
   setHistoryLimit(limit: number): void;
   onMessage(listener: (message: ChatMessage) => void): () => void;

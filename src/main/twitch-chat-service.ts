@@ -168,6 +168,17 @@ export class TwitchChatService {
       badges: (tags.badges ?? "").split(",").filter(Boolean),
       sentAt: Number(tags["tmi-sent-ts"]) || Date.now(),
       twitchEmotes: this.parseEmotes(tags.emotes ?? ""),
+      reply: tags["reply-parent-msg-id"]
+        ? {
+            parentMessageId: tags["reply-parent-msg-id"],
+            parentUserLogin: tags["reply-parent-user-login"] ?? "",
+            parentDisplayName:
+              tags["reply-parent-display-name"] ?? tags["reply-parent-user-login"] ?? "",
+            parentMessageBody: tags["reply-parent-msg-body"] ?? "",
+            threadMessageId: tags["reply-thread-parent-msg-id"] || undefined,
+            threadUserLogin: tags["reply-thread-parent-user-login"] || undefined,
+          }
+        : undefined,
     };
   }
 

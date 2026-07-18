@@ -30,6 +30,7 @@ const scopes = [
   "clips:edit",
   "user:read:chat",
   "user:write:chat",
+  "user:read:emotes",
 ] as const;
 
 const tokenSchema = z.object({
@@ -170,6 +171,22 @@ const emoteResponseSchema = z.object({
       tier: z.string().optional(),
     }),
   ),
+});
+const userEmoteResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      owner_id: z.string(),
+      format: z.array(z.string()).default(["static"]),
+      scale: z.array(z.string()).default(["1.0"]),
+      theme_mode: z.array(z.string()).default(["dark"]),
+      emote_type: z.string(),
+      tier: z.string().optional(),
+    }),
+  ),
+  template: z.string().url(),
+  pagination: z.object({ cursor: z.string().optional() }).default({}),
 });
 
 type StoredToken = z.infer<typeof tokenSchema>;
@@ -549,7 +566,11 @@ export class TwitchService {
     return clip;
   }
 
-  async sendChatMessage(channel: string, message: string): Promise<void> {
+  async sendChatMessage(
+    channel: string,
+    message: string,
+    replyParentMessageId?: string,
+  ): Promise<void> {
     const account = await this.requireAccount();
     const users = await this.helix(
       `/users?login=${encodeURIComponent(channel)}`,
@@ -564,6 +585,9 @@ export class TwitchService {
         broadcaster_id: broadcaster.id,
         sender_id: account.id,
         message,
+        ...(replyParentMessageId
+          ? { reply_parent_message_id: replyParentMessageId }
+          : {}),
       }),
     });
     const delivery = result.data[0];
@@ -638,11 +662,71 @@ export class TwitchService {
         subscriptionOnly: false,
       });
     }
+    if (this.token?.scopes.includes("user:read:emotes") && this.account) {
+      const available = await this.getAvailableUserEmotes(
+        this.account.id,
+        broadcaster.id,
+      );
+      if (available.length > 0) {
+        emotes.clear();
+        for (const emote of available) emotes.set(emote.id, emote);
+      }
+    }
     return {
       broadcasterId: broadcaster.id,
       badges: [...badges.values()],
       emotes: [...emotes.values()],
     };
+  }
+
+  private async getAvailableUserEmotes(
+    userId: string,
+    broadcasterId: string,
+  ): Promise<TwitchChatAssets["emotes"]> {
+    const data: z.infer<typeof userEmoteResponseSchema>["data"] = [];
+    let template = "";
+    let cursor: string | undefined;
+    do {
+      const query = new URLSearchParams({
+        user_id: userId,
+        broadcaster_id: broadcasterId,
+      });
+      if (cursor) query.set("after", cursor);
+      const response = await this.helix(
+        `/chat/emotes/user?${query.toString()}`,
+        userEmoteResponseSchema,
+      );
+      data.push(...response.data);
+      template = response.template;
+      cursor = response.pagination.cursor;
+    } while (cursor);
+
+    const ownerIds = [...new Set(
+      data.map((emote) => emote.owner_id).filter((id) => id && id !== "0"),
+    )];
+    const owners = new Map(
+      (await this.getUsersByIds(ownerIds)).map((owner) => [owner.id, owner]),
+    );
+    return data.map((emote) => {
+      const owner = owners.get(emote.owner_id);
+      const format = emote.format.includes("animated") ? "animated" : "static";
+      const theme = emote.theme_mode.includes("dark") ? "dark" : emote.theme_mode[0] ?? "dark";
+      const scale = emote.scale.includes("2.0") ? "2.0" : emote.scale.at(-1) ?? "1.0";
+      return {
+        id: emote.id,
+        name: emote.name,
+        imageUrl: template
+          .replace("{{id}}", encodeURIComponent(emote.id))
+          .replace("{{format}}", format)
+          .replace("{{theme_mode}}", theme)
+          .replace("{{scale}}", scale),
+        scope: !emote.owner_id || emote.owner_id === "0" ? "global" : "channel",
+        subscriptionOnly: emote.emote_type === "subscriptions" || Boolean(emote.tier),
+        ownerId: emote.owner_id,
+        ownerName: owner?.display_name,
+        ownerImageUrl: owner?.profile_image_url,
+      };
+    });
   }
 
   async openSubscription(channel: string): Promise<void> {
@@ -774,9 +858,12 @@ export class TwitchService {
     if (this.validationTimer) return;
     const timer = setInterval(() => {
       if (!this.token) return;
-      void this.ensureAuthenticated().catch(() => {
-        // Transient failures retry at the next interval; a confirmed-invalid
-        // session is handled by the callers that surface auth state.
+      void this.ensureAuthenticated().catch((error: unknown) => {
+        // Keep credentials through transient outages, but promptly erase a
+        // token Twitch has explicitly rejected.
+        if (isAuthInvalidError(error)) {
+          void this.clearToken().catch(() => undefined);
+        }
       });
     }, VALIDATION_LIFETIME);
     timer.unref?.();
@@ -916,6 +1003,7 @@ export class TwitchService {
     this.token = null;
     this.account = null;
     this.validatedAt = 0;
+    this.chatAssetsCache.clear();
     // Let detached in-flight work settle (the generation bump discards its
     // result) so a delayed refresh cannot recreate the file removed below.
     await Promise.allSettled([pendingRefresh, pendingCheck]);

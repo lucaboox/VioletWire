@@ -30,7 +30,12 @@ import { SevenTvService } from "./seven-tv-service";
 import { TwitchChatService } from "./twitch-chat-service";
 import { UpdateService } from "./update-service";
 import { startRendererServer, type RendererServer } from "./renderer-server";
-import { chatHistoryLimitSchema, outgoingChatMessageSchema } from "../shared/chat";
+import {
+  chatHistoryLimitSchema,
+  chatReplyParentIdSchema,
+  outgoingChatMessageSchema,
+} from "../shared/chat";
+import { PreferencesService } from "./preferences-service";
 
 // Electron's development console can outlive the shell that launched it. A
 // later Chromium diagnostic would otherwise turn a harmless closed stdout or
@@ -48,6 +53,9 @@ const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 // encrypted Twitch credentials, website sessions, and renderer preferences
 // continue to load without copying or decrypting them.
 app.setPath("userData", path.join(app.getPath("appData"), "twitch-windows-viewer"));
+// Twitch's official embedded player is created inside a dedicated local page.
+// Allow that trusted player to honor its autoplay option when a channel opens.
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 const applicationIcon = app.isPackaged
   ? path.join(process.resourcesPath, "icon.png")
   : path.join(currentDirectory, "../../build/icon.png");
@@ -59,6 +67,7 @@ let channelActionWindow: BrowserWindow | null = null;
 let channelActionKind: ChannelAction | null = null;
 let nativeControlsVisible = true;
 let nativeControlsExpanded = false;
+let nativeEmotePickerOpen = false;
 let nativeControlsContext: NativeControlsContext | null = null;
 let lastPlayerBounds: Rectangle | null = null;
 let chatPresentation: ChatPresentation = "side";
@@ -152,6 +161,7 @@ const nativePlayer = new NativePlayer(
   () => playbackSessionService.getToken(),
 );
 const twitchService = new TwitchService();
+const preferencesService = new PreferencesService();
 function isAllowedTwitchNavigation(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
@@ -172,21 +182,68 @@ function applyNativeControlsBounds(): void {
   const contentBounds = mainWindow.getContentBounds();
   const nativeChatOverlay =
     nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay";
-  const height = lastPlayerBounds.height;
-  const width = lastPlayerBounds.width;
+  const chatBounds = lastChatBounds;
+  const detachedPickerOverSideChat =
+    Boolean(nativeEmotePickerOpen &&
+    nativeControlsContext?.chatVisible &&
+    nativeControlsContext.chatPresentation === "side" &&
+    chatBounds);
+  const left = detachedPickerOverSideChat
+    ? Math.min(lastPlayerBounds.x, chatBounds!.x)
+    : lastPlayerBounds.x;
+  const top = detachedPickerOverSideChat
+    ? Math.min(lastPlayerBounds.y, chatBounds!.y)
+    : lastPlayerBounds.y;
+  const right = detachedPickerOverSideChat
+    ? Math.max(
+        lastPlayerBounds.x + lastPlayerBounds.width,
+        chatBounds!.x + chatBounds!.width,
+      )
+    : lastPlayerBounds.x + lastPlayerBounds.width;
+  const bottom = detachedPickerOverSideChat
+    ? Math.max(
+        lastPlayerBounds.y + lastPlayerBounds.height,
+        chatBounds!.y + chatBounds!.height,
+      )
+    : lastPlayerBounds.y + lastPlayerBounds.height;
+  const height = bottom - top;
+  const width = right - left;
+  const playerX = lastPlayerBounds.x - left;
+  const playerY = lastPlayerBounds.y - top;
+  const playerWidth = lastPlayerBounds.width;
+  const playerHeight = lastPlayerBounds.height;
   nativeControlsWindow.setBounds({
-    x: contentBounds.x + lastPlayerBounds.x,
-    y: contentBounds.y + lastPlayerBounds.y,
+    x: contentBounds.x + left,
+    y: contentBounds.y + top,
     width,
     height,
   });
+  const normalControlShape = [
+    {
+      x: playerX + Math.max(0, playerWidth - 136),
+      y: playerY + 8,
+      width: Math.min(128, playerWidth),
+      height: 34,
+    },
+    {
+      x: playerX,
+      y: playerY + Math.max(0, playerHeight - 78),
+      width: playerWidth,
+      height: Math.min(78, playerHeight),
+    },
+  ];
+  const pickerShape = detachedPickerOverSideChat
+    ? [{
+        x: Math.max(0, width - Math.min(640, width)),
+        y: Math.max(0, height - 790),
+        width: Math.min(640, width),
+        height: Math.min(720, height),
+      }]
+    : [];
   nativeControlsWindow.setShape(
     nativeControlsExpanded || nativeChatOverlay
       ? [{ x: 0, y: 0, width, height }]
-      : [
-          { x: Math.max(0, width - 136), y: 8, width: Math.min(128, width), height: 34 },
-          { x: 0, y: Math.max(0, height - 78), width, height: Math.min(78, height) },
-        ],
+      : [...normalControlShape, ...pickerShape],
   );
   if (nativeControlsVisible) {
     nativeControlsWindow.showInactive();
@@ -247,6 +304,7 @@ function destroyNativeControlsWindow(): void {
   nativeControlsWindow = null;
   nativeControlsVisible = true;
   nativeControlsExpanded = false;
+  nativeEmotePickerOpen = false;
   nativeControlsContext = null;
   lastPlayerBounds = null;
 }
@@ -584,11 +642,11 @@ ipcMain.on("player:set-bounds", (_event, input: unknown) => {
 });
 
 ipcMain.on("player:set-chat-bounds", (_event, input: unknown) => {
-  if (!chatView) return;
   const result = playerBoundsSchema.safeParse(input);
   if (!result.success) return;
   lastChatBounds = result.data;
-  applyChatBounds();
+  if (chatView) applyChatBounds();
+  if (nativeEmotePickerOpen) applyNativeControlsBounds();
 });
 
 ipcMain.on("player:set-chat-visible", (_event, visible: unknown) => {
@@ -645,6 +703,7 @@ ipcMain.on("native-controls:set-visible", (_event, input: unknown) => {
     nativeControlsWindow.moveTop();
   } else if (
     !nativeControlsExpanded &&
+    !nativeEmotePickerOpen &&
     !(nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay")
   ) {
     nativeControlsWindow.hide();
@@ -660,10 +719,37 @@ ipcMain.on("native-controls:set-expanded", (_event, input: unknown) => {
   if (!nativeControlsWindow) return;
   const nativeChatOverlay =
     nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay";
-  if (!input && !nativeControlsVisible && !nativeChatOverlay) {
+  if (!input && !nativeEmotePickerOpen && !nativeControlsVisible && !nativeChatOverlay) {
     nativeControlsWindow.hide();
     return;
   }
+  applyNativeControlsBounds();
+});
+
+ipcMain.on("native-controls:set-emote-picker", (_event, input: unknown) => {
+  if (typeof input !== "boolean" || activePlayerMode !== "native") return;
+  nativeEmotePickerOpen = input;
+  sendToWindow(mainWindow, "native-controls:emote-picker", input);
+  sendToWindow(nativeControlsWindow, "native-controls:emote-picker", input);
+  if (!nativeControlsWindow) return;
+  if (input) {
+    nativeControlsVisible = true;
+    sendToWindow(nativeControlsWindow, "native-controls:visibility", true);
+    applyNativeControlsBounds();
+    nativeControlsWindow.show();
+    nativeControlsWindow.moveTop();
+  } else {
+    applyNativeControlsBounds();
+  }
+});
+
+ipcMain.on("native-controls:emote-selected", (_event, input: unknown) => {
+  const result = outgoingChatMessageSchema.safeParse(input);
+  if (!result.success) return;
+  nativeEmotePickerOpen = false;
+  sendToWindow(mainWindow, "native-controls:emote-selected", result.data);
+  sendToWindow(mainWindow, "native-controls:emote-picker", false);
+  sendToWindow(nativeControlsWindow, "native-controls:emote-picker", false);
   applyNativeControlsBounds();
 });
 
@@ -765,10 +851,19 @@ ipcMain.handle("emotes:7tv-channel", (_event, broadcasterId: unknown) => {
   return sevenTvService.getChannel(broadcasterId);
 });
 ipcMain.handle("emotes:clear-cache", () => sevenTvService.clear());
-ipcMain.handle("chat:send", (_event, rawChannel: unknown, rawMessage: unknown) => {
+ipcMain.handle("chat:send", (
+  _event,
+  rawChannel: unknown,
+  rawMessage: unknown,
+  rawReplyParentMessageId: unknown,
+) => {
   const channel = channelNameSchema.parse(rawChannel);
   const message = outgoingChatMessageSchema.parse(rawMessage);
-  return twitchService.sendChatMessage(channel, message);
+  const replyParentMessageId =
+    rawReplyParentMessageId === undefined
+      ? undefined
+      : chatReplyParentIdSchema.parse(rawReplyParentMessageId);
+  return twitchService.sendChatMessage(channel, message, replyParentMessageId);
 });
 ipcMain.handle("chat:get-assets", (_event, rawChannel: unknown) =>
   twitchService.getChatAssets(channelNameSchema.parse(rawChannel)),
@@ -780,9 +875,19 @@ ipcMain.on("chat:set-history-limit", (_event, rawLimit: unknown) => {
 ipcMain.handle("updates:get-status", () => updateService.getStatus());
 ipcMain.handle("updates:check", () => updateService.check());
 ipcMain.on("updates:install", () => updateService.install());
+ipcMain.handle("preferences:get-or-migrate", (_event, legacyPreferences: unknown) =>
+  preferencesService.getOrMigrate(legacyPreferences),
+);
+ipcMain.handle("preferences:update", async (_event, patch: unknown) => {
+  const preferences = await preferencesService.update(patch);
+  sendToWindow(mainWindow, "preferences:changed", preferences);
+  sendToWindow(nativeControlsWindow, "preferences:changed", preferences);
+  return preferences;
+});
 
 app.whenReady().then(async () => {
   app.setAppUserModelId("app.violetwire.viewer");
+  await preferencesService.initialize();
   await playbackSessionService.initialize();
   await twitchService.initialize();
   await createWindow();

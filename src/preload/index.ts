@@ -15,6 +15,11 @@ import type { TwitchApi } from "../shared/twitch";
 import type { EmoteApi } from "../shared/emotes";
 import type { ChatApi, ChatConnectionState, ChatMessage } from "../shared/chat";
 import type { AppUpdateStatus, UpdateApi } from "../shared/updates";
+import type {
+  AppPreferences,
+  AppPreferencesPatch,
+  PreferencesApi,
+} from "../shared/preferences";
 
 const api: DesktopApi = {
   twitch: {
@@ -46,8 +51,8 @@ const api: DesktopApi = {
     clearCache: () => ipcRenderer.invoke("emotes:clear-cache"),
   } satisfies EmoteApi,
   chat: {
-    send: (channel: string, message: string) =>
-      ipcRenderer.invoke("chat:send", channel, message),
+    send: (channel: string, message: string, replyParentMessageId?: string) =>
+      ipcRenderer.invoke("chat:send", channel, message, replyParentMessageId),
     getAssets: (channel: string) => ipcRenderer.invoke("chat:get-assets", channel),
     setHistoryLimit: (limit: number) => ipcRenderer.send("chat:set-history-limit", limit),
     onMessage: (listener: (message: ChatMessage) => void) => {
@@ -74,6 +79,17 @@ const api: DesktopApi = {
       return () => ipcRenderer.removeListener("updates:status", handler);
     },
   } satisfies UpdateApi,
+  preferences: {
+    getOrMigrate: (legacyPreferences?: AppPreferencesPatch) =>
+      ipcRenderer.invoke("preferences:get-or-migrate", legacyPreferences),
+    update: (patch: AppPreferencesPatch) => ipcRenderer.invoke("preferences:update", patch),
+    onChanged: (listener: (preferences: AppPreferences) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, preferences: AppPreferences) =>
+        listener(preferences);
+      ipcRenderer.on("preferences:changed", handler);
+      return () => ipcRenderer.removeListener("preferences:changed", handler);
+    },
+  } satisfies PreferencesApi,
   player: {
     open: (channel: string, mode: PlayerMode, quality?: NativeQualityValue) =>
       ipcRenderer.invoke("player:open", channel, mode, quality),
@@ -101,6 +117,8 @@ const api: DesktopApi = {
       ipcRenderer.send("native-controls:set-visible", visible),
     setNativeControlsExpanded: (expanded: boolean) =>
       ipcRenderer.send("native-controls:set-expanded", expanded),
+    setNativeEmotePicker: (open: boolean) =>
+      ipcRenderer.send("native-controls:set-emote-picker", open),
     setNativeControlsContext: (context: NativeControlsContext) =>
       ipcRenderer.send("native-controls:set-context", context),
     onNativeControlsVisibility: (listener: (visible: boolean) => void) => {
@@ -121,6 +139,18 @@ const api: DesktopApi = {
         listener(action);
       ipcRenderer.on("native-controls:action", handler);
       return () => ipcRenderer.removeListener("native-controls:action", handler);
+    },
+    sendNativeEmoteSelection: (name: string) =>
+      ipcRenderer.send("native-controls:emote-selected", name),
+    onNativeEmotePicker: (listener: (open: boolean) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, open: boolean) => listener(open);
+      ipcRenderer.on("native-controls:emote-picker", handler);
+      return () => ipcRenderer.removeListener("native-controls:emote-picker", handler);
+    },
+    onNativeEmoteSelection: (listener: (name: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, name: string) => listener(name);
+      ipcRenderer.on("native-controls:emote-selected", handler);
+      return () => ipcRenderer.removeListener("native-controls:emote-selected", handler);
     },
   },
 };

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SevenTvService } from "./seven-tv-service";
 
 const sevenTvPayload = {
@@ -82,5 +85,22 @@ describe("SevenTvService", () => {
 
     await expect(new SevenTvService().getChannel("../bad")).rejects.toThrow();
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it("reuses persisted emote metadata after the app restarts", async () => {
+    const cacheDirectory = join(tmpdir(), `violetwire-7tv-${crypto.randomUUID()}`);
+    const request = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(sevenTvPayload), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", request);
+    try {
+      await new SevenTvService(cacheDirectory).getGlobal();
+      const restored = await new SevenTvService(cacheDirectory).getGlobal();
+
+      expect(restored.emotes[0].name).toBe("Wave");
+      expect(request).toHaveBeenCalledTimes(1);
+    } finally {
+      await fs.rm(cacheDirectory, { recursive: true, force: true });
+    }
   });
 });

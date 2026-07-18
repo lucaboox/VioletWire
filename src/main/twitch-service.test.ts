@@ -361,6 +361,28 @@ describe("TwitchService scheduled validation", () => {
     await vi.advanceTimersByTimeAsync(3 * VALIDATION_LIFETIME);
     expect(requestCount("/oauth2/validate")).toBe(0);
   });
+
+  it("clears credentials when scheduled validation confirms they are invalid", async () => {
+    vi.useFakeTimers();
+    let rejectValidation = false;
+    installFetch((url) => {
+      if (url.includes("/oauth2/validate") && rejectValidation) {
+        return json({ message: "Invalid OAuth token" }, 401);
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+    await internals.writeToken(internals.token!);
+
+    await service.getAuthState();
+    rejectValidation = true;
+    await vi.advanceTimersByTimeAsync(VALIDATION_LIFETIME + 1_000);
+    await vi.waitFor(() => expect(internals.token).toBeNull());
+
+    expect(internals.account).toBeNull();
+    expect(internals.validationTimer).toBeNull();
+    await expect(fs.access(tokenFilePath)).rejects.toThrow();
+  });
 });
 
 describe("TwitchService credential storage", () => {
@@ -482,5 +504,96 @@ describe("TwitchService chat assets", () => {
 
     expect(result.broadcasterId).toBe("77");
     expect(requestCount("/helix/users?login=")).toBe(2);
+  });
+
+  it("loads and groups every Twitch emote available to the signed-in user", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/chat/emotes/user?")) {
+        return json({
+          data: [
+            {
+              id: "subscriber-emote",
+              name: "OtherChannelLove",
+              owner_id: "88",
+              emote_type: "subscriptions",
+              tier: "1000",
+              format: ["static", "animated"],
+              scale: ["1.0", "2.0", "3.0"],
+              theme_mode: ["light", "dark"],
+            },
+            {
+              id: "event-emote",
+              name: "EventHype",
+              owner_id: "",
+              emote_type: "limitedtime",
+              format: ["static"],
+              scale: ["1.0", "2.0"],
+              theme_mode: ["dark"],
+            },
+          ],
+          template: "https://static-cdn.jtvnw.net/emoticons/v2/{{id}}/{{format}}/{{theme_mode}}/{{scale}}",
+          pagination: {},
+        });
+      }
+      if (url.includes("/helix/users?id=88")) {
+        return json({
+          data: [{
+            id: "88",
+            login: "otherchannel",
+            display_name: "OtherChannel",
+            profile_image_url: "https://example.com/other-channel.png",
+          }],
+        });
+      }
+      return chatAssetRoutes(url);
+    });
+    const { service, internals } = createAuthenticatedService();
+    if (!internals.token) throw new Error("Expected test token.");
+    internals.token.scopes = ["user:read:emotes"];
+
+    const result = await service.getChatAssets("somechannel");
+
+    expect(result.emotes).toEqual([
+      expect.objectContaining({
+        id: "subscriber-emote",
+        ownerId: "88",
+        ownerName: "OtherChannel",
+        ownerImageUrl: "https://example.com/other-channel.png",
+      }),
+      expect.objectContaining({
+        id: "event-emote",
+        scope: "global",
+      }),
+    ]);
+  });
+});
+
+describe("TwitchService chat replies", () => {
+  it("sends the official reply parent message ID to Helix", async () => {
+    let requestBody: unknown;
+    installFetch((url, init) => {
+      if (url.includes("/helix/users?login=")) return json(broadcasterPayload);
+      if (url.includes("/helix/chat/messages")) {
+        requestBody = JSON.parse(String(init?.body));
+        return json({ data: [{ message_id: "sent-id", is_sent: true }] });
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await service.sendChatMessage(
+      "somechannel",
+      "This is a reply",
+      "719e45c4-5861-4c3f-932d-e34141177b0e",
+    );
+
+    expect(requestBody).toEqual({
+      broadcaster_id: "77",
+      sender_id: "42",
+      message: "This is a reply",
+      reply_parent_message_id: "719e45c4-5861-4c3f-932d-e34141177b0e",
+    });
   });
 });

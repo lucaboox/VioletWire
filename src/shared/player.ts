@@ -3,6 +3,7 @@ import type { EmoteApi } from "./emotes";
 import type { ChatApi } from "./chat";
 import type { TwitchApi } from "./twitch";
 import type { UpdateApi } from "./updates";
+import type { PreferencesApi } from "./preferences";
 
 function normalizeChannelInput(input: string): string {
   const value = input.trim().toLowerCase();
@@ -170,6 +171,7 @@ export interface DesktopApi {
   emotes: EmoteApi;
   chat: ChatApi;
   updates: UpdateApi;
+  preferences: PreferencesApi;
   player: {
     open(channel: string, mode: PlayerMode, quality?: NativeQualityValue): Promise<{
       channel: string;
@@ -191,10 +193,14 @@ export interface DesktopApi {
     readyNativeControls(): void;
     setNativeControlsVisible(visible: boolean): void;
     setNativeControlsExpanded(expanded: boolean): void;
+    setNativeEmotePicker(open: boolean): void;
     setNativeControlsContext(context: NativeControlsContext): void;
     onNativeControlsVisibility(listener: (visible: boolean) => void): () => void;
     sendNativeControlAction(action: NativeControlAction): void;
     onNativeControlsContext(listener: (context: NativeControlsContext) => void): () => void;
     onNativeControlAction(listener: (action: NativeControlAction) => void): () => void;
+    sendNativeEmoteSelection(name: string): void;
+    onNativeEmotePicker(listener: (open: boolean) => void): () => void;
+    onNativeEmoteSelection(listener: (name: string) => void): () => void;
   };
 }

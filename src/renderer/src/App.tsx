@@ -27,9 +27,11 @@ import {
   Play,
   RotateCcw,
   RefreshCw,
+  Reply,
   Scissors,
   Search,
   Settings,
+  Smile,
   Star,
   Tv,
   Users,
@@ -53,6 +55,7 @@ import type {
   PlaybackSessionState,
 } from "../../shared/twitch";
 import type { EmoteSetResult } from "../../shared/emotes";
+import type { AppPreferences } from "../../shared/preferences";
 import type { ProviderEmote } from "../../shared/emotes";
 import type {
   ChatBadgeAsset,
@@ -64,6 +67,7 @@ import { formatChatTimestamp } from "../../shared/chat";
 import { applyChatMessage } from "../../shared/chat-messages";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
+import { EmotePicker } from "./EmotePicker";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
 
@@ -140,6 +144,41 @@ function renderChatMessageText(
   return output;
 }
 
+let mentionAudioContext: AudioContext | null = null;
+
+function playMentionPing(): void {
+  const AudioContextConstructor =
+    window.AudioContext ??
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!AudioContextConstructor) return;
+  mentionAudioContext ??= new AudioContextConstructor();
+  const context = mentionAudioContext;
+  void context.resume().then(() => {
+    const now = context.currentTime;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.13, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+    gain.connect(context.destination);
+    for (const [frequency, offset] of [[740, 0], [980, 0.09]] as const) {
+      const oscillator = context.createOscillator();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(frequency, now + offset);
+      oscillator.connect(gain);
+      oscillator.start(now + offset);
+      oscillator.stop(now + offset + 0.2);
+    }
+  }).catch(() => undefined);
+}
+
+function messageMentionsLogin(message: ChatMessage, login: string): boolean {
+  if (!login || message.login.toLowerCase() === login) return false;
+  if (message.reply?.parentUserLogin.toLowerCase() === login) return true;
+  const escaped = login.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:])`, "i").test(message.text);
+}
+
 interface ChatMessageRowProps {
   message: ChatMessage;
   showTimestamp: boolean;
@@ -147,6 +186,7 @@ interface ChatMessageRowProps {
   oledMode: boolean;
   deletedRevealed: boolean;
   onRevealDeleted: (id: string) => void;
+  onReply: (message: ChatMessage) => void;
   sevenTvEmotes: Map<string, ProviderEmote>;
 }
 
@@ -159,10 +199,20 @@ const ChatMessageRow = memo(function ChatMessageRow({
   oledMode,
   deletedRevealed,
   onRevealDeleted,
+  onReply,
   sevenTvEmotes,
 }: ChatMessageRowProps) {
   return (
     <div className="native-chat-message">
+      {message.reply && (
+        <span
+          className="chat-reply-parent"
+          title={message.reply.parentMessageBody}
+        >
+          Replying to {message.reply.parentDisplayName || message.reply.parentUserLogin}:{" "}
+          {message.reply.parentMessageBody}
+        </span>
+      )}
       {showTimestamp && (
         <time
           className="chat-timestamp"
@@ -212,6 +262,17 @@ const ChatMessageRow = memo(function ChatMessageRow({
           renderChatMessageText(message, sevenTvEmotes)
         )}
       </span>
+      {!message.deleted && (
+        <button
+          aria-label={`Reply to ${message.displayName}`}
+          className="chat-message-reply"
+          onClick={() => onReply(message)}
+          title={`Reply to ${message.displayName}`}
+          type="button"
+        >
+          <Reply size={14} />
+        </button>
+      )}
     </div>
   );
 });
@@ -265,13 +326,12 @@ export function App() {
   const [chatConnectionState, setChatConnectionState] =
     useState<ChatConnectionState>("disconnected");
   const [chatInput, setChatInput] = useState("");
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [sevenTvEmotes, setSevenTvEmotes] = useState<Map<string, ProviderEmote>>(new Map());
   const [sevenTvChannelEmoteNames, setSevenTvChannelEmoteNames] = useState<Set<string>>(new Set());
   const [twitchBadges, setTwitchBadges] = useState<Map<string, ChatBadgeAsset>>(new Map());
   const [twitchPickerEmotes, setTwitchPickerEmotes] = useState<TwitchPickerEmote[]>([]);
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
-  const [emoteSearch, setEmoteSearch] = useState("");
-  const [emoteProvider, setEmoteProvider] = useState<"twitch" | "7tv" | null>("twitch");
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [chatTimestamps, setChatTimestamps] = useState(
     () => window.localStorage.getItem("glint.chat.timestamps") !== "false",
@@ -287,6 +347,7 @@ export function App() {
     const stored = Number(window.localStorage.getItem("glint.chat.overlayOpacity"));
     return Number.isFinite(stored) && stored >= 25 && stored <= 100 ? stored : 88;
   });
+  const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
   const [chatAutoScroll, setChatAutoScroll] = useState(true);
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
@@ -294,6 +355,17 @@ export function App() {
   const [preferredMode, setPreferredMode] = useState<PlayerMode>(() =>
     window.localStorage.getItem("glint.playback.default") === "native" ? "native" : "official",
   );
+  const [preferencesReady, setPreferencesReady] = useState(false);
+  const legacyPreferences = useRef({
+    preferredPlayerMode: preferredMode,
+    chatTimestamps,
+    chatHistoryLimit,
+    chatOverlayOpacity: chatOpacity,
+    mentionSoundEnabled,
+    oledMode,
+    audioCompression:
+      window.localStorage.getItem("glint.playback.audioCompression") === "true",
+  });
   const [activeMode, setActiveMode] = useState<PlayerMode | null>(null);
   const [nativeAvailability, setNativeAvailability] =
     useState<NativePlayerAvailability | null>(null);
@@ -311,6 +383,7 @@ export function App() {
   const chatMessagesHost = useRef<HTMLDivElement>(null);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
+  const mentionSettings = useRef({ enabled: false, login: "" });
   const browseCategoryLoadSentinel = useRef<HTMLDivElement>(null);
   const categoryStreamLoadSentinel = useRef<HTMLDivElement>(null);
   const browseCategoryLoadPending = useRef(false);
@@ -446,36 +519,62 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("glint.playback.default", preferredMode);
-  }, [preferredMode]);
-
-  useEffect(() => {
-    window.localStorage.setItem("glint.chat.overlayOpacity", String(chatOpacity));
-  }, [chatOpacity]);
-
-  useEffect(() => {
-    window.localStorage.setItem("glint.chat.timestamps", String(chatTimestamps));
-  }, [chatTimestamps]);
-
-  useEffect(() => {
-    window.localStorage.setItem("glint.chat.historyLimit", String(chatHistoryLimit));
-    window.desktop.chat.setHistoryLimit(chatHistoryLimit);
-  }, [chatHistoryLimit]);
-
-  useEffect(() => {
-    const syncChatAppearance = (event: StorageEvent) => {
-      if (event.key === "glint.chat.timestamps") {
-        setChatTimestamps(event.newValue !== "false");
-      } else if (event.key === "glint.chat.historyLimit") {
-        const nextLimit = Number(event.newValue);
-        if (Number.isInteger(nextLimit) && nextLimit >= 20 && nextLimit <= 100) {
-          setChatHistoryLimit(nextLimit);
-        }
-      }
+    let disposed = false;
+    const applyPreferences = (preferences: AppPreferences) => {
+      if (disposed) return;
+      setPreferredMode(preferences.preferredPlayerMode);
+      setChatTimestamps(preferences.chatTimestamps);
+      setChatHistoryLimit(preferences.chatHistoryLimit);
+      setChatOpacity(preferences.chatOverlayOpacity);
+      setMentionSoundEnabled(preferences.mentionSoundEnabled);
+      setOledMode(preferences.oledMode);
+      setPreferencesReady(true);
     };
-    window.addEventListener("storage", syncChatAppearance);
-    return () => window.removeEventListener("storage", syncChatAppearance);
+
+    const removeListener = window.desktop.preferences.onChanged(applyPreferences);
+    void window.desktop.preferences
+      .getOrMigrate(legacyPreferences.current)
+      .then(applyPreferences)
+      .catch(() => setNotice("VioletWire could not load your saved settings."));
+    return () => {
+      disposed = true;
+      removeListener();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    void window.desktop.preferences
+      .update({
+        preferredPlayerMode: preferredMode,
+        chatTimestamps,
+        chatHistoryLimit,
+        chatOverlayOpacity: chatOpacity,
+        mentionSoundEnabled,
+        oledMode,
+      })
+      .catch(() => undefined);
+  }, [
+    chatHistoryLimit,
+    chatOpacity,
+    chatTimestamps,
+    mentionSoundEnabled,
+    oledMode,
+    preferredMode,
+    preferencesReady,
+  ]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    window.desktop.chat.setHistoryLimit(chatHistoryLimit);
+  }, [chatHistoryLimit, preferencesReady]);
+
+  useEffect(() => {
+    mentionSettings.current = {
+      enabled: mentionSoundEnabled,
+      login: authState.status === "signed-in" ? authState.account.login.toLowerCase() : "",
+    };
+  }, [authState, mentionSoundEnabled]);
 
   useEffect(() => {
     const removeMessageListener = window.desktop.chat.onMessage((message) => {
@@ -486,12 +585,37 @@ export function App() {
           return next;
         });
       }
+      const mention = mentionSettings.current;
+      if (
+        mention.enabled &&
+        !message.historical &&
+        messageMentionsLogin(message, mention.login)
+      ) {
+        playMentionPing();
+      }
       setChatMessages((current) => applyChatMessage(current, message));
     });
     const removeStateListener = window.desktop.chat.onState(setChatConnectionState);
     return () => {
       removeMessageListener();
       removeStateListener();
+    };
+  }, []);
+
+  useEffect(() => {
+    const removePickerListener = window.desktop.player.onNativeEmotePicker(
+      setEmotePickerOpen,
+    );
+    const removeSelectionListener = window.desktop.player.onNativeEmoteSelection((name) => {
+      setChatInput((current) =>
+        `${current}${current && !current.endsWith(" ") ? " " : ""}${name} `,
+      );
+      setEmotePickerOpen(false);
+      window.requestAnimationFrame(() => chatInputHost.current?.focus());
+    });
+    return () => {
+      removePickerListener();
+      removeSelectionListener();
     };
   }, []);
 
@@ -543,46 +667,6 @@ export function App() {
     };
   }, [activeChannel, authState.status]);
 
-  const pickerEmoteGroups = useMemo(() => {
-    const query = emoteSearch.trim().toLowerCase();
-    const twitch = twitchPickerEmotes
-      .filter((emote) => !query || emote.name.toLowerCase().includes(query))
-      .map((emote) => ({
-        name: emote.name,
-        imageUrl: emote.imageUrl,
-        provider: "Twitch",
-        scope: emote.scope,
-        subscriptionOnly: emote.subscriptionOnly,
-        wide: false,
-      }));
-    const sevenTv = [...sevenTvEmotes.values()]
-      .filter((emote) => !query || emote.name.toLowerCase().includes(query))
-      .map((emote) => ({
-        name: emote.name,
-        imageUrl: emote.variants.find((item) => item.scale === 2)?.url ?? emote.variants.at(-1)?.url ?? "",
-        provider: "7TV",
-        scope: sevenTvChannelEmoteNames.has(emote.name) ? "channel" as const : "global" as const,
-        subscriptionOnly: false,
-        wide: (emote.variants.at(-1)?.width ?? 0) >= (emote.variants.at(-1)?.height ?? 1) * 1.8,
-      }));
-    const visibleTwitch = twitch.filter((emote) => emote.imageUrl);
-    const visibleSevenTv = sevenTv.filter((emote) => emote.imageUrl);
-    return {
-      twitch: visibleTwitch,
-      sevenTv: visibleSevenTv,
-      twitchChannel: visibleTwitch.filter((emote) => emote.scope === "channel"),
-      twitchGlobal: visibleTwitch.filter((emote) => emote.scope === "global"),
-      sevenTvChannel: visibleSevenTv.filter((emote) => emote.scope === "channel"),
-      sevenTvGlobal: visibleSevenTv.filter((emote) => emote.scope === "global"),
-    };
-  }, [emoteSearch, sevenTvChannelEmoteNames, sevenTvEmotes, twitchPickerEmotes]);
-  const searchedPickerEmotes = useMemo(
-    () =>
-      emoteSearch.trim()
-        ? [...pickerEmoteGroups.twitch, ...pickerEmoteGroups.sevenTv]
-        : null,
-    [emoteSearch, pickerEmoteGroups],
-  );
   const chatHistoryBoundary = chatMessages.reduce(
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
     -1,
@@ -626,6 +710,11 @@ export function App() {
     });
   }, []);
 
+  const beginReply = useCallback((message: ChatMessage) => {
+    setReplyingTo(message);
+    window.requestAnimationFrame(() => chatInputHost.current?.focus());
+  }, []);
+
   function handleChatScroll() {
     const host = chatMessagesHost.current;
     if (!host) return;
@@ -641,11 +730,7 @@ export function App() {
   }
 
   function toggleOledMode(): void {
-    setOledMode((current) => {
-      const next = !current;
-      window.localStorage.setItem("glint.appearance.oled", String(next));
-      return next;
-    });
+    setOledMode((current) => !current);
   }
 
   function revealChatComposer() {
@@ -938,9 +1023,19 @@ export function App() {
     setNativeAvailability(availability);
   }
 
-  function choosePreferredMode(mode: PlayerMode) {
+  async function savePreferredMode(mode: PlayerMode): Promise<boolean> {
     setPreferredMode(mode);
-    window.localStorage.setItem("glint.playback.default", mode);
+    try {
+      await window.desktop.preferences.update({ preferredPlayerMode: mode });
+      return true;
+    } catch {
+      setNotice("VioletWire could not save the playback engine setting.");
+      return false;
+    }
+  }
+
+  async function choosePreferredMode(mode: PlayerMode) {
+    if (!(await savePreferredMode(mode))) return;
     if (mode === "native" && nativeAvailability && !nativeAvailability.available) {
       setNotice(
         `Native is now the default, but it will fall back to Standard until ${nativeAvailability.reason ?? "its dependencies are available"}`,
@@ -1146,11 +1241,17 @@ export function App() {
     setError(null);
     setStreamMetadata(null);
     setChatMessages([]);
+    setReplyingTo(null);
+    setEmotePickerOpen(false);
     setRevealedDeletedMessages(new Set());
     setChatAutoScroll(true);
     setChannelInput(channel);
     try {
-      const result = await window.desktop.player.open(channel, preferredMode);
+      const savedPreferences = await window.desktop.preferences.getOrMigrate();
+      const result = await window.desktop.player.open(
+        channel,
+        savedPreferences.preferredPlayerMode,
+      );
       setPlayerReturnSection(activeSection);
       setActiveSection("home");
       setActiveChannel(result.channel);
@@ -1169,12 +1270,15 @@ export function App() {
   }
 
   async function closePlayer() {
+    if (activeMode === "native") window.desktop.player.setNativeEmotePicker(false);
     if (fullscreen) await window.desktop.player.setFullscreen(false);
     await window.desktop.player.close();
     setFullscreen(false);
     setTheaterMode(false);
     setActiveChannel(null);
     setActiveMode(null);
+    setReplyingTo(null);
+    setEmotePickerOpen(false);
     setActiveSection(playerReturnSection);
   }
 
@@ -1190,7 +1294,7 @@ export function App() {
   }
 
   async function switchPlayerMode(mode: PlayerMode) {
-    setPreferredMode(mode);
+    if (!(await savePreferredMode(mode))) return;
     if (!activeChannel || mode === activeMode) return;
 
     try {
@@ -1274,11 +1378,14 @@ export function App() {
       return;
     }
     const message = chatInput.trim();
+    const replyTarget = replyingTo;
     setChatInput("");
+    setReplyingTo(null);
     try {
-      await window.desktop.chat.send(activeChannel, message);
+      await window.desktop.chat.send(activeChannel, message, replyTarget?.id);
     } catch (reason) {
       setChatInput(message);
+      setReplyingTo(replyTarget);
       setNotice(reason instanceof Error ? reason.message : "Unable to send the chat message.");
     }
   }
@@ -1327,6 +1434,11 @@ export function App() {
         fullscreen && !nativeControlsVisible ? "controls-hidden" : "",
       ].join(" ")}
     >
+      {notice && (
+        <div className="app-toast" key={notice} role="status" aria-live="polite">
+          {notice}
+        </div>
+      )}
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark"><img alt="" src={violetWireIcon} /></span>
@@ -1507,7 +1619,7 @@ export function App() {
               onClick={() =>
                 activeChannel
                   ? void switchPlayerMode("official")
-                  : choosePreferredMode("official")
+                  : void choosePreferredMode("official")
               }
               title="Use Twitch's Standard player"
               type="button"
@@ -1522,7 +1634,9 @@ export function App() {
                   : "experimental"
               }
               onClick={() =>
-                activeChannel ? void switchPlayerMode("native") : choosePreferredMode("native")
+                activeChannel
+                  ? void switchPlayerMode("native")
+                  : void choosePreferredMode("native")
               }
               title="Use the Native player"
               type="button"
@@ -1837,6 +1951,14 @@ export function App() {
                               type="checkbox"
                             />
                           </label>
+                          <label className="chat-toggle-setting">
+                            <span>Mention sound</span>
+                            <input
+                              checked={mentionSoundEnabled}
+                              onChange={(event) => setMentionSoundEnabled(event.target.checked)}
+                              type="checkbox"
+                            />
+                          </label>
                           <label>
                             <span>History: {chatHistoryLimit}</span>
                             <input
@@ -1888,6 +2010,14 @@ export function App() {
                               type="checkbox"
                             />
                           </label>
+                          <label className="chat-toggle-setting">
+                            <span>Mention sound</span>
+                            <input
+                              checked={mentionSoundEnabled}
+                              onChange={(event) => setMentionSoundEnabled(event.target.checked)}
+                              type="checkbox"
+                            />
+                          </label>
                           <label>
                             <span>History: {chatHistoryLimit}</span>
                             <input
@@ -1928,6 +2058,7 @@ export function App() {
                           message={message}
                           oledMode={oledMode}
                           onRevealDeleted={revealDeletedMessage}
+                          onReply={beginReply}
                           sevenTvEmotes={sevenTvEmotes}
                           showTimestamp={chatTimestamps}
                         />
@@ -1949,6 +2080,21 @@ export function App() {
                       </button>
                     )}
                     <form className="native-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>
+                      {replyingTo && (
+                        <div className="chat-reply-composer">
+                          <span>
+                            Replying to <strong>{replyingTo.displayName}</strong>
+                          </span>
+                          <button
+                            aria-label="Cancel reply"
+                            onClick={() => setReplyingTo(null)}
+                            title="Cancel reply"
+                            type="button"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      )}
                       <div className="chat-composer-box">
                         <ChatComposerInput
                           aria-label="Send a chat message"
@@ -1971,13 +2117,34 @@ export function App() {
                               aria-expanded={emotePickerOpen}
                               aria-label="Choose Twitch and 7TV emotes"
                               className={emotePickerOpen ? "emote-picker-button active" : "emote-picker-button"}
-                              onClick={() => setEmotePickerOpen((current) => !current)}
+                              onClick={() => {
+                                const next = !emotePickerOpen;
+                                setEmotePickerOpen(next);
+                                if (activeMode === "native") {
+                                  window.desktop.player.setNativeEmotePicker(next);
+                                }
+                              }}
                               title="Twitch and 7TV emotes"
                               type="button"
                             >
-                              <span className="seven-tv-mark">7TV</span>
+                              <Smile size={17} />
                             </button>
-                            {emotePickerOpen && (
+                            {emotePickerOpen && activeMode !== "native" && (
+                              <>
+                                <EmotePicker
+                                  channelAvatarUrl={streamMetadata?.profileImageUrl}
+                                  channelName={streamMetadata?.displayName ?? activeChannel ?? "Channel"}
+                                  onClose={() => setEmotePickerOpen(false)}
+                                  onSelect={(name) =>
+                                    setChatInput((current) =>
+                                      `${current}${current && !current.endsWith(" ") ? " " : ""}${name} `,
+                                    )
+                                  }
+                                  sevenTvChannelEmoteNames={sevenTvChannelEmoteNames}
+                                  sevenTvEmotes={sevenTvEmotes}
+                                  twitchEmotes={twitchPickerEmotes}
+                                />
+                              {/*
                               <div className="emote-picker">
                             <input
                               aria-label="Search emotes"
@@ -2010,7 +2177,7 @@ export function App() {
                             </div>
                             {searchedPickerEmotes ? (
                               <div className="emote-picker-grid">
-                                {searchedPickerEmotes.map((emote) => (
+                                {searchedPickerEmotes.map((emote, index) => (
                                   <button
                                     aria-label={`${emote.name}, ${emote.provider}`}
                                     className={`${emote.wide ? "wide" : ""}${emote.subscriptionOnly ? " subscription-only" : ""}`.trim()}
@@ -2024,7 +2191,13 @@ export function App() {
                                     title={`${emote.name} · ${emote.provider}${emote.subscriptionOnly ? " · Subscriber emote (may be locked)" : ""}`}
                                     type="button"
                                   >
-                                    <img alt="" loading="lazy" src={emote.imageUrl} />
+                                    <img
+                                      alt=""
+                                      decoding="async"
+                                      fetchPriority={index < 24 ? "high" : "auto"}
+                                      loading="eager"
+                                      src={emote.imageUrl}
+                                    />
                                   </button>
                                 ))}
                                 {searchedPickerEmotes.length === 0 && (
@@ -2055,7 +2228,7 @@ export function App() {
                                       <small>{group.emotes.length}</small>
                                     </summary>
                                     <div className="emote-picker-grid">
-                                      {group.emotes.map((emote) => (
+                                      {group.emotes.map((emote, index) => (
                                         <button
                                           aria-label={`${emote.name}, ${emote.provider}`}
                                           className={`${emote.wide ? "wide" : ""}${emote.subscriptionOnly ? " subscription-only" : ""}`.trim()}
@@ -2069,7 +2242,13 @@ export function App() {
                                           title={`${emote.name} · ${emote.provider}${emote.subscriptionOnly ? " · Subscriber emote (may be locked)" : ""}`}
                                           type="button"
                                         >
-                                          <img alt="" loading="lazy" src={emote.imageUrl} />
+                                          <img
+                                            alt=""
+                                            decoding="async"
+                                            fetchPriority={index < 24 ? "high" : "auto"}
+                                            loading="eager"
+                                            src={emote.imageUrl}
+                                          />
                                         </button>
                                       ))}
                                     </div>
@@ -2078,6 +2257,8 @@ export function App() {
                               </div>
                             ) : null}
                               </div>
+                              */}
+                              </>
                             )}
                           </div>
                         </div>
@@ -2097,7 +2278,6 @@ export function App() {
                 </aside>
               )}
             </div>
-            {notice && <div className="player-notice" role="status">{notice}</div>}
           </section>
         ) : activeSection === "browse" ? (
           <section className="browse-page">
@@ -2438,7 +2618,7 @@ export function App() {
                 <button
                   aria-pressed={preferredMode === "official"}
                   className={preferredMode === "official" ? "active" : ""}
-                  onClick={() => choosePreferredMode("official")}
+                  onClick={() => void choosePreferredMode("official")}
                   type="button"
                 >
                   {preferredMode === "official" && <Check size={13} />}
@@ -2447,7 +2627,7 @@ export function App() {
                 <button
                   aria-pressed={preferredMode === "native"}
                   className={preferredMode === "native" ? "active experimental" : "experimental"}
-                  onClick={() => choosePreferredMode("native")}
+                  onClick={() => void choosePreferredMode("native")}
                   type="button"
                 >
                   {preferredMode === "native" && <Check size={13} />}

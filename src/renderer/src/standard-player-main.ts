@@ -1,7 +1,13 @@
 import "./standard-player.css";
 
+interface TwitchPlayerInstance {
+  addEventListener(event: string, listener: () => void): void;
+  play(): void;
+}
+
 interface TwitchPlayerConstructor {
-  new (elementId: string, options: Record<string, unknown>): object;
+  new (elementId: string, options: Record<string, unknown>): TwitchPlayerInstance;
+  READY?: string;
 }
 
 declare global {
@@ -23,14 +29,18 @@ if (!root || !channel || !window.Twitch?.Player) {
   `;
 
   const TwitchPlayer = window.Twitch.Player;
-  new TwitchPlayer("twitch-video", {
+  const player = new TwitchPlayer("twitch-video", {
     channel,
     width: "100%",
     height: "100%",
     parent: ["localhost"],
     autoplay: true,
+    muted: false,
     controls: true,
   });
+  if (TwitchPlayer.READY) {
+    player.addEventListener(TwitchPlayer.READY, () => player.play());
+  }
 }
 
 export {};

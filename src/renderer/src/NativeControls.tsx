@@ -6,7 +6,6 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -22,11 +21,14 @@ import {
   PanelRight,
   Pause,
   Play,
+  Reply,
   SlidersHorizontal,
   Settings,
+  Smile,
   Tv,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import type {
   NativeControlsContext,
@@ -41,9 +43,11 @@ import {
   type TwitchPickerEmote,
 } from "../../shared/chat";
 import type { ProviderEmote } from "../../shared/emotes";
+import type { AppPreferences } from "../../shared/preferences";
 import { applyChatMessage } from "../../shared/chat-messages";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
+import { EmotePicker } from "./EmotePicker";
 
 const initialState: NativePlayerState = {
   status: "idle",
@@ -106,6 +110,7 @@ interface OverlayChatMessageRowProps {
   oledMode: boolean;
   deletedRevealed: boolean;
   onRevealDeleted: (id: string) => void;
+  onReply: (message: ChatMessage) => void;
   sevenTvEmotes: Map<string, ProviderEmote>;
 }
 
@@ -118,10 +123,17 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
   oledMode,
   deletedRevealed,
   onRevealDeleted,
+  onReply,
   sevenTvEmotes,
 }: OverlayChatMessageRowProps) {
   return (
     <div className="native-video-chat-message">
+      {message.reply && (
+        <span className="native-chat-reply-parent" title={message.reply.parentMessageBody}>
+          Replying to {message.reply.parentDisplayName || message.reply.parentUserLogin}:{" "}
+          {message.reply.parentMessageBody}
+        </span>
+      )}
       {showTimestamp && (
         <time
           className="native-chat-timestamp"
@@ -163,6 +175,17 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
       ) : (
         renderOverlayText(message, sevenTvEmotes)
       )}
+      {!message.deleted && (
+        <button
+          aria-label={`Reply to ${message.displayName}`}
+          className="native-chat-message-reply"
+          onClick={() => onReply(message)}
+          title={`Reply to ${message.displayName}`}
+          type="button"
+        >
+          <Reply size={13} />
+        </button>
+      )}
     </div>
   );
 });
@@ -176,6 +199,7 @@ export function NativeControls() {
   const [openMenu, setOpenMenu] = useState<"quality" | "chat" | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [chatOpacity, setChatOpacity] = useState(() => {
     const stored = Number(window.localStorage.getItem("glint.chat.overlayOpacity"));
     return Number.isFinite(stored) && stored >= 25 && stored <= 100 ? stored : 88;
@@ -188,6 +212,7 @@ export function NativeControls() {
     const stored = Number(window.localStorage.getItem("glint.chat.historyLimit"));
     return Number.isInteger(stored) && stored >= 20 && stored <= 100 ? stored : 20;
   });
+  const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
   const [revealedDeletedMessages, setRevealedDeletedMessages] = useState<Set<string>>(
     new Set(),
   );
@@ -195,13 +220,24 @@ export function NativeControls() {
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
+  const [audioCompressionPreference, setAudioCompressionPreference] = useState(
+    () => window.localStorage.getItem("glint.playback.audioCompression") === "true",
+  );
+  const [preferencesReady, setPreferencesReady] = useState(false);
+  const legacyPreferences = useRef({
+    chatTimestamps,
+    chatHistoryLimit,
+    chatOverlayOpacity: chatOpacity,
+    mentionSoundEnabled,
+    oledMode,
+    audioCompression: audioCompressionPreference,
+  });
   const [chatBadges, setChatBadges] = useState<Map<string, ChatBadgeAsset>>(new Map());
   const [twitchPickerEmotes, setTwitchPickerEmotes] = useState<TwitchPickerEmote[]>([]);
   const [sevenTvEmotes, setSevenTvEmotes] = useState<Map<string, ProviderEmote>>(new Map());
   const [sevenTvChannelEmoteNames, setSevenTvChannelEmoteNames] = useState<Set<string>>(new Set());
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
-  const [emoteSearch, setEmoteSearch] = useState("");
-  const [emoteProvider, setEmoteProvider] = useState<"twitch" | "7tv" | null>("twitch");
+  const [detachedEmotePickerOpen, setDetachedEmotePickerOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const activityTimer = useRef<number | null>(null);
   const lastPointerPosition = useRef<{ x: number; y: number } | null>(null);
@@ -217,6 +253,10 @@ export function NativeControls() {
     [],
   );
   useEffect(
+    () => window.desktop.player.onNativeEmotePicker(setDetachedEmotePickerOpen),
+    [],
+  );
+  useEffect(
     () =>
       window.desktop.player.onNativeControlsContext((nextContext) => {
         if (currentChannel.current !== nextContext.channel) {
@@ -224,6 +264,7 @@ export function NativeControls() {
           setChatMessages([]);
           setRevealedDeletedMessages(new Set());
           setChatAutoScroll(true);
+          setReplyingTo(null);
         }
         setContext(nextContext);
       }),
@@ -233,24 +274,31 @@ export function NativeControls() {
     if (!channel) return;
     window.desktop.player.controlNative({
       command: "set-compressor",
-      enabled: window.localStorage.getItem("glint.playback.audioCompression") === "true",
+      enabled: audioCompressionPreference,
     });
-  }, [channel]);
+  }, [audioCompressionPreference, channel]);
   useEffect(() => window.desktop.player.readyNativeControls(), []);
   useEffect(() => {
-    const syncAppearance = (event: StorageEvent) => {
-      if (event.key === "glint.appearance.oled") setOledMode(event.newValue === "true");
-      if (event.key === "glint.chat.timestamps") {
-        setChatTimestamps(event.newValue !== "false");
-      } else if (event.key === "glint.chat.historyLimit") {
-        const nextLimit = Number(event.newValue);
-        if (Number.isInteger(nextLimit) && nextLimit >= 20 && nextLimit <= 100) {
-          setChatHistoryLimit(nextLimit);
-        }
-      }
+    let disposed = false;
+    const applyPreferences = (preferences: AppPreferences) => {
+      if (disposed) return;
+      setChatOpacity(preferences.chatOverlayOpacity);
+      setChatTimestamps(preferences.chatTimestamps);
+      setChatHistoryLimit(preferences.chatHistoryLimit);
+      setMentionSoundEnabled(preferences.mentionSoundEnabled);
+      setOledMode(preferences.oledMode);
+      setAudioCompressionPreference(preferences.audioCompression);
+      setPreferencesReady(true);
     };
-    window.addEventListener("storage", syncAppearance);
-    return () => window.removeEventListener("storage", syncAppearance);
+    const removeListener = window.desktop.preferences.onChanged(applyPreferences);
+    void window.desktop.preferences
+      .getOrMigrate(legacyPreferences.current)
+      .then(applyPreferences)
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      removeListener();
+    };
   }, []);
   useEffect(
     () => () => window.desktop.player.setNativeControlsExpanded(false),
@@ -258,17 +306,25 @@ export function NativeControls() {
   );
 
   useEffect(() => {
-    window.localStorage.setItem("glint.chat.overlayOpacity", String(chatOpacity));
-  }, [chatOpacity]);
-
-  useEffect(() => {
-    window.localStorage.setItem("glint.chat.timestamps", String(chatTimestamps));
-  }, [chatTimestamps]);
-
-  useEffect(() => {
-    window.localStorage.setItem("glint.chat.historyLimit", String(chatHistoryLimit));
+    if (!preferencesReady) return;
     window.desktop.chat.setHistoryLimit(chatHistoryLimit);
-  }, [chatHistoryLimit]);
+    void window.desktop.preferences
+      .update({
+        chatOverlayOpacity: chatOpacity,
+        chatTimestamps,
+        chatHistoryLimit,
+        mentionSoundEnabled,
+        audioCompression: audioCompressionPreference,
+      })
+      .catch(() => undefined);
+  }, [
+    audioCompressionPreference,
+    chatHistoryLimit,
+    chatOpacity,
+    chatTimestamps,
+    mentionSoundEnabled,
+    preferencesReady,
+  ]);
 
   useEffect(
     () =>
@@ -339,48 +395,6 @@ export function NativeControls() {
     };
   }, [channel]);
 
-  const pickerEmoteGroups = useMemo(() => {
-    const query = emoteSearch.trim().toLowerCase();
-    const twitch = twitchPickerEmotes
-        .filter((emote) => !query || emote.name.toLowerCase().includes(query))
-        .map((emote) => ({
-          name: emote.name,
-          imageUrl: emote.imageUrl,
-          provider: "Twitch",
-          scope: emote.scope,
-          subscriptionOnly: emote.subscriptionOnly,
-          wide: false,
-        }));
-    const sevenTv = [...sevenTvEmotes.values()]
-        .filter((emote) => !query || emote.name.toLowerCase().includes(query))
-        .map((emote) => ({
-          name: emote.name,
-          imageUrl:
-            emote.variants.find((item) => item.scale === 2)?.url ??
-            emote.variants.at(-1)?.url ??
-            "",
-          provider: "7TV",
-          scope: sevenTvChannelEmoteNames.has(emote.name) ? "channel" as const : "global" as const,
-          subscriptionOnly: false,
-          wide: (emote.variants.at(-1)?.width ?? 0) >= (emote.variants.at(-1)?.height ?? 1) * 1.8,
-        }))
-        .filter((emote) => emote.imageUrl);
-    return {
-      twitch,
-      sevenTv,
-      twitchChannel: twitch.filter((emote) => emote.scope === "channel"),
-      twitchGlobal: twitch.filter((emote) => emote.scope === "global"),
-      sevenTvChannel: sevenTv.filter((emote) => emote.scope === "channel"),
-      sevenTvGlobal: sevenTv.filter((emote) => emote.scope === "global"),
-    };
-  }, [emoteSearch, sevenTvChannelEmoteNames, sevenTvEmotes, twitchPickerEmotes]);
-  const searchedPickerEmotes = useMemo(
-    () =>
-      emoteSearch.trim()
-        ? [...pickerEmoteGroups.twitch, ...pickerEmoteGroups.sevenTv]
-        : null,
-    [emoteSearch, pickerEmoteGroups],
-  );
 
   const nativeChatOverlay = Boolean(
     context?.chatVisible && context.chatPresentation === "overlay",
@@ -410,6 +424,11 @@ export function NativeControls() {
     });
   }, []);
 
+  const beginReply = useCallback((message: ChatMessage) => {
+    setReplyingTo(message);
+    window.requestAnimationFrame(() => chatInputHost.current?.focus());
+  }, []);
+
   function handleChatScroll() {
     const host = chatMessagesHost.current;
     if (!host) return;
@@ -435,11 +454,14 @@ export function NativeControls() {
     event.preventDefault();
     if (!channel || !chatInput.trim()) return;
     const message = chatInput.trim();
+    const replyTarget = replyingTo;
     setChatInput("");
+    setReplyingTo(null);
     try {
-      await window.desktop.chat.send(channel, message);
+      await window.desktop.chat.send(channel, message, replyTarget?.id);
     } catch {
       setChatInput(message);
+      setReplyingTo(replyTarget);
     }
   }
 
@@ -546,6 +568,18 @@ export function NativeControls() {
       }}
       onPointerMove={reportPointerActivity}
     >
+      {detachedEmotePickerOpen && channel && (
+        <div className="native-detached-emote-picker">
+          <EmotePicker
+            channelName={channel}
+            onClose={() => window.desktop.player.setNativeEmotePicker(false)}
+            onSelect={(name) => window.desktop.player.sendNativeEmoteSelection(name)}
+            sevenTvChannelEmoteNames={sevenTvChannelEmoteNames}
+            sevenTvEmotes={sevenTvEmotes}
+            twitchEmotes={twitchPickerEmotes}
+          />
+        </div>
+      )}
       <div className="controls-gradient" />
       {!context.chatVisible && (
         <button
@@ -609,6 +643,14 @@ export function NativeControls() {
                     type="checkbox"
                   />
                 </label>
+                <label className="native-chat-toggle-setting">
+                  <span>Mention sound</span>
+                  <input
+                    checked={mentionSoundEnabled}
+                    onChange={(event) => setMentionSoundEnabled(event.target.checked)}
+                    type="checkbox"
+                  />
+                </label>
                 <label>
                   <span>History: {chatHistoryLimit}</span>
                   <input
@@ -639,6 +681,7 @@ export function NativeControls() {
                 message={message}
                 oledMode={oledMode}
                 onRevealDeleted={revealDeletedMessage}
+                onReply={beginReply}
                 sevenTvEmotes={sevenTvEmotes}
                 showTimestamp={chatTimestamps}
               />
@@ -656,6 +699,21 @@ export function NativeControls() {
             </button>
           )}
           <form className="native-video-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>
+            {replyingTo && (
+              <div className="native-chat-reply-composer">
+                <span>
+                  Replying to <strong>{replyingTo.displayName}</strong>
+                </span>
+                <button
+                  aria-label="Cancel reply"
+                  onClick={() => setReplyingTo(null)}
+                  title="Cancel reply"
+                  type="button"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            )}
             <div className="native-chat-composer-box">
               <ChatComposerInput
                 aria-label="Send a chat message"
@@ -677,9 +735,23 @@ export function NativeControls() {
                     title="Twitch and 7TV emotes"
                     type="button"
                   >
-                    <span className="native-seven-tv-mark">7TV</span>
+                    <Smile size={17} />
                   </button>
                   {emotePickerOpen && (
+                    <>
+                      <EmotePicker
+                        channelName={channel ?? "Channel"}
+                        onClose={() => setEmotePickerOpen(false)}
+                        onSelect={(name) =>
+                          setChatInput((current) =>
+                            `${current}${current && !current.endsWith(" ") ? " " : ""}${name} `,
+                          )
+                        }
+                        sevenTvChannelEmoteNames={sevenTvChannelEmoteNames}
+                        sevenTvEmotes={sevenTvEmotes}
+                        twitchEmotes={twitchPickerEmotes}
+                      />
+                    {/*
                     <div className="native-emote-picker">
                   <input
                     aria-label="Search emotes"
@@ -712,7 +784,7 @@ export function NativeControls() {
                   </div>
                   {searchedPickerEmotes ? (
                     <div className="native-emote-grid">
-                      {searchedPickerEmotes.map((emote) => (
+                      {searchedPickerEmotes.map((emote, index) => (
                         <button
                           aria-label={`${emote.name}, ${emote.provider}`}
                           className={`${emote.wide ? "wide" : ""}${emote.subscriptionOnly ? " subscription-only" : ""}`.trim()}
@@ -726,7 +798,13 @@ export function NativeControls() {
                           title={`${emote.name} · ${emote.provider}${emote.subscriptionOnly ? " · Subscriber emote (may be locked)" : ""}`}
                           type="button"
                         >
-                          <img alt="" loading="lazy" src={emote.imageUrl} />
+                          <img
+                            alt=""
+                            decoding="async"
+                            fetchPriority={index < 24 ? "high" : "auto"}
+                            loading="eager"
+                            src={emote.imageUrl}
+                          />
                         </button>
                       ))}
                       {searchedPickerEmotes.length === 0 && (
@@ -757,7 +835,7 @@ export function NativeControls() {
                             <small>{group.emotes.length}</small>
                           </summary>
                           <div className="native-emote-grid">
-                            {group.emotes.map((emote) => (
+                            {group.emotes.map((emote, index) => (
                               <button
                                 aria-label={`${emote.name}, ${emote.provider}`}
                                 className={`${emote.wide ? "wide" : ""}${emote.subscriptionOnly ? " subscription-only" : ""}`.trim()}
@@ -771,7 +849,13 @@ export function NativeControls() {
                                 title={`${emote.name} · ${emote.provider}${emote.subscriptionOnly ? " · Subscriber emote (may be locked)" : ""}`}
                                 type="button"
                               >
-                                <img alt="" loading="lazy" src={emote.imageUrl} />
+                                <img
+                                  alt=""
+                                  decoding="async"
+                                  fetchPriority={index < 24 ? "high" : "auto"}
+                                  loading="eager"
+                                  src={emote.imageUrl}
+                                />
                               </button>
                             ))}
                           </div>
@@ -780,6 +864,8 @@ export function NativeControls() {
                     </div>
                   ) : null}
                     </div>
+                    */}
+                    </>
                   )}
                 </div>
               </div>
@@ -915,7 +1001,7 @@ export function NativeControls() {
           }
           onClick={() => {
             const enabled = !state.compressorEnabled;
-            window.localStorage.setItem("glint.playback.audioCompression", String(enabled));
+            setAudioCompressionPreference(enabled);
             window.desktop.player.controlNative({ command: "set-compressor", enabled });
           }}
           type="button"

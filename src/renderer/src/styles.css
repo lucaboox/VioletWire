@@ -396,6 +396,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .native-status-orb { width: 12px; height: 12px; border: 2px solid #8b5cf6; border-right-color: transparent; border-radius: 50%; animation: native-spin .8s linear infinite; }
 .native-status-orb.error { border-color: #fb7185; animation: none; }
 .chat-panel { display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; min-height: 0; max-height: 100%; overflow: hidden; contain: layout size; border-left: 1px solid #29292f; background: #0e0e10; }
+.chat-panel:has(.vw-emote-picker) { position: relative; z-index: 90; overflow: visible; contain: none; }
+.chat-panel:has(.vw-emote-picker) .chat-host,
+.chat-panel:has(.vw-emote-picker) .native-chat { overflow: visible; }
+.chat-panel:has(.vw-emote-picker) .native-chat-input { z-index: 91; }
 .chat-overlay-mode .chat-panel.overlay { position: absolute; z-index: 8; top: 18px; right: 18px; bottom: 70px; width: min(370px, 32vw); overflow: visible; border: 1px solid #3a3a42; border-radius: 11px; background: #18181be8; box-shadow: 0 18px 55px #000b; }
 .chat-panel.overlay { grid-template-rows: minmax(0, 1fr); }
 .chat-panel.overlay .chat-panel-header { display: none; }
@@ -411,8 +415,12 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-messages { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 10px 9px 14px; scrollbar-gutter: stable; transition: padding-bottom 140ms ease; }
 .chat-messages.scroll-paused { overflow-anchor: none; transition: none; }
 .chat-empty-state { display: grid; min-height: 100%; place-content: center; padding: 24px; color: #777781; font-size: 12px; line-height: 1.5; text-align: center; }
-.native-chat-message { padding: 3px 2px; color: #e4e4e7; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.native-chat-message { position: relative; padding: 3px 29px 3px 2px; color: #e4e4e7; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .native-chat-message strong { font-weight: 750; }
+.chat-reply-parent { display: block; overflow: hidden; margin: 1px 0 2px; padding-left: 7px; border-left: 2px solid #8b5cf6; color: #92929d; font-size: 10px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-message-reply { position: absolute; top: 2px; right: 1px; display: grid; width: 25px; height: 25px; padding: 0; place-items: center; border: 1px solid #484850; border-radius: 6px; color: #d4d4d8; background: #242429f2; cursor: pointer; opacity: 0; transform: translateY(-2px); transition: opacity 100ms ease, transform 100ms ease, background 100ms ease; }
+.native-chat-message:hover .chat-message-reply, .native-chat-message:focus-within .chat-message-reply { opacity: 1; transform: translateY(0); }
+.chat-message-reply:hover { color: white; background: #3a2948; }
 .live-chat-divider { display: flex; align-items: center; gap: 9px; margin: 8px 2px; color: #bf94ff; font-size: 10px; font-weight: 800; letter-spacing: .65px; text-transform: uppercase; }
 .live-chat-divider::before, .live-chat-divider::after { height: 1px; flex: 1; background: #7652a266; content: ""; }
 .live-chat-divider span { flex: 0 0 auto; }
@@ -421,6 +429,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .native-chat-badges img { width: 18px; height: 18px; object-fit: contain; }
 .chat-emote { display: inline-block; width: auto; height: 27px; max-width: 90px; margin: -5px 1px; object-fit: contain; vertical-align: middle; }
 .native-chat-input { position: relative; display: block; padding: 9px; border-top: 1px solid #29292f; background: #151519; }
+.chat-reply-composer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; margin: -2px 0 7px; padding: 6px 7px 6px 9px; border-left: 2px solid #8b5cf6; border-radius: 5px; color: #b7b7c0; background: #232329; font-size: 10px; }
+.chat-reply-composer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-reply-composer button { display: grid; width: 22px; height: 22px; flex: 0 0 auto; padding: 0; place-items: center; border: 0; border-radius: 5px; color: #a1a1aa; background: transparent; cursor: pointer; }
+.chat-reply-composer button:hover { color: white; background: #3a3a42; }
 .chat-composer-box { position: relative; min-width: 0; }
 .emote-aware-input { position: relative; min-width: 0; border-radius: 8px; background: #0e0e10; }
 .chat-composer-editor { display: block; width: 100%; min-width: 0; min-height: 43px; max-height: 130px; padding: 10px 53px 9px 11px; overflow-y: hidden; border: 2px solid #45454d; border-radius: 8px; outline: 0; color: #f4f4f5; background: transparent; caret-color: #f4f4f5; font: inherit; font-size: 13px; line-height: 19px; overflow-wrap: anywhere; white-space: pre-wrap; transition: border-color 120ms ease; }
@@ -487,7 +499,13 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .emote-picker-grid img { max-width: 35px; max-height: 35px; object-fit: contain; }
 .emote-picker-grid button.wide img { max-width: 80px; }
 .emote-group-empty { grid-column: 1 / -1; padding: 12px 5px; color: #73737d; font-size: 10px; text-align: center; }
-.player-notice { position: absolute; z-index: 3; top: 62px; right: 16px; max-width: 320px; padding: 9px 12px; border: 1px solid #4f3b66; border-radius: 8px; color: #e9e3f3; background: #211a29ee; box-shadow: 0 12px 35px #0008; font-size: 11px; pointer-events: none; }
+.app-toast { position: fixed; z-index: 1000; top: 78px; left: 50%; width: max-content; max-width: min(560px, calc(100vw - 40px)); padding: 11px 17px; border: 1px solid #6d4b91; border-radius: 10px; color: #f5efff; background: #241a2df2; box-shadow: 0 14px 42px #000b, 0 0 0 1px #a78bfa18 inset; backdrop-filter: blur(14px); font-size: 14px; font-weight: 650; line-height: 1.35; opacity: 0; pointer-events: none; text-align: center; transform: translate(-50%, -8px) scale(.98); animation: app-toast-lifecycle 3500ms cubic-bezier(.2, .8, .2, 1) forwards; }
+.fullscreen-mode .app-toast { top: 16px; left: 50%; max-width: min(560px, calc(100vw - 40px)); }
+@keyframes app-toast-lifecycle {
+  0% { opacity: 0; transform: translate(-50%, -8px) scale(.98); }
+  7%, 88% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -4px) scale(.99); }
+}
 .modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506bb; backdrop-filter: blur(8px); }
 .app-modal { position: relative; display: flex; width: min(430px, 100%); flex-direction: column; align-items: stretch; padding: 26px; border: 1px solid #44364f; border-radius: 15px; background: #17171c; box-shadow: 0 30px 90px #000c; }
 .app-modal .modal-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 15px; border: 1px solid #5a4270; border-radius: 12px; color: #d8b4fe; background: #2c1d38; }
