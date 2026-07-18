@@ -26,7 +26,10 @@ export const twitchStreamSchema = z.object({
   viewer_count: z.number().int().nonnegative(),
   started_at: z.string(),
   language: z.string(),
-  tags: z.array(z.string()).optional().default([]),
+  tags: z
+    .array(z.string())
+    .nullish()
+    .transform((tags) => tags ?? []),
   thumbnail_url: z.string(),
   is_mature: z.boolean().optional().default(false),
 });
@@ -57,6 +60,7 @@ export interface FollowedChannel {
   category: string;
   title?: string;
   language?: string;
+  tags?: string[];
   isMature?: boolean;
   profileImageUrl: string;
   thumbnailUrl?: string;
@@ -79,6 +83,7 @@ export interface BrowseStream {
   title: string;
   category: string;
   language: string;
+  tags: string[];
   isMature: boolean;
   profileImageUrl: string;
   thumbnailUrl: string;

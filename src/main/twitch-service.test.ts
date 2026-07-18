@@ -176,6 +176,79 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("TwitchService stream tags", () => {
+  it("normalizes null Twitch tags and carries valid tags into category cards", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/streams?")) {
+        return json({
+          data: [
+            {
+              id: "stream-null-tags",
+              user_id: "77",
+              user_login: "somechannel",
+              user_name: "SomeChannel",
+              game_id: "509658",
+              game_name: "Just Chatting",
+              title: "Null tags should still load",
+              viewer_count: 123,
+              started_at: "2026-07-18T00:00:00Z",
+              language: "en",
+              tags: null,
+              thumbnail_url: "https://example.com/{width}x{height}.jpg",
+              is_mature: false,
+            },
+            {
+              id: "stream-with-tags",
+              user_id: "78",
+              user_login: "taggedchannel",
+              user_name: "TaggedChannel",
+              game_id: "509658",
+              game_name: "Just Chatting",
+              title: "Tags should reach the card",
+              viewer_count: 45,
+              started_at: "2026-07-18T00:00:00Z",
+              language: "en",
+              tags: ["English", "DropsEnabled"],
+              thumbnail_url: "https://example.com/{width}x{height}.jpg",
+              is_mature: false,
+            },
+          ],
+          pagination: {},
+        });
+      }
+      if (url.includes("/helix/users?")) {
+        return json({
+          data: [
+            {
+              id: "77",
+              login: "somechannel",
+              display_name: "SomeChannel",
+              profile_image_url: "https://example.com/channel.png",
+            },
+            {
+              id: "78",
+              login: "taggedchannel",
+              display_name: "TaggedChannel",
+              profile_image_url: "https://example.com/tagged.png",
+            },
+          ],
+        });
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    const result = await service.getCategoryStreams("509658");
+
+    expect(result.items.map((stream) => stream.tags)).toEqual([
+      [],
+      ["English", "DropsEnabled"],
+    ]);
+  });
+});
+
 describe("TwitchService authentication", () => {
   it("reuses a successful validation within the cache interval", async () => {
     installFetch(defaultRoutes);

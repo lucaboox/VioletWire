@@ -2,6 +2,22 @@
 
 All notable changes to VioletWire are documented in this file.
 
+## [Unreleased]
+
+### Additions
+
+- Added Twitch stream tags to followed-live and category stream cards.
+- Added an in-app changelog viewer beside update controls, with an automatic
+  once-per-version What's New popup after an update.
+
+### Fixes
+
+- Fixed category pages failing when Twitch returns a null stream-tags field.
+- Made Standard playback retry its initial play request and recover from
+  Chromium blocking audible autoplay.
+- Added a Twitch access refresh action so newly requested permissions, including
+  user emotes, can be authorized without first deleting the existing session.
+
 ## [0.2.0-alpha.1] - 2026-07-17
 
 ### Additions

@@ -347,6 +347,10 @@ export class TwitchService {
           expiresAt: Date.now() + received.expires_in * 1000,
         };
         this.validatedAt = 0;
+        // A replacement authorization can add scopes such as
+        // user:read:emotes. Do not serve chat assets produced under the old
+        // authorization after the new token is installed.
+        this.chatAssetsCache.clear();
         await this.writeToken(this.token);
         this.account = await this.fetchAccount();
         this.scheduleValidation();
@@ -402,6 +406,7 @@ export class TwitchService {
           category: stream?.game_name ?? "Offline",
           title: stream?.title,
           language: stream?.language,
+          tags: stream?.tags,
           isMature: stream?.is_mature,
           profileImageUrl: profile?.profile_image_url ?? "",
           thumbnailUrl: stream?.thumbnail_url.replace("{width}", "640").replace("{height}", "360"),
@@ -457,6 +462,7 @@ export class TwitchService {
         title: stream.title,
         category: stream.game_name,
         language: stream.language,
+        tags: stream.tags,
         isMature: stream.is_mature,
         profileImageUrl: profileById.get(stream.user_id)?.profile_image_url ?? "",
         thumbnailUrl: stream.thumbnail_url

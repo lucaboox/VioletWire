@@ -20,6 +20,7 @@ import {
   Copy,
   ExternalLink,
   Heart,
+  History,
   Home,
   Layers,
   LogIn,
@@ -67,6 +68,7 @@ import type {
 import { formatChatTimestamp, messageMentionsLogin } from "../../shared/chat";
 import { applyChatMessage } from "../../shared/chat-messages";
 import { getChatMentionCandidates } from "../../shared/chat-content";
+import { parseChangelog } from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
 import {
@@ -79,6 +81,7 @@ import { ChatEmote } from "./ChatEmote";
 import { renderProviderText } from "./ProviderEmoteText";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
+import changelogSource from "../../../CHANGELOG.md?raw";
 
 const NATIVE_CONTROLS_HIDE_DELAY = 5_000;
 
@@ -89,6 +92,21 @@ const signedOutState: TwitchAuthState = { status: "signed-out", account: null };
 const anonymousPlaybackState: PlaybackSessionState = { linked: false };
 const emptySearchResults: TwitchSearchResults = { channels: [], categories: [] };
 const emoteProviders: EmoteProvider[] = ["7tv", "ffz", "bttv"];
+const changelogEntries = parseChangelog(changelogSource);
+const languageNames: Record<string, string> = {
+  de: "german",
+  en: "english",
+  es: "spanish",
+  fr: "french",
+  it: "italian",
+  ja: "japanese",
+  ko: "korean",
+  pl: "polish",
+  pt: "portuguese",
+  ru: "russian",
+  tr: "turkish",
+  zh: "chinese",
+};
 
 function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>> {
   return new Map(emoteProviders.map((provider) => [provider, new Map()]));
@@ -104,6 +122,28 @@ function formatUptime(startedAt: string | undefined, now: number): string {
   const hours = Math.floor(elapsed / 3_600_000);
   const minutes = Math.floor((elapsed % 3_600_000) / 60_000);
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+function visibleStreamTags(tags: string[] | undefined, language: string | undefined): string[] {
+  const languageCode = language?.toLowerCase() ?? "";
+  const languageName = languageNames[languageCode];
+  const seen = new Set<string>();
+  return (tags ?? [])
+    .map((tag) => tag.trim())
+    .filter((tag) => {
+      const normalized = tag.toLowerCase();
+      if (
+        !normalized ||
+        normalized === languageCode ||
+        normalized === languageName ||
+        seen.has(normalized)
+      ) {
+        return false;
+      }
+      seen.add(normalized);
+      return true;
+    })
+    .slice(0, 3);
 }
 
 function renderChatMessageText(
@@ -330,6 +370,8 @@ const ChatMessageRow = memo(function ChatMessageRow({
 export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const [changelogReturnsToSettings, setChangelogReturnsToSettings] = useState(false);
   const [playerReturnSection, setPlayerReturnSection] = useState<AppSection>("home");
   const [channelInput, setChannelInput] = useState("");
   const [topSearchResults, setTopSearchResults] =
@@ -517,17 +559,24 @@ export function App() {
   }, [activeChannel, streamMetadata?.displayName]);
 
   useEffect(() => {
-    window.desktop.player.setModalOpen(settingsOpen || topSearchOpen);
-  }, [settingsOpen, topSearchOpen]);
+    window.desktop.player.setModalOpen(settingsOpen || topSearchOpen || changelogOpen);
+  }, [changelogOpen, settingsOpen, topSearchOpen]);
 
   useEffect(() => {
-    if (!settingsOpen) return;
+    if (!settingsOpen && !changelogOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSettingsOpen(false);
+      if (event.key !== "Escape") return;
+      if (changelogOpen) {
+        setChangelogOpen(false);
+        if (changelogReturnsToSettings) setSettingsOpen(true);
+        setChangelogReturnsToSettings(false);
+      } else {
+        setSettingsOpen(false);
+      }
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [settingsOpen]);
+  }, [changelogOpen, changelogReturnsToSettings, settingsOpen]);
 
   const loadNextBrowseCategories = useCallback(async () => {
     if (!browseCategoryCursor || browseCategoryLoadPending.current) return;
@@ -902,6 +951,26 @@ export function App() {
     setOledMode((current) => !current);
   }
 
+  function openChangelog(returnToSettings = false): void {
+    setChangelogReturnsToSettings(returnToSettings);
+    setSettingsOpen(false);
+    setChangelogOpen(true);
+    if (updateStatus.currentVersion) {
+      window.localStorage.setItem(
+        "violetwire.changelog.lastSeenVersion",
+        updateStatus.currentVersion,
+      );
+    }
+  }
+
+  function closeChangelog(): void {
+    setChangelogOpen(false);
+    if (changelogReturnsToSettings) {
+      setSettingsOpen(true);
+    }
+    setChangelogReturnsToSettings(false);
+  }
+
   function revealChatComposer() {
     if (!chatAutoScroll) return;
     window.requestAnimationFrame(() => {
@@ -913,7 +982,23 @@ export function App() {
   useEffect(() => {
     void loadAuthState();
     void window.desktop.twitch.getPlaybackSessionState().then(setPlaybackSession);
-    void window.desktop.updates.getStatus().then(setUpdateStatus);
+    void window.desktop.updates.getStatus().then((status) => {
+      setUpdateStatus(status);
+      const currentVersion = status.currentVersion;
+      if (
+        status.state !== "disabled" &&
+        currentVersion &&
+        window.localStorage.getItem("violetwire.changelog.lastSeenVersion") !==
+          currentVersion
+      ) {
+        window.localStorage.setItem(
+          "violetwire.changelog.lastSeenVersion",
+          currentVersion,
+        );
+        setChangelogReturnsToSettings(false);
+        setChangelogOpen(true);
+      }
+    });
     return window.desktop.updates.onStatus(setUpdateStatus);
   }, []);
 
@@ -2687,6 +2772,9 @@ export function App() {
                             <span className="stream-card-category">{stream.category}</span>
                             <span className="stream-card-tags">
                               <i>{stream.language.toUpperCase()}</i>
+                              {visibleStreamTags(stream.tags, stream.language).map((tag) => (
+                                <i key={tag} title={tag}>{tag}</i>
+                              ))}
                               {stream.isMature && <i>Mature</i>}
                             </span>
                           </span>
@@ -2809,9 +2897,25 @@ export function App() {
                   </span>
                 </div>
                 {authState.status === "signed-in" ? (
-                  <button className="secondary-button" onClick={() => void signOut()} type="button">
-                    Sign out
-                  </button>
+                  <div className="settings-card-actions">
+                    <button
+                      className="secondary-button"
+                      disabled={authBusy}
+                      onClick={() => void beginSignIn()}
+                      title="Authorize again to pick up newly added Twitch permissions"
+                      type="button"
+                    >
+                      <RefreshCw size={14} /> Refresh access
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={authBusy}
+                      onClick={() => void signOut()}
+                      type="button"
+                    >
+                      Sign out
+                    </button>
+                  </div>
                 ) : authState.status === "signed-out" ? (
                   <button className="primary-button" onClick={() => void beginSignIn()} type="button">
                     <LogIn size={15} /> Sign in
@@ -2894,38 +2998,49 @@ export function App() {
                         : "Ready to check for updates.")}
                   </span>
                 </div>
-                <button
-                  className="secondary-button"
-                  disabled={
-                    updateStatus.state === "disabled" ||
-                    updateStatus.state === "checking" ||
-                    updateStatus.state === "downloading"
-                  }
-                  onClick={() => {
-                    if (updateStatus.state === "downloaded") {
-                      window.desktop.updates.install();
-                    } else {
-                      void window.desktop.updates.check().then(setUpdateStatus);
+                <div className="settings-card-actions">
+                  <button
+                    aria-label="View changelog"
+                    className="secondary-button icon-button"
+                    onClick={() => openChangelog(false)}
+                    title="View changelog"
+                    type="button"
+                  >
+                    <History size={16} />
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={
+                      updateStatus.state === "disabled" ||
+                      updateStatus.state === "checking" ||
+                      updateStatus.state === "downloading"
                     }
-                  }}
-                  type="button"
-                >
-                  <RefreshCw
-                    className={
-                      updateStatus.state === "checking" || updateStatus.state === "downloading"
-                        ? "spin"
-                        : undefined
-                    }
-                    size={14}
-                  />
-                  {updateStatus.state === "downloaded"
-                    ? "Restart to update"
-                    : updateStatus.state === "checking"
-                      ? "Checking…"
-                      : updateStatus.state === "downloading"
-                        ? `${Math.round(updateStatus.progress ?? 0)}%`
-                        : "Check now"}
-                </button>
+                    onClick={() => {
+                      if (updateStatus.state === "downloaded") {
+                        window.desktop.updates.install();
+                      } else {
+                        void window.desktop.updates.check().then(setUpdateStatus);
+                      }
+                    }}
+                    type="button"
+                  >
+                    <RefreshCw
+                      className={
+                        updateStatus.state === "checking" || updateStatus.state === "downloading"
+                          ? "spin"
+                          : undefined
+                      }
+                      size={14}
+                    />
+                    {updateStatus.state === "downloaded"
+                      ? "Restart to update"
+                      : updateStatus.state === "checking"
+                        ? "Checking…"
+                        : updateStatus.state === "downloading"
+                          ? `${Math.round(updateStatus.progress ?? 0)}%`
+                          : "Check now"}
+                  </button>
+                </div>
               </div>
             </div>
             <div className="settings-preview">
@@ -3061,6 +3176,9 @@ export function App() {
                         <span className="stream-card-category">{channel.category}</span>
                         <span className="stream-card-tags">
                           {channel.language && <i>{channel.language.toUpperCase()}</i>}
+                          {visibleStreamTags(channel.tags, channel.language).map((tag) => (
+                            <i key={tag} title={tag}>{tag}</i>
+                          ))}
                           {channel.isMature && <i>Mature</i>}
                         </span>
                       </span>
@@ -3113,9 +3231,25 @@ export function App() {
                       </span>
                     </div>
                     {authState.status === "signed-in" ? (
-                      <button className="secondary-button" onClick={() => void signOut()} type="button">
-                        Sign out
-                      </button>
+                      <div className="settings-card-actions">
+                        <button
+                          className="secondary-button"
+                          disabled={authBusy}
+                          onClick={() => void beginSignIn()}
+                          title="Authorize again to pick up newly added Twitch permissions"
+                          type="button"
+                        >
+                          <RefreshCw size={14} /> Refresh access
+                        </button>
+                        <button
+                          className="secondary-button"
+                          disabled={authBusy}
+                          onClick={() => void signOut()}
+                          type="button"
+                        >
+                          Sign out
+                        </button>
+                      </div>
                     ) : authState.status === "signed-out" ? (
                       <button className="primary-button" onClick={() => void beginSignIn()} type="button">
                         <LogIn size={15} /> Sign in
@@ -3215,27 +3349,122 @@ export function App() {
                         {updateStatus.message ?? "Checks GitHub Releases automatically."}
                       </span>
                     </div>
-                    <button
-                      className="secondary-button"
-                      disabled={
-                        updateStatus.state === "disabled" ||
-                        updateStatus.state === "checking" ||
-                        updateStatus.state === "downloading"
-                      }
-                      onClick={() => {
-                        if (updateStatus.state === "downloaded") {
-                          window.desktop.updates.install();
-                        } else {
-                          void window.desktop.updates.check().then(setUpdateStatus);
+                    <div className="settings-card-actions">
+                      <button
+                        aria-label="View changelog"
+                        className="secondary-button icon-button"
+                        onClick={() => openChangelog(true)}
+                        title="View changelog"
+                        type="button"
+                      >
+                        <History size={16} />
+                      </button>
+                      <button
+                        className="secondary-button"
+                        disabled={
+                          updateStatus.state === "disabled" ||
+                          updateStatus.state === "checking" ||
+                          updateStatus.state === "downloading"
                         }
-                      }}
-                      type="button"
-                    >
-                      <RefreshCw size={14} />
-                      {updateStatus.state === "downloaded" ? "Restart to update" : "Check now"}
-                    </button>
+                        onClick={() => {
+                          if (updateStatus.state === "downloaded") {
+                            window.desktop.updates.install();
+                          } else {
+                            void window.desktop.updates.check().then(setUpdateStatus);
+                          }
+                        }}
+                        type="button"
+                      >
+                        <RefreshCw size={14} />
+                        {updateStatus.state === "downloaded" ? "Restart to update" : "Check now"}
+                      </button>
+                    </div>
                   </div>
                 </section>
+              </div>
+            </section>
+          </div>
+        )}
+        {changelogOpen && (
+          <div
+            className="settings-modal-backdrop changelog-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeChangelog();
+            }}
+            role="presentation"
+          >
+            <section
+              aria-labelledby="changelog-modal-title"
+              aria-modal="true"
+              className="settings-modal-panel changelog-modal-panel"
+              role="dialog"
+            >
+              <header className="settings-modal-header">
+                <div>
+                  <span>WHAT&apos;S NEW</span>
+                  <h2 id="changelog-modal-title">VioletWire changelog</h2>
+                  <p>
+                    {updateStatus.currentVersion
+                      ? `You are running version ${updateStatus.currentVersion}.`
+                      : "Additions and fixes included with VioletWire."}
+                  </p>
+                </div>
+                <button
+                  aria-label="Close changelog"
+                  onClick={closeChangelog}
+                  title="Close changelog"
+                  type="button"
+                >
+                  <X size={19} />
+                </button>
+              </header>
+              <div className="changelog-modal-content">
+                {changelogEntries.map((entry) => (
+                  <article
+                    className={
+                      entry.version === updateStatus.currentVersion
+                        ? "changelog-release current"
+                        : "changelog-release"
+                    }
+                    key={entry.version}
+                  >
+                    <header>
+                      <div>
+                        <span>
+                          {entry.version === "Unreleased"
+                            ? "IN DEVELOPMENT"
+                            : `VERSION ${entry.version}`}
+                        </span>
+                        <h3>
+                          {entry.version === "Unreleased"
+                            ? "Coming next"
+                            : entry.version}
+                        </h3>
+                      </div>
+                      {entry.date && <time>{entry.date}</time>}
+                    </header>
+                    {entry.additions.length > 0 && (
+                      <section>
+                        <h4>Additions</h4>
+                        <ul>
+                          {entry.additions.map((addition) => (
+                            <li key={addition}>{addition}</li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                    {entry.fixes.length > 0 && (
+                      <section>
+                        <h4>Fixes</h4>
+                        <ul>
+                          {entry.fixes.map((fix) => (
+                            <li key={fix}>{fix}</li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                  </article>
+                ))}
               </div>
             </section>
           </div>
