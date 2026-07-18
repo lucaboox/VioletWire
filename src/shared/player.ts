@@ -77,6 +77,7 @@ export const nativePlayerCommandSchema = z.discriminatedUnion("command", [
 
 export type PlayerBounds = z.infer<typeof playerBoundsSchema>;
 export type ChannelAction = z.infer<typeof channelActionSchema>;
+export type ChannelActionWindowState = "closed" | "loading" | "open";
 export type PlayerMode = z.infer<typeof playerModeSchema>;
 export type ChatPresentation = z.infer<typeof chatPresentationSchema>;
 export type NativeControlAction = z.infer<typeof nativeControlActionSchema>;
@@ -190,6 +191,9 @@ export interface DesktopApi {
     setChatPresentation(presentation: ChatPresentation): void;
     setFullscreen(fullscreen: boolean): Promise<boolean>;
     openChannelAction(channel: string, action: ChannelAction): Promise<void>;
+    onChannelActionState(
+      listener: (action: ChannelAction, state: ChannelActionWindowState) => void,
+    ): () => void;
     getNativeAvailability(): Promise<NativePlayerAvailability>;
     getNativeQualities(channel: string): Promise<NativeQuality[]>;
     setNativeQuality(channel: string, quality: NativeQualityValue): Promise<void>;

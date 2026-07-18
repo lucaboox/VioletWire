@@ -15,7 +15,10 @@ export class PlaybackSessionService {
   private loginWindow: BrowserWindow | null = null;
   private sessionConfigured = false;
 
-  constructor(private readonly getMainWindow: () => BrowserWindow | null) {}
+  constructor(
+    private readonly getMainWindow: () => BrowserWindow | null,
+    private readonly iconPath: string,
+  ) {}
 
   private get storagePath(): string {
     return path.join(app.getPath("userData"), "twitch-playback-session.bin");
@@ -73,6 +76,7 @@ export class PlaybackSessionService {
 
     const loginWindow = new BrowserWindow({
       parent: owner ?? undefined,
+      icon: this.iconPath,
       width: 760,
       height: 760,
       minWidth: 560,

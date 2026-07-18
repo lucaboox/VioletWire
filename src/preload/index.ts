@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ChannelAction,
+  ChannelActionWindowState,
   ChatPresentation,
   DesktopApi,
   NativeControlAction,
@@ -111,6 +112,17 @@ const api: DesktopApi = {
     setFullscreen: (fullscreen) => ipcRenderer.invoke("window:set-fullscreen", fullscreen),
     openChannelAction: (channel: string, action: ChannelAction) =>
       ipcRenderer.invoke("channel:open-action", channel, action),
+    onChannelActionState: (
+      listener: (action: ChannelAction, state: ChannelActionWindowState) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        action: ChannelAction,
+        state: ChannelActionWindowState,
+      ) => listener(action, state);
+      ipcRenderer.on("channel-action:state", handler);
+      return () => ipcRenderer.removeListener("channel-action:state", handler);
+    },
     getNativeAvailability: () => ipcRenderer.invoke("native-player:get-availability"),
     getNativeQualities: (channel: string) => ipcRenderer.invoke("native-player:get-qualities", channel),
     setNativeQuality: (channel: string, quality: NativeQualityValue) =>

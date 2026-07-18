@@ -17,6 +17,15 @@ All notable changes to VioletWire are documented in this file.
   Chromium blocking audible autoplay.
 - Added a Twitch access refresh action so newly requested permissions, including
   user emotes, can be authorized without first deleting the existing session.
+- Tightened the Twitch subscription drawer, removed overlapping website
+  navigation, and constrained tall drawers to their internally scrollable
+  content area.
+- Applied the VioletWire icon to authentication, Twitch action, and detached
+  control windows instead of Electron's default icon.
+- Added loading and open states to the Subscribe button and delayed the
+  subscription drawer reveal until Twitch's panel has rendered.
+- Kept the Subscribe star unfilled while its drawer is merely open, reserving
+  the filled state for a confirmed active subscription.
 
 ## [0.2.0-alpha.1] - 2026-07-17
 

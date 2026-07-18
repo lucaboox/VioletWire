@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import type {
   ChatPresentation,
+  ChannelActionWindowState,
   NativePlayerAvailability,
   NativePlayerState,
   PlayerMode,
@@ -379,6 +380,8 @@ export function App() {
   const [topSearchOpen, setTopSearchOpen] = useState(false);
   const [topSearchLoading, setTopSearchLoading] = useState(false);
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
+  const [subscriptionDrawerState, setSubscriptionDrawerState] =
+    useState<ChannelActionWindowState>("closed");
   const [error, setError] = useState<string | null>(null);
   const [chatVisible, setChatVisible] = useState(true);
   const [chatPresentation, setChatPresentation] = useState<ChatPresentation>("side");
@@ -1001,6 +1004,14 @@ export function App() {
     });
     return window.desktop.updates.onStatus(setUpdateStatus);
   }, []);
+
+  useEffect(
+    () =>
+      window.desktop.player.onChannelActionState((action, state) => {
+        if (action === "subscribe") setSubscriptionDrawerState(state);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (authState.status === "signed-in") void loadFollowedChannels();
@@ -1629,7 +1640,9 @@ export function App() {
       if (authState.status === "signed-in") {
         setStreamMetadata(await window.desktop.twitch.getStreamMetadata(activeChannel));
       }
-      setNotice(`${label} opened in VioletWire's isolated Twitch window.`);
+      if (action !== "subscribe") {
+        setNotice(`${label} opened in VioletWire's isolated Twitch window.`);
+      }
     } catch {
       setNotice(`Unable to open ${label.toLowerCase()}.`);
     }
@@ -2088,14 +2101,40 @@ export function App() {
                   <Heart fill={streamMetadata?.isFollowed ? "currentColor" : "none"} size={17} />
                 </button>
                 <button
-                  aria-label={streamMetadata?.subscription?.isSubscribed ? "Subscribed" : "Subscribe"}
-                  aria-pressed={Boolean(streamMetadata?.subscription?.isSubscribed)}
-                  className={streamMetadata?.subscription?.isSubscribed ? "toolbar-icon subscribe-action active" : "toolbar-icon subscribe-action"}
+                  aria-label={
+                    subscriptionDrawerState === "loading"
+                      ? "Loading subscription panel"
+                      : subscriptionDrawerState === "open"
+                        ? "Close subscription panel"
+                        : streamMetadata?.subscription?.isSubscribed
+                          ? "Subscribed"
+                          : "Subscribe"
+                  }
+                  aria-expanded={subscriptionDrawerState !== "closed"}
+                  className={[
+                    "toolbar-icon",
+                    "subscribe-action",
+                    streamMetadata?.subscription?.isSubscribed ? "active" : "",
+                    subscriptionDrawerState !== "closed" ? "panel-open" : "",
+                  ].filter(Boolean).join(" ")}
                   onClick={() => void openChannelAction("subscribe", "Subscription")}
-                  title="Toggle Twitch subscription panel"
+                  title={
+                    subscriptionDrawerState === "loading"
+                      ? "Loading Twitch subscription panel…"
+                      : subscriptionDrawerState === "open"
+                        ? "Close Twitch subscription panel"
+                        : "Open Twitch subscription panel"
+                  }
                   type="button"
                 >
-                  <Star fill={streamMetadata?.subscription?.isSubscribed ? "currentColor" : "none"} size={17} />
+                  {subscriptionDrawerState === "loading" ? (
+                    <RefreshCw className="spin" size={16} />
+                  ) : (
+                    <Star
+                      fill={streamMetadata?.subscription?.isSubscribed ? "currentColor" : "none"}
+                      size={17}
+                    />
+                  )}
                 </button>
                 <button
                   className="toolbar-action"

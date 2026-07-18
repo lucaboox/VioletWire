@@ -21,6 +21,7 @@ import {
   playerModeSchema,
   type ChatPresentation,
   type ChannelAction,
+  type ChannelActionWindowState,
   type NativeControlsContext,
   type PlayerMode,
 } from "../shared/player";
@@ -82,12 +83,22 @@ let lastChatBounds: Rectangle | null = null;
 let activePlayerMode: PlayerMode | null = null;
 let activeChannelName: string | null = null;
 let rendererServer: RendererServer | null = null;
-const playbackSessionService = new PlaybackSessionService(() => mainWindow);
+const playbackSessionService = new PlaybackSessionService(
+  () => mainWindow,
+  applicationIcon,
+);
 const sevenTvService = new SevenTvService();
 const thirdPartyEmoteService = new ThirdPartyEmoteService();
 function sendToWindow(window: BrowserWindow | null, channel: string, ...args: unknown[]): void {
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
   window.webContents.send(channel, ...args);
+}
+
+function sendChannelActionState(
+  action: ChannelAction,
+  state: ChannelActionWindowState,
+): void {
+  sendToWindow(mainWindow, "channel-action:state", action, state);
 }
 const updateService = new UpdateService(
   () => mainWindow,
@@ -283,6 +294,7 @@ async function createNativeControlsWindow(): Promise<void> {
   if (!mainWindow || nativeControlsWindow) return;
   nativeControlsWindow = new BrowserWindow({
     parent: mainWindow,
+    icon: applicationIcon,
     frame: false,
     transparent: true,
     backgroundColor: "#00000000",
@@ -355,6 +367,7 @@ async function openChannelActionWindow(
   const subscriptionDrawer = action === "subscribe";
   const actionWindow = new BrowserWindow({
     parent: mainWindow,
+    icon: applicationIcon,
     modal: !subscriptionDrawer,
     frame: !subscriptionDrawer,
     show: !subscriptionDrawer,
@@ -380,6 +393,7 @@ async function openChannelActionWindow(
   });
   channelActionWindow = actionWindow;
   channelActionKind = action;
+  if (subscriptionDrawer) sendChannelActionState(action, "loading");
   if (!subscriptionDrawer && nativeControlsWindow && !nativeControlsWindow.isDestroyed()) {
     nativeControlsWindow.hide();
   }
@@ -404,6 +418,7 @@ async function openChannelActionWindow(
   actionWindow.on("closed", () => {
     if (channelActionWindow === actionWindow) channelActionWindow = null;
     if (channelActionKind === action) channelActionKind = null;
+    if (subscriptionDrawer) sendChannelActionState(action, "closed");
     if (activePlayerMode === "native" && nativeControlsVisible) applyNativeControlsBounds();
   });
   await actionWindow.loadURL(destinations[action]);
@@ -412,6 +427,10 @@ async function openChannelActionWindow(
       html, body {
         overflow: hidden !important;
         background: #0e0e10 !important;
+      }
+      [data-a-target="top-nav-container"],
+      nav[aria-label="Primary Navigation"] {
+        display: none !important;
       }
       [data-a-target="sub-modal"] {
         position: fixed !important;
@@ -423,14 +442,21 @@ async function openChannelActionWindow(
         height: 100% !important;
         max-height: none !important;
         margin: 0 !important;
-        border-radius: 0 !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+        border: 1px solid #303038 !important;
+        border-radius: 10px !important;
         background: #0e0e10 !important;
+        box-shadow: 0 18px 55px #000b !important;
+        transform: none !important;
+      }
+      [data-a-target="sub-modal"] .sub-modal__support-panel {
+        height: 100% !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
       }
     `);
     applySubscriptionDrawerBounds();
-    actionWindow.show();
-    actionWindow.focus();
-    actionWindow.moveTop();
     const modalFound = await actionWindow.webContents
       .executeJavaScript(`
         new Promise((resolve) => {
@@ -450,6 +476,13 @@ async function openChannelActionWindow(
       `)
       .catch(() => false);
     if (!actionWindow.isDestroyed()) {
+      // Keep the frameless drawer hidden until Twitch's actual subscription
+      // surface exists. This avoids flashing the underlying /subs page and its
+      // navigation while React finishes rendering the modal.
+      actionWindow.show();
+      actionWindow.focus();
+      actionWindow.moveTop();
+      sendChannelActionState(action, "open");
       if (modalFound) {
         void actionWindow.webContents
           .executeJavaScript(`
@@ -486,7 +519,11 @@ function applySubscriptionDrawerBounds(): void {
   const playerBounds = lastPlayerBounds;
   const availableWidth = playerBounds?.width ?? contentBounds.width;
   const width = Math.max(340, Math.min(440, Math.round(availableWidth * 0.42)));
-  const height = Math.max(480, playerBounds?.height ?? contentBounds.height - 122);
+  const availableHeight = playerBounds?.height ?? contentBounds.height - 122;
+  // Twitch's subscription panel is designed as a compact, internally
+  // scrollable drawer. Matching the entire player height leaves a large empty
+  // region below channels with shorter benefit lists.
+  const height = Math.max(480, Math.min(820, availableHeight));
   const right = playerBounds
     ? contentBounds.x + playerBounds.x + playerBounds.width
     : contentBounds.x + contentBounds.width;

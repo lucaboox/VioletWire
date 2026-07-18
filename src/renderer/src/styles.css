@@ -378,6 +378,13 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .toolbar-action.follow-action:hover { border-color: #7652a2; background: #3a2750; }
 .toolbar-icon.follow-action.active { border-color: #6d3d83; color: #f0abfc; background: #38203f; }
 .toolbar-icon.subscribe-action.active { border-color: #755a25; color: #fde68a; background: #3a2d17; }
+.toolbar-icon.subscribe-action.panel-open {
+  border-color: #8b5cf6;
+  color: #f5d0fe;
+  background: #4a2459;
+  box-shadow: 0 0 0 1px #a855f744, 0 0 16px #9333ea2e;
+}
+.toolbar-icon.subscribe-action .spin { animation: native-spin 900ms linear infinite; }
 .toolbar-popover-anchor { position: relative; flex: 0 0 auto; }
 .subscription-popover { position: absolute; z-index: 40; top: calc(100% + 11px); right: 0; width: 285px; padding: 13px; border: 1px solid #414149; border-radius: 11px; color: #d4d4d8; background: #18181bf7; box-shadow: 0 18px 55px #000b; }
 .subscription-popover-heading { display: flex; align-items: center; gap: 10px; padding-bottom: 11px; border-bottom: 1px solid #303037; }
