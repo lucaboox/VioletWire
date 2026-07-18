@@ -1224,8 +1224,8 @@ export function NativeControls() {
           {state.paused ? <Play size={19} /> : <Pause size={19} />}
         </button>
         <button
-          aria-label={state.muted ? "Unmute" : "Mute"}
-          data-tooltip={state.muted ? "Unmute" : "Mute"}
+          aria-label={state.muted ? "Unmute (M)" : "Mute (M)"}
+          data-tooltip={state.muted ? "Unmute (M)" : "Mute (M)"}
           onClick={() => window.desktop.player.controlNative({ command: "toggle-mute" })}
           type="button"
         >
