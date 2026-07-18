@@ -986,7 +986,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
             static_cast<int>(height),
             static_cast<int>(kGlRgba8),
           };
-          int flip_y = 1;
+          int flip_y = 0;
           mpv_render_param params[] = {
             {MPV_RENDER_PARAM_OPENGL_FBO, &framebuffer},
             {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
