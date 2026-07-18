@@ -24,6 +24,7 @@ interface TextureEvent {
     | "stopped"
     | "idle"
     | "error"
+    | "renderer"
     | "diagnostic"
     | "pause"
     | "mute"
@@ -526,6 +527,8 @@ export class TextureNativePlayer {
       this.updateState({ status: "stopped" });
     } else if (event.type === "error") {
       this.updateState({ status: "error", error: event.message ?? "Texture playback failed." });
+    } else if (event.type === "renderer") {
+      console.info(`[texture-player] ${event.message ?? "Selected the texture renderer."}`);
     } else if (event.type === "diagnostic") {
       const now = Date.now();
       if (!session.lastDiagnosticAt || now - session.lastDiagnosticAt >= 2_000) {

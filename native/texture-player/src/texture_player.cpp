@@ -4,10 +4,12 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <gl/GL.h>
 #include <wrl/client.h>
 
 #include <mpv/client.h>
 #include <mpv/render.h>
+#include <mpv/render_gl.h>
 
 #include <algorithm>
 #include <array>
@@ -23,6 +25,27 @@
 using Microsoft::WRL::ComPtr;
 
 namespace {
+
+constexpr GLenum kGlFramebuffer = 0x8D40;
+constexpr GLenum kGlRenderbuffer = 0x8D41;
+constexpr GLenum kGlColorAttachment0 = 0x8CE0;
+constexpr GLenum kGlFramebufferComplete = 0x8CD5;
+constexpr GLenum kGlRgba8 = 0x8058;
+constexpr GLenum kWglAccessWriteDiscardNv = 0x0002;
+
+using GlGenFramebuffers = void(APIENTRY*)(GLsizei, GLuint*);
+using GlDeleteFramebuffers = void(APIENTRY*)(GLsizei, const GLuint*);
+using GlBindFramebuffer = void(APIENTRY*)(GLenum, GLuint);
+using GlCheckFramebufferStatus = GLenum(APIENTRY*)(GLenum);
+using GlFramebufferRenderbuffer = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
+using GlGenRenderbuffers = void(APIENTRY*)(GLsizei, GLuint*);
+using GlDeleteRenderbuffers = void(APIENTRY*)(GLsizei, const GLuint*);
+using WglDxOpenDeviceNv = HANDLE(WINAPI*)(void*);
+using WglDxCloseDeviceNv = BOOL(WINAPI*)(HANDLE);
+using WglDxRegisterObjectNv = HANDLE(WINAPI*)(HANDLE, void*, GLuint, GLenum, GLenum);
+using WglDxUnregisterObjectNv = BOOL(WINAPI*)(HANDLE, HANDLE);
+using WglDxLockObjectsNv = BOOL(WINAPI*)(HANDLE, GLint, HANDLE*);
+using WglDxUnlockObjectsNv = BOOL(WINAPI*)(HANDLE, GLint, HANDLE*);
 
 struct MpvApi {
   decltype(&mpv_create) create = nullptr;
@@ -131,8 +154,12 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
  private:
   struct Slot {
     ComPtr<ID3D11Texture2D> texture;
+    ComPtr<ID3D11Texture2D> gl_texture;
     ComPtr<IDXGIKeyedMutex> keyed_mutex;
     HANDLE handle = nullptr;
+    HANDLE gl_interop_object = nullptr;
+    GLuint gl_renderbuffer = 0;
+    GLuint gl_framebuffer = 0;
     uint32_t width = 0;
     uint32_t height = 0;
     uint64_t device_generation = 0;
@@ -185,13 +212,19 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     api_.set_option_string(mpv_, "input-default-bindings", "no");
     api_.set_option_string(mpv_, "osc", "no");
     api_.set_option_string(mpv_, "profile", "low-latency");
-    // The initial bridge deliberately uses libmpv's stable software render API
-    // and uploads into a D3D11 shared texture. auto-copy preserves hardware
-    // decoding where the decoder can efficiently copy frames back.
-    api_.set_option_string(mpv_, "hwdec", "auto-copy");
-    // Lanczos is unnecessarily expensive when the software render bridge is
-    // producing a full player-sized frame at 60 FPS. Bilinear scaling keeps
-    // the live picture sharp while substantially reducing resize/scaling work.
+    // NVIDIA can hand decoded frames directly to mpv's OpenGL renderer. Other
+    // Windows vendors currently use D3D11VA's system-memory copy path before
+    // the GPU render stage. Keep auto-copy last so decoding remains functional
+    // when a driver-specific decoder is unavailable.
+    api_.set_option_string(
+      mpv_,
+      "hwdec",
+      preferred_vendor_id_ == 0x10de
+        ? "nvdec,d3d11va-copy,auto-copy"
+        : "d3d11va-copy,auto-copy"
+    );
+    // Bilinear scaling keeps the software fallback inexpensive. The OpenGL
+    // fast path performs this scaling on the GPU.
     api_.set_option_string(mpv_, "sws-fast", "yes");
     api_.set_option_string(mpv_, "sws-scaler", "bilinear");
     api_.set_option_string(mpv_, "keep-open", "no");
@@ -200,16 +233,11 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       throw Napi::Error::New(env, "libmpv could not initialize.");
     }
 
-    const char* api_type = MPV_RENDER_API_TYPE_SW;
-    mpv_render_param create_params[] = {
-      {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(api_type)},
-      {MPV_RENDER_PARAM_INVALID, nullptr},
-    };
-    if (api_.render_context_create(&render_context_, mpv_, create_params) < 0) {
+    if (!InitializeOpenGlRenderer() && !InitializeSoftwareRenderer()) {
       Stop();
       throw Napi::Error::New(
         env,
-        "This libmpv build does not expose the software render API required by the prototype."
+        "This libmpv build could not initialize a compatible embedded render API."
       );
     }
 
@@ -283,13 +311,6 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         if (index < slots_.size()) {
           auto& slot = slots_[index];
           slot.busy = false;
-          if (
-            slot.width != width_.load() ||
-            slot.height != height_.load() ||
-            slot.device_generation != device_generation_
-          ) {
-            ResetSlotLocked(slot);
-          }
         }
       }
       // If every slot was in Chromium when mpv announced its latest frame,
@@ -312,6 +333,270 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   void RequestRender() {
     render_requested_ = true;
     render_condition_.notify_one();
+  }
+
+  static LRESULT CALLBACK HiddenWindowProc(
+    HWND window,
+    UINT message,
+    WPARAM wparam,
+    LPARAM lparam
+  ) {
+    return DefWindowProcW(window, message, wparam, lparam);
+  }
+
+  static void* GetOpenGlProcAddress(void*, const char* name) {
+    void* address = reinterpret_cast<void*>(wglGetProcAddress(name));
+    if (
+      !address ||
+      address == reinterpret_cast<void*>(1) ||
+      address == reinterpret_cast<void*>(2) ||
+      address == reinterpret_cast<void*>(3) ||
+      address == reinterpret_cast<void*>(-1)
+    ) {
+      const HMODULE opengl = GetModuleHandleW(L"opengl32.dll");
+      address = opengl ? reinterpret_cast<void*>(GetProcAddress(opengl, name)) : nullptr;
+    }
+    return address;
+  }
+
+  template <typename T>
+  static bool LoadOpenGlFunction(const char* name, T& target) {
+    target = reinterpret_cast<T>(GetOpenGlProcAddress(nullptr, name));
+    return target != nullptr;
+  }
+
+  bool CreateOpenGlContext() {
+    open_gl_failure_.clear();
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    constexpr wchar_t class_name[] = L"VioletWireTextureOpenGL";
+    WNDCLASSW window_class{};
+    window_class.style = CS_OWNDC;
+    window_class.lpfnWndProc = &TexturePlayer::HiddenWindowProc;
+    window_class.hInstance = instance;
+    window_class.lpszClassName = class_name;
+    if (!RegisterClassW(&window_class) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+      open_gl_failure_ = "the hidden OpenGL window class could not be registered";
+      return false;
+    }
+
+    gl_window_ = CreateWindowExW(
+      0,
+      class_name,
+      L"",
+      WS_POPUP,
+      0,
+      0,
+      1,
+      1,
+      nullptr,
+      nullptr,
+      instance,
+      nullptr
+    );
+    if (!gl_window_) {
+      open_gl_failure_ = "the hidden OpenGL window could not be created";
+      return false;
+    }
+    gl_dc_ = GetDC(gl_window_);
+    if (!gl_dc_) {
+      open_gl_failure_ = "the OpenGL device context could not be created";
+      return false;
+    }
+
+    PIXELFORMATDESCRIPTOR descriptor{};
+    descriptor.nSize = sizeof(descriptor);
+    descriptor.nVersion = 1;
+    descriptor.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    descriptor.iPixelType = PFD_TYPE_RGBA;
+    descriptor.cColorBits = 32;
+    descriptor.cAlphaBits = 8;
+    descriptor.iLayerType = PFD_MAIN_PLANE;
+    const int pixel_format = ChoosePixelFormat(gl_dc_, &descriptor);
+    if (!pixel_format || !SetPixelFormat(gl_dc_, pixel_format, &descriptor)) {
+      open_gl_failure_ = "the OpenGL pixel format could not be selected";
+      return false;
+    }
+
+    gl_context_ = wglCreateContext(gl_dc_);
+    if (!gl_context_ || !wglMakeCurrent(gl_dc_, gl_context_)) {
+      open_gl_failure_ = "the desktop OpenGL context could not be activated";
+      return false;
+    }
+
+    const bool gl_loaded =
+      LoadOpenGlFunction("glGenFramebuffers", gl_gen_framebuffers_) &&
+      LoadOpenGlFunction("glDeleteFramebuffers", gl_delete_framebuffers_) &&
+      LoadOpenGlFunction("glBindFramebuffer", gl_bind_framebuffer_) &&
+      LoadOpenGlFunction("glCheckFramebufferStatus", gl_check_framebuffer_status_) &&
+      LoadOpenGlFunction("glFramebufferRenderbuffer", gl_framebuffer_renderbuffer_) &&
+      LoadOpenGlFunction("glGenRenderbuffers", gl_gen_renderbuffers_) &&
+      LoadOpenGlFunction("glDeleteRenderbuffers", gl_delete_renderbuffers_);
+    if (!gl_loaded) {
+      open_gl_failure_ = "the driver does not expose framebuffer objects";
+      return false;
+    }
+    const bool interop_loaded =
+      LoadOpenGlFunction("wglDXOpenDeviceNV", wgl_dx_open_device_) &&
+      LoadOpenGlFunction("wglDXCloseDeviceNV", wgl_dx_close_device_) &&
+      LoadOpenGlFunction("wglDXRegisterObjectNV", wgl_dx_register_object_) &&
+      LoadOpenGlFunction("wglDXUnregisterObjectNV", wgl_dx_unregister_object_) &&
+      LoadOpenGlFunction("wglDXLockObjectsNV", wgl_dx_lock_objects_) &&
+      LoadOpenGlFunction("wglDXUnlockObjectsNV", wgl_dx_unlock_objects_);
+    if (!interop_loaded) {
+      open_gl_failure_ = "the active OpenGL driver does not expose WGL_NV_DX_interop2";
+      return false;
+    }
+
+    gl_interop_device_ = wgl_dx_open_device_(device_.Get());
+    if (!gl_interop_device_) {
+      open_gl_failure_ = "OpenGL could not open the selected D3D11 adapter";
+      return false;
+    }
+    if (!ProbeOpenGlInterop()) {
+      open_gl_failure_ = "the driver rejected VioletWire's D3D11 render target";
+      return false;
+    }
+    return true;
+  }
+
+  bool ProbeOpenGlInterop() {
+    D3D11_TEXTURE2D_DESC description{};
+    description.Width = width_.load();
+    description.Height = height_.load();
+    description.MipLevels = 1;
+    description.ArraySize = 1;
+    description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    description.SampleDesc.Count = 1;
+    description.Usage = D3D11_USAGE_DEFAULT;
+    description.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    // WGL interop drivers commonly reject keyed/NTHANDLE resources. Render
+    // into a private D3D11 target and perform one GPU CopyResource into the
+    // Electron-facing keyed texture instead.
+    description.MiscFlags = 0;
+    ComPtr<ID3D11Texture2D> texture;
+    if (FAILED(device_->CreateTexture2D(&description, nullptr, &texture))) return false;
+
+    GLuint renderbuffer = 0;
+    GLuint framebuffer = 0;
+    HANDLE interop_object = nullptr;
+    gl_gen_renderbuffers_(1, &renderbuffer);
+    if (renderbuffer) {
+      interop_object = wgl_dx_register_object_(
+        gl_interop_device_,
+        texture.Get(),
+        renderbuffer,
+        kGlRenderbuffer,
+        kWglAccessWriteDiscardNv
+      );
+    }
+
+    bool complete = false;
+    if (
+      interop_object &&
+      wgl_dx_lock_objects_(gl_interop_device_, 1, &interop_object)
+    ) {
+      gl_gen_framebuffers_(1, &framebuffer);
+      gl_bind_framebuffer_(kGlFramebuffer, framebuffer);
+      gl_framebuffer_renderbuffer_(
+        kGlFramebuffer,
+        kGlColorAttachment0,
+        kGlRenderbuffer,
+        renderbuffer
+      );
+      complete = gl_check_framebuffer_status_(kGlFramebuffer) == kGlFramebufferComplete;
+      gl_bind_framebuffer_(kGlFramebuffer, 0);
+      wgl_dx_unlock_objects_(gl_interop_device_, 1, &interop_object);
+    }
+
+    if (framebuffer) gl_delete_framebuffers_(1, &framebuffer);
+    if (interop_object) wgl_dx_unregister_object_(gl_interop_device_, interop_object);
+    if (renderbuffer) gl_delete_renderbuffers_(1, &renderbuffer);
+    return complete;
+  }
+
+  bool InitializeOpenGlRenderer() {
+    if (!CreateOpenGlContext()) {
+      DestroyOpenGlRenderer();
+      EmitEvent({
+        "renderer",
+        false,
+        0,
+        "OpenGL/D3D11 interop is unavailable because " + open_gl_failure_ +
+          "; using the compatible software renderer.",
+      });
+      return false;
+    }
+
+    const char* api_type = MPV_RENDER_API_TYPE_OPENGL;
+    mpv_opengl_init_params open_gl_params{
+      &TexturePlayer::GetOpenGlProcAddress,
+      nullptr,
+    };
+    mpv_render_param create_params[] = {
+      {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(api_type)},
+      {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &open_gl_params},
+      {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+    const int result = api_.render_context_create(&render_context_, mpv_, create_params);
+    wglMakeCurrent(nullptr, nullptr);
+    if (result < 0) {
+      render_context_ = nullptr;
+      DestroyOpenGlRenderer();
+      EmitEvent({
+        "renderer",
+        false,
+        static_cast<double>(result),
+        "libmpv rejected the OpenGL render API; using the compatible software renderer.",
+      });
+      return false;
+    }
+
+    use_open_gl_ = true;
+    EmitEvent({
+      "renderer",
+      false,
+      0,
+      preferred_vendor_id_ == 0x10de
+        ? "Using the GPU OpenGL renderer with direct NVIDIA decoding when available."
+        : "Using the GPU OpenGL renderer with D3D11VA copy decoding.",
+    });
+    return true;
+  }
+
+  bool InitializeSoftwareRenderer() {
+    const char* api_type = MPV_RENDER_API_TYPE_SW;
+    mpv_render_param create_params[] = {
+      {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(api_type)},
+      {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+    use_open_gl_ = false;
+    return api_.render_context_create(&render_context_, mpv_, create_params) >= 0;
+  }
+
+  void DestroyOpenGlRenderer() {
+    if (gl_context_ && gl_dc_) wglMakeCurrent(gl_dc_, gl_context_);
+    {
+      std::scoped_lock lock(slot_mutex_);
+      for (auto& slot : slots_) ResetSlotOpenGlLocked(slot);
+    }
+    if (gl_interop_device_ && wgl_dx_close_device_) {
+      wgl_dx_close_device_(gl_interop_device_);
+      gl_interop_device_ = nullptr;
+    }
+    if (gl_context_) {
+      wglMakeCurrent(nullptr, nullptr);
+      wglDeleteContext(gl_context_);
+      gl_context_ = nullptr;
+    }
+    if (gl_dc_ && gl_window_) {
+      ReleaseDC(gl_window_, gl_dc_);
+      gl_dc_ = nullptr;
+    }
+    if (gl_window_) {
+      DestroyWindow(gl_window_);
+      gl_window_ = nullptr;
+    }
+    use_open_gl_ = false;
   }
 
   bool CreateGraphicsDevice(bool cycle_adapter) {
@@ -380,12 +665,35 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
 
     {
       std::scoped_lock lock(slot_mutex_);
-      for (auto& slot : slots_) {
-        if (!slot.busy) ResetSlotLocked(slot);
+      if (use_open_gl_) {
+        // Recovery creates entirely new resources. Chromium retains its own
+        // reference to any already-imported old texture, so those slots can be
+        // retired without reusing memory that the compositor may still read.
+        ResetSlotsLocked();
+        if (gl_interop_device_ && wgl_dx_close_device_) {
+          wgl_dx_close_device_(gl_interop_device_);
+          gl_interop_device_ = nullptr;
+        }
+      } else {
+        for (auto& slot : slots_) {
+          if (!slot.busy) ResetSlotLocked(slot);
+        }
       }
       device_ = std::move(next_device);
       device_context_ = std::move(next_context);
       ++device_generation_;
+      if (use_open_gl_) {
+        gl_interop_device_ = wgl_dx_open_device_(device_.Get());
+        if (!gl_interop_device_) {
+          EmitEvent({
+            "error",
+            false,
+            static_cast<double>(GetLastError()),
+            "OpenGL could not reconnect to the recovered D3D11 device.",
+          });
+          return false;
+        }
+      }
     }
     EmitEvent({
       "diagnostic",
@@ -404,7 +712,8 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       slot.texture &&
       slot.width == width &&
       slot.height == height &&
-      slot.device_generation == device_generation_
+      slot.device_generation == device_generation_ &&
+      (!use_open_gl_ || slot.gl_interop_object)
     ) {
       return true;
     }
@@ -476,10 +785,85 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     slot.width = width;
     slot.height = height;
     slot.device_generation = device_generation_;
+    if (use_open_gl_) {
+      D3D11_TEXTURE2D_DESC gl_description = description;
+      gl_description.MiscFlags = 0;
+      const HRESULT gl_texture_result =
+        device_->CreateTexture2D(&gl_description, nullptr, &slot.gl_texture);
+      if (FAILED(gl_texture_result) || !RegisterSlotOpenGlLocked(slot)) {
+        ResetSlotLocked(slot);
+        return false;
+      }
+    }
     return true;
   }
 
+  bool RegisterSlotOpenGlLocked(Slot& slot) {
+    if (
+      !gl_interop_device_ ||
+      !slot.gl_texture ||
+      !gl_gen_renderbuffers_ ||
+      !gl_gen_framebuffers_
+    ) {
+      return false;
+    }
+
+    gl_gen_renderbuffers_(1, &slot.gl_renderbuffer);
+    if (!slot.gl_renderbuffer) return false;
+    slot.gl_interop_object = wgl_dx_register_object_(
+      gl_interop_device_,
+      slot.gl_texture.Get(),
+      slot.gl_renderbuffer,
+      kGlRenderbuffer,
+      kWglAccessWriteDiscardNv
+    );
+    if (!slot.gl_interop_object) {
+      gl_delete_renderbuffers_(1, &slot.gl_renderbuffer);
+      slot.gl_renderbuffer = 0;
+      return false;
+    }
+
+    if (!wgl_dx_lock_objects_(gl_interop_device_, 1, &slot.gl_interop_object)) {
+      ResetSlotOpenGlLocked(slot);
+      return false;
+    }
+    gl_gen_framebuffers_(1, &slot.gl_framebuffer);
+    gl_bind_framebuffer_(kGlFramebuffer, slot.gl_framebuffer);
+    gl_framebuffer_renderbuffer_(
+      kGlFramebuffer,
+      kGlColorAttachment0,
+      kGlRenderbuffer,
+      slot.gl_renderbuffer
+    );
+    const bool complete =
+      gl_check_framebuffer_status_(kGlFramebuffer) == kGlFramebufferComplete;
+    gl_bind_framebuffer_(kGlFramebuffer, 0);
+    wgl_dx_unlock_objects_(gl_interop_device_, 1, &slot.gl_interop_object);
+    if (!complete) {
+      ResetSlotOpenGlLocked(slot);
+      return false;
+    }
+    return true;
+  }
+
+  void ResetSlotOpenGlLocked(Slot& slot) {
+    if (slot.gl_interop_object && gl_interop_device_ && wgl_dx_unregister_object_) {
+      wgl_dx_unregister_object_(gl_interop_device_, slot.gl_interop_object);
+    }
+    slot.gl_interop_object = nullptr;
+    if (slot.gl_framebuffer && gl_delete_framebuffers_) {
+      gl_delete_framebuffers_(1, &slot.gl_framebuffer);
+    }
+    slot.gl_framebuffer = 0;
+    if (slot.gl_renderbuffer && gl_delete_renderbuffers_) {
+      gl_delete_renderbuffers_(1, &slot.gl_renderbuffer);
+    }
+    slot.gl_renderbuffer = 0;
+    slot.gl_texture.Reset();
+  }
+
   void ResetSlotLocked(Slot& slot) {
+    ResetSlotOpenGlLocked(slot);
     if (slot.handle) CloseHandle(slot.handle);
     slot.handle = nullptr;
     slot.keyed_mutex.Reset();
@@ -497,6 +881,17 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   }
 
   void RenderLoop() {
+    if (use_open_gl_ && !wglMakeCurrent(gl_dc_, gl_context_)) {
+      EmitEvent({
+        "error",
+        false,
+        static_cast<double>(GetLastError()),
+        "The accelerated renderer could not activate its OpenGL context.",
+      });
+      running_ = false;
+      return;
+    }
+
     while (running_) {
       {
         std::unique_lock lock(render_mutex_);
@@ -536,36 +931,8 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       // when Chromium is still using every shared texture.
       if (selected == slots_.size()) continue;
 
-      const size_t stride = static_cast<size_t>(width) * 4;
-      pixels_.resize(stride * height);
-      int size[] = {static_cast<int>(width), static_cast<int>(height)};
-      const char* format = "bgra";
-      mpv_render_param params[] = {
-        {MPV_RENDER_PARAM_SW_SIZE, size},
-        {MPV_RENDER_PARAM_SW_FORMAT, const_cast<char*>(format)},
-        {MPV_RENDER_PARAM_SW_STRIDE, const_cast<size_t*>(&stride)},
-        {MPV_RENDER_PARAM_SW_POINTER, pixels_.data()},
-        {MPV_RENDER_PARAM_INVALID, nullptr},
-      };
-      const int render_result = api_.render_context_render(render_context_, params);
-      if (render_result < 0) {
-        {
-          std::scoped_lock lock(slot_mutex_);
-          slots_[selected].busy = false;
-        }
-        EmitEvent({"error", false, 0, "libmpv could not render a video frame."});
-        continue;
-      }
-      // Electron imports this resource as an alpha-bearing BGRA texture.
-      // Some libswscale paths leave alpha undefined even for BGRA output,
-      // which Chromium correctly composites as a transparent black frame.
-      auto* opaque_pixels = reinterpret_cast<uint32_t*>(pixels_.data());
-      const size_t pixel_count = pixels_.size() / sizeof(uint32_t);
-      for (size_t index = 0; index < pixel_count; ++index) {
-        opaque_pixels[index] |= 0xff000000u;
-      }
-
       HANDLE shared_handle = nullptr;
+      int render_result = 0;
       {
         std::scoped_lock lock(slot_mutex_);
         auto& slot = slots_[selected];
@@ -593,16 +960,86 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
           });
           continue;
         }
-        device_context_->UpdateSubresource(
-          slot.texture.Get(),
-          0,
-          nullptr,
-          pixels_.data(),
-          static_cast<UINT>(stride),
-          0
-        );
-        device_context_->Flush();
+
+        if (use_open_gl_) {
+          if (
+            !slot.gl_interop_object ||
+            !wgl_dx_lock_objects_(gl_interop_device_, 1, &slot.gl_interop_object)
+          ) {
+            slot.keyed_mutex->ReleaseSync(0);
+            slot.busy = false;
+            EmitEvent({
+              "diagnostic",
+              false,
+              static_cast<double>(GetLastError()),
+              "Dropped a frame because OpenGL could not lock its shared D3D11 texture.",
+            });
+            continue;
+          }
+
+          gl_bind_framebuffer_(kGlFramebuffer, slot.gl_framebuffer);
+          glClearColor(0, 0, 0, 1);
+          glClear(GL_COLOR_BUFFER_BIT);
+          mpv_opengl_fbo framebuffer{
+            static_cast<int>(slot.gl_framebuffer),
+            static_cast<int>(width),
+            static_cast<int>(height),
+            static_cast<int>(kGlRgba8),
+          };
+          int flip_y = 1;
+          mpv_render_param params[] = {
+            {MPV_RENDER_PARAM_OPENGL_FBO, &framebuffer},
+            {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+            {MPV_RENDER_PARAM_INVALID, nullptr},
+          };
+          render_result = api_.render_context_render(render_context_, params);
+          glFlush();
+          gl_bind_framebuffer_(kGlFramebuffer, 0);
+          const BOOL unlocked =
+            wgl_dx_unlock_objects_(gl_interop_device_, 1, &slot.gl_interop_object);
+          if (!unlocked && render_result >= 0) render_result = -1;
+          if (render_result >= 0) {
+            device_context_->CopyResource(slot.texture.Get(), slot.gl_texture.Get());
+            device_context_->Flush();
+          }
+        } else {
+          const size_t stride = static_cast<size_t>(width) * 4;
+          pixels_.resize(stride * height);
+          int size[] = {static_cast<int>(width), static_cast<int>(height)};
+          const char* format = "bgra";
+          mpv_render_param params[] = {
+            {MPV_RENDER_PARAM_SW_SIZE, size},
+            {MPV_RENDER_PARAM_SW_FORMAT, const_cast<char*>(format)},
+            {MPV_RENDER_PARAM_SW_STRIDE, const_cast<size_t*>(&stride)},
+            {MPV_RENDER_PARAM_SW_POINTER, pixels_.data()},
+            {MPV_RENDER_PARAM_INVALID, nullptr},
+          };
+          render_result = api_.render_context_render(render_context_, params);
+          if (render_result >= 0) {
+            // Some libswscale paths leave alpha undefined even for BGRA.
+            auto* opaque_pixels = reinterpret_cast<uint32_t*>(pixels_.data());
+            const size_t pixel_count = pixels_.size() / sizeof(uint32_t);
+            for (size_t index = 0; index < pixel_count; ++index) {
+              opaque_pixels[index] |= 0xff000000u;
+            }
+            device_context_->UpdateSubresource(
+              slot.texture.Get(),
+              0,
+              nullptr,
+              pixels_.data(),
+              static_cast<UINT>(stride),
+              0
+            );
+            device_context_->Flush();
+          }
+        }
+
         slot.keyed_mutex->ReleaseSync(0);
+        if (render_result < 0) {
+          slot.busy = false;
+          EmitEvent({"error", false, 0, "libmpv could not render a video frame."});
+          continue;
+        }
         if (FAILED(device_->GetDeviceRemovedReason())) {
           slot.busy = false;
           ResetSlotLocked(slot);
@@ -641,6 +1078,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         RequestRender();
       }
     }
+    if (use_open_gl_) wglMakeCurrent(nullptr, nullptr);
   }
 
   void EventLoop() {
@@ -706,6 +1144,9 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     }
     if (render_thread_.joinable()) render_thread_.join();
     if (event_thread_.joinable()) event_thread_.join();
+    if (use_open_gl_ && gl_context_ && gl_dc_) {
+      wglMakeCurrent(gl_dc_, gl_context_);
+    }
     if (render_context_) {
       api_.render_context_set_update_callback(render_context_, nullptr, nullptr);
       api_.render_context_free(render_context_);
@@ -719,6 +1160,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       std::scoped_lock lock(slot_mutex_);
       ResetSlotsLocked();
     }
+    DestroyOpenGlRenderer();
     pixels_.clear();
     device_context_.Reset();
     device_.Reset();
@@ -733,6 +1175,25 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   mpv_render_context* render_context_ = nullptr;
   ComPtr<ID3D11Device> device_;
   ComPtr<ID3D11DeviceContext> device_context_;
+  HWND gl_window_ = nullptr;
+  HDC gl_dc_ = nullptr;
+  HGLRC gl_context_ = nullptr;
+  HANDLE gl_interop_device_ = nullptr;
+  bool use_open_gl_ = false;
+  std::string open_gl_failure_;
+  GlGenFramebuffers gl_gen_framebuffers_ = nullptr;
+  GlDeleteFramebuffers gl_delete_framebuffers_ = nullptr;
+  GlBindFramebuffer gl_bind_framebuffer_ = nullptr;
+  GlCheckFramebufferStatus gl_check_framebuffer_status_ = nullptr;
+  GlFramebufferRenderbuffer gl_framebuffer_renderbuffer_ = nullptr;
+  GlGenRenderbuffers gl_gen_renderbuffers_ = nullptr;
+  GlDeleteRenderbuffers gl_delete_renderbuffers_ = nullptr;
+  WglDxOpenDeviceNv wgl_dx_open_device_ = nullptr;
+  WglDxCloseDeviceNv wgl_dx_close_device_ = nullptr;
+  WglDxRegisterObjectNv wgl_dx_register_object_ = nullptr;
+  WglDxUnregisterObjectNv wgl_dx_unregister_object_ = nullptr;
+  WglDxLockObjectsNv wgl_dx_lock_objects_ = nullptr;
+  WglDxUnlockObjectsNv wgl_dx_unlock_objects_ = nullptr;
   std::array<Slot, 3> slots_;
   std::mutex slot_mutex_;
   std::vector<uint8_t> pixels_;
