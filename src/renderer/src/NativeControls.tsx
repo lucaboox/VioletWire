@@ -693,6 +693,54 @@ export function NativeControls() {
     window.desktop.player.sendNativeControlAction(action);
   }
 
+  useEffect(() => {
+    if (!context) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (openMenu || chatSettingsOpen || emotePickerOpen || detachedEmotePickerOpen) {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          'input, textarea, select, button, a, [contenteditable="true"], [role="textbox"], [role="menu"], [role="dialog"]',
+        )
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "t") {
+        window.desktop.player.sendNativeControlAction("toggle-theater");
+      } else if (key === "c") {
+        window.desktop.player.sendNativeControlAction(
+          context.chatVisible ? "hide-chat" : "side-chat",
+        );
+      } else if (key === "f") {
+        window.desktop.player.sendNativeControlAction("toggle-fullscreen");
+      } else if (event.code === "Space") {
+        event.preventDefault();
+        window.desktop.player.controlNative({ command: "toggle-pause" });
+      } else if (event.key === "Escape" && context.fullscreen) {
+        window.desktop.player.sendNativeControlAction("toggle-fullscreen");
+      } else if (event.key === "Escape" && context.theaterMode) {
+        window.desktop.player.sendNativeControlAction("toggle-theater");
+      } else {
+        return;
+      }
+      window.desktop.player.sendNativeControlAction("activity");
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    chatSettingsOpen,
+    context,
+    detachedEmotePickerOpen,
+    emotePickerOpen,
+    openMenu,
+  ]);
+
   if (!context) return null;
 
   const qualityLabel =
