@@ -14,6 +14,8 @@ All notable changes to VioletWire are documented in this file.
 - Added GPU-accelerated OpenGL rendering for embedded Native playback, with
   orientation correction, bounded frame transport, renderer recovery, and the
   existing external-window Native backend retained as a fallback.
+- Bundled the Windows texture-player addon and its required libmpv runtime into
+  packaged builds so the embedded backend is available after installation.
 - Made Native playback and the embedded renderer the defaults for new
   installations while keeping the official Twitch Standard player available.
 - Added clickable Twitch reply threads that show retained conversation context,
@@ -30,6 +32,15 @@ All notable changes to VioletWire are documented in this file.
 
 - Fixed Native overlays, quality menus, fullscreen chat, and keyboard shortcuts
   freezing or disappearing over video, and added M as the mute shortcut.
+- Improved embedded-player startup so the player surface appears immediately
+  while libmpv initializes, and restored controls after optimistic mounting.
+- Hardened embedded playback against transient shared-texture import failures,
+  stale frames, renderer-surface replacement, rapid channel switching, and
+  resize-related white or black frames.
+- Fixed the embedded video orientation and reduced CPU usage by replacing the
+  software rendering path with the GPU-backed OpenGL bridge.
+- Restored Native control visibility and five-second mouse-idle auto-hiding,
+  including over fullscreen chat overlays and player menus.
 - Fixed Standard fullscreen recovery so Escape and F11 cannot leave the app
   trapped in Chromium's HTML fullscreen state.
 - Fixed missing Twitch badges by retrying multiple official CDN image sizes and
