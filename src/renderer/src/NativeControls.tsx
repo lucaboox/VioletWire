@@ -722,6 +722,8 @@ export function NativeControls() {
       } else if (event.code === "Space") {
         event.preventDefault();
         window.desktop.player.controlNative({ command: "toggle-pause" });
+      } else if (key === "m") {
+        window.desktop.player.controlNative({ command: "toggle-mute" });
       } else if (event.key === "Escape" && context.fullscreen) {
         window.desktop.player.sendNativeControlAction("toggle-fullscreen");
       } else if (event.key === "Escape" && context.theaterMode) {

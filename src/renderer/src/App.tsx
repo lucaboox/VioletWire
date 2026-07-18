@@ -1233,6 +1233,8 @@ export function App() {
       } else if (event.code === "Space" && activeMode === "native") {
         event.preventDefault();
         window.desktop.player.controlNative({ command: "toggle-pause" });
+      } else if (event.key.toLowerCase() === "m" && activeMode === "native") {
+        window.desktop.player.controlNative({ command: "toggle-mute" });
       } else if (event.key === "Escape" && fullscreen) {
         void setFullscreenMode(false);
       } else if (event.key === "Escape" && theaterMode) {
