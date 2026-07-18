@@ -33,9 +33,16 @@ interface TextureEvent {
 }
 
 interface TexturePlayerAddonInstance {
-  start(url: string, width: number, height: number): void;
+  start(
+    url: string,
+    width: number,
+    height: number,
+    preferredVendorId?: number,
+    preferredDeviceId?: number,
+  ): void;
   resize(width: number, height: number): void;
   command(command: string[]): void;
+  recoverGraphics(cycleAdapter: boolean): void;
   releaseFrame(slot: number): void;
   destroy(): void;
 }
@@ -55,7 +62,14 @@ interface TexturePlayerSession {
   consecutiveTransferFailures: number;
   firstTransferFailureAt?: number;
   lastDiagnosticAt?: number;
+  graphicsRecoveryAttempts: number;
   retireTimer?: NodeJS.Timeout;
+}
+
+interface ChromiumGpuDevice {
+  active?: boolean;
+  vendorId?: number;
+  deviceId?: number;
 }
 
 type StateListener = (state: NativePlayerState) => void;
@@ -93,6 +107,8 @@ export class TextureNativePlayer {
   private session: TexturePlayerSession | null = null;
   private resolverProcess: ChildProcess | null = null;
   private lastBounds: PlayerBounds = { x: 0, y: 0, width: 1280, height: 720 };
+  private resizeTimer: NodeJS.Timeout | null = null;
+  private transferSequence = 0;
   private stopping = false;
   private state: NativePlayerState = {
     status: "idle",
@@ -162,7 +178,10 @@ export class TextureNativePlayer {
     });
 
     try {
-      const streamUrl = await this.resolveStreamUrl(channel, quality);
+      const [streamUrl, gpuDevice] = await Promise.all([
+        this.resolveStreamUrl(channel, quality),
+        this.getChromiumGpuDevice(),
+      ]);
       if (this.stopping) return { ok: false, reason: "Texture playback was cancelled." };
       const nativePaths = resolveNativePaths();
       const require = createRequire(import.meta.url);
@@ -183,10 +202,17 @@ export class TextureNativePlayer {
         acceptingFrames: true,
         inFlightSlots: new Set(),
         consecutiveTransferFailures: 0,
+        graphicsRecoveryAttempts: 0,
       };
       sessionHolder.current = session;
       this.session = session;
-      addon.start(streamUrl, this.lastBounds.width, this.lastBounds.height);
+      addon.start(
+        streamUrl,
+        this.lastBounds.width,
+        this.lastBounds.height,
+        gpuDevice?.vendorId,
+        gpuDevice?.deviceId,
+      );
       return { ok: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -197,7 +223,18 @@ export class TextureNativePlayer {
 
   setBounds(bounds: PlayerBounds): void {
     this.lastBounds = bounds;
-    this.session?.addon.resize(bounds.width, bounds.height);
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    const session = this.session;
+    if (!session) return;
+    // During a window drag, CSS can scale the last completed frame smoothly.
+    // Reallocating multi-megabyte shared textures for every intermediate
+    // ResizeObserver measurement caused blank frames and import failures.
+    this.resizeTimer = setTimeout(() => {
+      this.resizeTimer = null;
+      if (this.session === session && session.acceptingFrames) {
+        session.addon.resize(this.lastBounds.width, this.lastBounds.height);
+      }
+    }, 120);
   }
 
   control(command: NativePlayerCommand): void {
@@ -234,8 +271,14 @@ export class TextureNativePlayer {
     }
   }
 
+  recoverGraphics(cycleAdapter = false): void {
+    this.session?.addon.recoverGraphics(cycleAdapter);
+  }
+
   destroy(): void {
     this.stopping = true;
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.resizeTimer = null;
     this.resolverProcess?.kill();
     this.resolverProcess = null;
     const session = this.session;
@@ -318,6 +361,27 @@ export class TextureNativePlayer {
     });
   }
 
+  private async getChromiumGpuDevice(): Promise<ChromiumGpuDevice | undefined> {
+    try {
+      const info = await app.getGPUInfo("basic");
+      if (!info || typeof info !== "object" || !("gpuDevice" in info)) return undefined;
+      const devices = (info as { gpuDevice?: unknown }).gpuDevice;
+      if (!Array.isArray(devices)) return undefined;
+      return devices.find(
+        (device): device is ChromiumGpuDevice =>
+          Boolean(
+            device &&
+            typeof device === "object" &&
+            (device as ChromiumGpuDevice).active &&
+            typeof (device as ChromiumGpuDevice).vendorId === "number" &&
+            typeof (device as ChromiumGpuDevice).deviceId === "number",
+          ),
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
   private sendFrame(session: TexturePlayerSession, frame: TextureFrame): void {
     const window = this.getMainWindow();
     if (
@@ -362,13 +426,14 @@ export class TextureNativePlayer {
       return;
     }
 
+    const transferSequence = ++this.transferSequence;
     void sharedTexture
       .sendSharedTexture(
         {
           frame: window.webContents.mainFrame,
           importedSharedTexture: imported,
         },
-        frame.sequence,
+        transferSequence,
       )
       .then(() => this.recordTransferSuccess(session))
       .catch((error: unknown) => {
@@ -386,7 +451,10 @@ export class TextureNativePlayer {
     if (this.stopping || this.session !== session) return;
     session.consecutiveTransferFailures = 0;
     session.firstTransferFailureAt = undefined;
-    if (this.state.status === "error") {
+    session.graphicsRecoveryAttempts = 0;
+    // "Playing" means Chromium has actually accepted a presentable frame,
+    // rather than merely that mpv has decoded audio or opened the stream.
+    if (this.state.status !== "playing") {
       this.updateState({ status: "playing", error: undefined });
     }
   }
@@ -405,6 +473,16 @@ export class TextureNativePlayer {
       session.consecutiveTransferFailures >= 30 &&
       now - session.firstTransferFailureAt >= 3_000
     ) {
+      if (session.graphicsRecoveryAttempts < 2) {
+        session.graphicsRecoveryAttempts += 1;
+        session.consecutiveTransferFailures = 0;
+        session.firstTransferFailureAt = undefined;
+        session.addon.recoverGraphics(true);
+        console.warn(
+          `[texture-player] Recreating the graphics bridge on another adapter after repeated import failures (${session.graphicsRecoveryAttempts}/2).`,
+        );
+        return;
+      }
       this.updateState({ status: "error", error: message });
       return;
     }
@@ -439,7 +517,11 @@ export class TextureNativePlayer {
   private handleEvent(session: TexturePlayerSession, event: TextureEvent): void {
     if (this.stopping || this.session !== session) return;
     if (event.type === "playing") {
-      this.updateState({ status: "playing", error: undefined });
+      // Keep the loading surface visible until the first texture transfer
+      // succeeds. mpv can report playback restart before Chromium has a frame.
+      if (this.state.status === "stopped") {
+        this.updateState({ status: "starting", error: undefined });
+      }
     } else if (event.type === "stopped") {
       this.updateState({ status: "stopped" });
     } else if (event.type === "error") {

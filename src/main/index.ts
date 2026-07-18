@@ -3,6 +3,7 @@ import {
   BaseWindow,
   BrowserWindow,
   ipcMain,
+  powerMonitor,
   shell,
   WebContentsView,
   type Rectangle,
@@ -85,6 +86,7 @@ let lastChatBounds: Rectangle | null = null;
 let activePlayerMode: PlayerMode | null = null;
 let activeNativeBackend: NativeRenderBackend | null = null;
 let activeChannelName: string | null = null;
+let textureFallbackInProgress = false;
 let rendererServer: RendererServer | null = null;
 const playbackSessionService = new PlaybackSessionService(
   () => mainWindow,
@@ -184,6 +186,28 @@ const nativePlayer = new NativePlayer(
 const textureNativePlayer = new TextureNativePlayer(
   () => mainWindow,
   (state) => {
+    if (
+      state.status === "error" &&
+      activePlayerMode === "native" &&
+      activeNativeBackend === "texture" &&
+      activeChannelName &&
+      !textureFallbackInProgress
+    ) {
+      textureFallbackInProgress = true;
+      activeNativeBackend = "window";
+      textureNativePlayer.destroy();
+      const fallback = nativePlayer.start(activeChannelName, state.quality);
+      if (fallback.ok) {
+        if (lastPlayerBounds) nativePlayer.setBounds(lastPlayerBounds);
+        textureFallbackInProgress = false;
+        return;
+      }
+      textureFallbackInProgress = false;
+      state = {
+        ...state,
+        error: `${state.error ?? "Embedded Native failed."} Window-hosted Native also failed: ${fallback.reason}`,
+      };
+    }
     sendToWindow(mainWindow, "native-player:state", state);
     sendToWindow(nativeControlsWindow, "native-player:state", state);
   },
@@ -616,6 +640,7 @@ function destroyPlayer(): void {
   activePlayerMode = null;
   activeNativeBackend = null;
   activeChannelName = null;
+  textureFallbackInProgress = false;
   if (chatView) {
     if (chatOverlayWindow && !chatOverlayWindow.isDestroyed()) {
       chatOverlayWindow.contentView.removeChildView(chatView);
@@ -1038,6 +1063,8 @@ ipcMain.handle("preferences:update", async (_event, patch: unknown) => {
 
 app.whenReady().then(async () => {
   app.setAppUserModelId("app.violetwire.viewer");
+  powerMonitor.on("resume", () => textureNativePlayer.recoverGraphics());
+  powerMonitor.on("unlock-screen", () => textureNativePlayer.recoverGraphics());
   await preferencesService.initialize();
   await playbackSessionService.initialize();
   await twitchService.initialize();

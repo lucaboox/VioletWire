@@ -78,6 +78,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         InstanceMethod("start", &TexturePlayer::Start),
         InstanceMethod("resize", &TexturePlayer::Resize),
         InstanceMethod("command", &TexturePlayer::Command),
+        InstanceMethod("recoverGraphics", &TexturePlayer::RecoverGraphics),
         InstanceMethod("releaseFrame", &TexturePlayer::ReleaseFrame),
         InstanceMethod("destroy", &TexturePlayer::DestroyFromJs),
       }
@@ -132,6 +133,9 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     ComPtr<ID3D11Texture2D> texture;
     ComPtr<IDXGIKeyedMutex> keyed_mutex;
     HANDLE handle = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint64_t device_generation = 0;
     bool busy = false;
   };
 
@@ -163,20 +167,14 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
 
     width_ = std::clamp(info[1].As<Napi::Number>().Uint32Value(), 320u, 3840u);
     height_ = std::clamp(info[2].As<Napi::Number>().Uint32Value(), 180u, 2160u);
+    preferred_vendor_id_ =
+      info.Length() >= 4 && info[3].IsNumber() ? info[3].As<Napi::Number>().Uint32Value() : 0;
+    preferred_device_id_ =
+      info.Length() >= 5 && info[4].IsNumber() ? info[4].As<Napi::Number>().Uint32Value() : 0;
 
-    HRESULT result = D3D11CreateDevice(
-      nullptr,
-      D3D_DRIVER_TYPE_HARDWARE,
-      nullptr,
-      D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-      nullptr,
-      0,
-      D3D11_SDK_VERSION,
-      &device_,
-      nullptr,
-      &device_context_
-    );
-    if (FAILED(result)) {
+    adapter_index_ = 0;
+    device_generation_ = 0;
+    if (!CreateGraphicsDevice(false)) {
       throw Napi::Error::New(env, "D3D11 is unavailable for the embedded Native player.");
     }
 
@@ -191,6 +189,11 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     // and uploads into a D3D11 shared texture. auto-copy preserves hardware
     // decoding where the decoder can efficiently copy frames back.
     api_.set_option_string(mpv_, "hwdec", "auto-copy");
+    // Lanczos is unnecessarily expensive when the software render bridge is
+    // producing a full player-sized frame at 60 FPS. Bilinear scaling keeps
+    // the live picture sharp while substantially reducing resize/scaling work.
+    api_.set_option_string(mpv_, "sws-fast", "yes");
+    api_.set_option_string(mpv_, "sws-scaler", "bilinear");
     api_.set_option_string(mpv_, "keep-open", "no");
     if (api_.initialize(mpv_) < 0) {
       Stop();
@@ -231,10 +234,8 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       const auto next_width = std::clamp(info[0].As<Napi::Number>().Uint32Value(), 320u, 3840u);
       const auto next_height = std::clamp(info[1].As<Napi::Number>().Uint32Value(), 180u, 2160u);
       if (next_width != width_ || next_height != height_) {
-        std::scoped_lock lock(slot_mutex_);
         width_ = next_width;
         height_ = next_height;
-        ResetSlotsLocked();
       }
       RequestRender();
     }
@@ -260,11 +261,41 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     return info.Env().Undefined();
   }
 
+  Napi::Value RecoverGraphics(const Napi::CallbackInfo& info) {
+    const bool cycle_adapter =
+      info.Length() >= 1 && info[0].IsBoolean() && info[0].As<Napi::Boolean>().Value();
+    const int requested_mode = cycle_adapter ? 2 : 1;
+    int current_mode = graphics_recovery_requested_.load();
+    while (
+      current_mode < requested_mode &&
+      !graphics_recovery_requested_.compare_exchange_weak(current_mode, requested_mode)
+    ) {
+    }
+    RequestRender();
+    return info.Env().Undefined();
+  }
+
   Napi::Value ReleaseFrame(const Napi::CallbackInfo& info) {
     if (info.Length() >= 1 && info[0].IsNumber()) {
       const uint32_t index = info[0].As<Napi::Number>().Uint32Value();
-      std::scoped_lock lock(slot_mutex_);
-      if (index < slots_.size()) slots_[index].busy = false;
+      {
+        std::scoped_lock lock(slot_mutex_);
+        if (index < slots_.size()) {
+          auto& slot = slots_[index];
+          slot.busy = false;
+          if (
+            slot.width != width_.load() ||
+            slot.height != height_.load() ||
+            slot.device_generation != device_generation_
+          ) {
+            ResetSlotLocked(slot);
+          }
+        }
+      }
+      // If every slot was in Chromium when mpv announced its latest frame,
+      // there may be no second update callback. Releasing a slot must wake the
+      // renderer so the newest available frame can be presented.
+      RequestRender();
     }
     return info.Env().Undefined();
   }
@@ -283,9 +314,102 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     render_condition_.notify_one();
   }
 
+  bool CreateGraphicsDevice(bool cycle_adapter) {
+    ComPtr<IDXGIFactory1> factory;
+    std::vector<ComPtr<IDXGIAdapter1>> adapters;
+    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+      for (uint32_t index = 0;; ++index) {
+        ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(index, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+        DXGI_ADAPTER_DESC1 description{};
+        if (
+          SUCCEEDED(adapter->GetDesc1(&description)) &&
+          (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0
+        ) {
+          adapters.push_back(std::move(adapter));
+        }
+      }
+    }
+
+    if (
+      !cycle_adapter &&
+      device_generation_ == 0 &&
+      preferred_vendor_id_ != 0 &&
+      preferred_device_id_ != 0
+    ) {
+      for (uint32_t index = 0; index < adapters.size(); ++index) {
+        DXGI_ADAPTER_DESC1 description{};
+        if (
+          SUCCEEDED(adapters[index]->GetDesc1(&description)) &&
+          description.VendorId == preferred_vendor_id_ &&
+          description.DeviceId == preferred_device_id_
+        ) {
+          adapter_index_ = index;
+          break;
+        }
+      }
+    } else if (cycle_adapter && !adapters.empty()) {
+      adapter_index_ = (adapter_index_ + 1) % static_cast<uint32_t>(adapters.size());
+    } else if (!adapters.empty() && adapter_index_ >= adapters.size()) {
+      adapter_index_ = 0;
+    }
+
+    ComPtr<ID3D11Device> next_device;
+    ComPtr<ID3D11DeviceContext> next_context;
+    const HRESULT result = D3D11CreateDevice(
+      adapters.empty() ? nullptr : adapters[adapter_index_].Get(),
+      adapters.empty() ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_UNKNOWN,
+      nullptr,
+      D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+      nullptr,
+      0,
+      D3D11_SDK_VERSION,
+      &next_device,
+      nullptr,
+      &next_context
+    );
+    if (FAILED(result)) {
+      EmitEvent({
+        "diagnostic",
+        false,
+        static_cast<double>(static_cast<uint32_t>(result)),
+        "D3D11 device creation failed",
+      });
+      return false;
+    }
+
+    {
+      std::scoped_lock lock(slot_mutex_);
+      for (auto& slot : slots_) {
+        if (!slot.busy) ResetSlotLocked(slot);
+      }
+      device_ = std::move(next_device);
+      device_context_ = std::move(next_context);
+      ++device_generation_;
+    }
+    EmitEvent({
+      "diagnostic",
+      false,
+      static_cast<double>(adapter_index_),
+      cycle_adapter
+        ? "Recreated the texture device on the next graphics adapter."
+        : "Recreated the texture graphics device.",
+    });
+    return true;
+  }
+
   bool EnsureSlotLocked(uint32_t index, uint32_t width, uint32_t height) {
     auto& slot = slots_[index];
-    if (slot.texture) return true;
+    if (
+      slot.texture &&
+      slot.width == width &&
+      slot.height == height &&
+      slot.device_generation == device_generation_
+    ) {
+      return true;
+    }
+    if (slot.busy) return false;
+    ResetSlotLocked(slot);
 
     D3D11_TEXTURE2D_DESC description{};
     description.Width = width;
@@ -349,13 +473,26 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       slot.texture.Reset();
       return false;
     }
+    slot.width = width;
+    slot.height = height;
+    slot.device_generation = device_generation_;
     return true;
+  }
+
+  void ResetSlotLocked(Slot& slot) {
+    if (slot.handle) CloseHandle(slot.handle);
+    slot.handle = nullptr;
+    slot.keyed_mutex.Reset();
+    slot.texture.Reset();
+    slot.width = 0;
+    slot.height = 0;
+    slot.device_generation = 0;
+    slot.busy = false;
   }
 
   void ResetSlotsLocked() {
     for (auto& slot : slots_) {
-      if (slot.handle) CloseHandle(slot.handle);
-      slot = {};
+      ResetSlotLocked(slot);
     }
   }
 
@@ -367,11 +504,38 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       }
       if (!running_ || !render_context_) continue;
 
+      const int recovery_mode = graphics_recovery_requested_.exchange(0);
+      if (recovery_mode != 0 && !CreateGraphicsDevice(recovery_mode == 2)) {
+        EmitEvent({"error", false, 0, "The embedded player could not recover its graphics device."});
+        continue;
+      }
+      if (device_ && FAILED(device_->GetDeviceRemovedReason())) {
+        if (!CreateGraphicsDevice(false)) {
+          EmitEvent({"error", false, 0, "The embedded player lost its graphics device."});
+          continue;
+        }
+      }
+
       const uint64_t update_flags = api_.render_context_update(render_context_);
       if ((update_flags & MPV_RENDER_UPDATE_FRAME) == 0) continue;
 
       const uint32_t width = width_.load();
       const uint32_t height = height_.load();
+      uint32_t selected = static_cast<uint32_t>(slots_.size());
+      {
+        std::scoped_lock lock(slot_mutex_);
+        for (uint32_t index = 0; index < slots_.size(); ++index) {
+          if (!slots_[index].busy && EnsureSlotLocked(index, width, height)) {
+            selected = index;
+            slots_[selected].busy = true;
+            break;
+          }
+        }
+      }
+      // Do not perform the expensive software render and full-frame upload
+      // when Chromium is still using every shared texture.
+      if (selected == slots_.size()) continue;
+
       const size_t stride = static_cast<size_t>(width) * 4;
       pixels_.resize(stride * height);
       int size[] = {static_cast<int>(width), static_cast<int>(height)};
@@ -385,29 +549,35 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       };
       const int render_result = api_.render_context_render(render_context_, params);
       if (render_result < 0) {
+        {
+          std::scoped_lock lock(slot_mutex_);
+          slots_[selected].busy = false;
+        }
         EmitEvent({"error", false, 0, "libmpv could not render a video frame."});
         continue;
       }
       // Electron imports this resource as an alpha-bearing BGRA texture.
       // Some libswscale paths leave alpha undefined even for BGRA output,
       // which Chromium correctly composites as a transparent black frame.
-      for (size_t offset = 3; offset < pixels_.size(); offset += 4) {
-        pixels_[offset] = 0xff;
+      auto* opaque_pixels = reinterpret_cast<uint32_t*>(pixels_.data());
+      const size_t pixel_count = pixels_.size() / sizeof(uint32_t);
+      for (size_t index = 0; index < pixel_count; ++index) {
+        opaque_pixels[index] |= 0xff000000u;
       }
 
-      uint32_t selected = static_cast<uint32_t>(slots_.size());
       HANDLE shared_handle = nullptr;
       {
         std::scoped_lock lock(slot_mutex_);
-        for (uint32_t index = 0; index < slots_.size(); ++index) {
-          if (!slots_[index].busy && EnsureSlotLocked(index, width, height)) {
-            selected = index;
-            break;
-          }
-        }
-        if (selected == slots_.size()) continue;
         auto& slot = slots_[selected];
-        slot.busy = true;
+        if (
+          !slot.texture ||
+          slot.width != width ||
+          slot.height != height ||
+          slot.device_generation != device_generation_
+        ) {
+          slot.busy = false;
+          continue;
+        }
         shared_handle = slot.handle;
         const HRESULT acquire_result = slot.keyed_mutex->AcquireSync(0, 1'000);
         if (FAILED(acquire_result)) {
@@ -433,6 +603,13 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         );
         device_context_->Flush();
         slot.keyed_mutex->ReleaseSync(0);
+        if (FAILED(device_->GetDeviceRemovedReason())) {
+          slot.busy = false;
+          ResetSlotLocked(slot);
+          graphics_recovery_requested_ = 1;
+          RequestRender();
+          continue;
+        }
       }
 
       auto* frame = new SharedFrame{
@@ -457,8 +634,11 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       );
       if (status != napi_ok) {
         delete frame;
-        std::scoped_lock lock(slot_mutex_);
-        slots_[selected].busy = false;
+        {
+          std::scoped_lock lock(slot_mutex_);
+          slots_[selected].busy = false;
+        }
+        RequestRender();
       }
     }
   }
@@ -543,6 +723,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     device_context_.Reset();
     device_.Reset();
     render_requested_ = false;
+    graphics_recovery_requested_ = 0;
     if (was_running) EmitEvent({"idle"});
   }
 
@@ -559,7 +740,12 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   std::atomic<uint32_t> height_{720};
   std::atomic<bool> running_{false};
   std::atomic<bool> render_requested_{false};
+  std::atomic<int> graphics_recovery_requested_{0};
   std::atomic<uint64_t> sequence_{0};
+  uint32_t adapter_index_ = 0;
+  uint32_t preferred_vendor_id_ = 0;
+  uint32_t preferred_device_id_ = 0;
+  uint64_t device_generation_ = 0;
   std::thread render_thread_;
   std::thread event_thread_;
   std::mutex render_mutex_;

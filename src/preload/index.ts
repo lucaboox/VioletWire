@@ -22,22 +22,32 @@ import type {
   PreferencesApi,
 } from "../shared/preferences";
 
-let lastTextureSequence = -1;
+let newestTextureSequence = -1;
 sharedTexture.setSharedTextureReceiver(async (received, sequence: unknown) => {
   const imported = received.importedSharedTexture;
   const frame = imported.getVideoFrame();
+  let bitmap: ImageBitmap | null = null;
   try {
-    if (typeof sequence === "number" && sequence < lastTextureSequence) return;
-    if (typeof sequence === "number") lastTextureSequence = sequence;
+    if (typeof sequence === "number" && sequence <= newestTextureSequence) return;
+    if (typeof sequence === "number") newestTextureSequence = sequence;
+    bitmap = await createImageBitmap(frame);
+    if (typeof sequence === "number" && sequence < newestTextureSequence) return;
     const canvas = document.querySelector<HTMLCanvasElement>("[data-native-texture-canvas]");
     if (!canvas) return;
-    const width = frame.codedWidth;
-    const height = frame.codedHeight;
+    const width = bitmap.width;
+    const height = bitmap.height;
     if (canvas.width !== width) canvas.width = width;
     if (canvas.height !== height) canvas.height = height;
-    const context = canvas.getContext("2d", { alpha: false, desynchronized: true });
-    context?.drawImage(frame, 0, 0, width, height);
+    const bitmapContext = canvas.getContext("bitmaprenderer", { alpha: false });
+    if (bitmapContext) {
+      bitmapContext.transferFromImageBitmap(bitmap);
+      bitmap = null;
+    } else {
+      const context = canvas.getContext("2d", { alpha: false, desynchronized: true });
+      context?.drawImage(bitmap, 0, 0, width, height);
+    }
   } finally {
+    bitmap?.close();
     frame.close();
     imported.release();
   }
