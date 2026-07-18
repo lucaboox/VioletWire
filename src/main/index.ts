@@ -350,10 +350,6 @@ async function createNativeControlsWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      // The transparent controls/chat window can fully cover the player in
-      // fullscreen. Keep Chromium compositing the imported VideoFrames while
-      // that owned window is above the main renderer.
-      backgroundThrottling: false,
     },
   });
   nativeControlsWindow.setMenu(null);
@@ -387,7 +383,6 @@ function destroyNativeControlsWindow(): void {
   nativeEmotePickerOpen = false;
   nativeEmotePickerBounds = null;
   nativeControlsContext = null;
-  lastPlayerBounds = null;
 }
 
 async function openChannelActionWindow(
@@ -677,6 +672,10 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The transparent controls/chat window can fully cover the player in
+      // fullscreen. Keep Chromium compositing the imported VideoFrames while
+      // that owned window is above the main renderer.
+      backgroundThrottling: false,
     },
   });
 
