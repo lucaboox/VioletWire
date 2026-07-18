@@ -56,12 +56,13 @@ input {
   position: absolute;
   z-index: 120;
   right: 12px;
-  bottom: 72px;
+  bottom: 104px;
 }
 
 .native-detached-emote-picker .vw-emote-picker {
   right: 0;
   bottom: 0;
+  max-height: min(700px, calc(100vh - 124px));
 }
 
 .controls-gradient {
