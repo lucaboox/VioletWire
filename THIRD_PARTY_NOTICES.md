@@ -1,7 +1,24 @@
 # Third-party notices
 
 VioletWire is an independent application and is not affiliated with Twitch,
-7TV, Streamlink, or mpv.
+7TV, FrankerFaceZ, BetterTTV, Streamlink, or mpv.
+
+The GNU General Public License v3.0 or later in the repository root applies
+only to VioletWire-authored source code. The software and assets listed below
+retain their original licenses and are not relicensed under the GPL.
+
+## Emote-provider logos
+
+The 7TV, FrankerFaceZ, BetterTTV, and Twitch marks shown in VioletWire's emote
+picker are adapted from the SVG logo assets in the
+[7TV Extension repository](https://github.com/SevenTV/Extension/tree/master/src/assets/svg/logos).
+That repository is distributed under the
+[Apache License 2.0 with Commons Clause](https://github.com/SevenTV/Extension/blob/master/LICENSE.md).
+
+The marks are used only to identify their respective emote providers. Their use
+does not imply affiliation with or endorsement by 7TV, FrankerFaceZ, BetterTTV,
+or Twitch. All provider names and marks remain the property of their respective
+owners.
 
 ## Streamlink
 

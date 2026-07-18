@@ -2,6 +2,7 @@ import {
   Globe2,
   MoveDiagonal2,
   Search,
+  Sparkles,
   Star,
   type LucideIcon,
 } from "lucide-react";
@@ -12,8 +13,15 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { TwitchPickerEmote } from "../../shared/chat";
-import type { ProviderEmote } from "../../shared/emotes";
+import type {
+  EmoteProvider,
+  ProviderEmote,
+} from "../../shared/emotes";
 import "./emote-picker.css";
+import {
+  ProviderLogo,
+  type ProviderLogoName,
+} from "./ProviderLogo";
 
 type Provider = "favorites" | "7tv" | "twitch" | "ffz" | "bttv";
 
@@ -21,9 +29,11 @@ interface PickerEmote {
   key: string;
   name: string;
   imageUrl: string;
-  provider: "7TV" | "Twitch";
+  provider: "7TV" | "FrankerFaceZ" | "BetterTTV" | "Twitch";
+  providerId: EmoteProvider | "twitch";
   scope: "channel" | "global";
   subscriptionOnly: boolean;
+  modifier: boolean;
   wide: boolean;
   ownerId?: string;
   ownerName?: string;
@@ -35,8 +45,8 @@ interface EmotePickerProps {
   channelName: string;
   onClose(): void;
   onSelect(name: string): void;
-  sevenTvChannelEmoteNames: Set<string>;
-  sevenTvEmotes: Map<string, ProviderEmote>;
+  providerChannelEmoteNames: Map<EmoteProvider, Set<string>>;
+  providerEmotes: Map<EmoteProvider, Map<string, ProviderEmote>>;
   twitchEmotes: TwitchPickerEmote[];
 }
 
@@ -44,7 +54,7 @@ interface Section {
   id: string;
   label: string;
   emotes: PickerEmote[];
-  scope?: "channel" | "global";
+  scope?: "channel" | "global" | "effect";
   avatarUrl?: string;
 }
 
@@ -94,11 +104,15 @@ function providerLabel(provider: Provider): string {
 function ProviderMark({
   icon: Icon,
   label,
+  logo,
 }: {
   icon?: LucideIcon;
   label: string;
+  logo?: ProviderLogoName;
 }) {
-  return Icon ? <Icon size={17} /> : <span>{label}</span>;
+  if (Icon) return <Icon size={17} />;
+  if (logo) return <ProviderLogo name={logo} />;
+  return <span>{label}</span>;
 }
 
 export function EmotePicker({
@@ -106,8 +120,8 @@ export function EmotePicker({
   channelName,
   onClose,
   onSelect,
-  sevenTvChannelEmoteNames,
-  sevenTvEmotes,
+  providerChannelEmoteNames,
+  providerEmotes,
   twitchEmotes,
 }: EmotePickerProps) {
   const [provider, setProvider] = useState<Provider>("7tv");
@@ -123,35 +137,49 @@ export function EmotePicker({
       name: emote.name,
       imageUrl: emote.imageUrl,
       provider: "Twitch",
+      providerId: "twitch",
       scope: emote.scope,
       subscriptionOnly: emote.subscriptionOnly,
+      modifier: false,
       wide: false,
       ownerId: emote.ownerId,
       ownerName: emote.ownerName,
       ownerImageUrl: emote.ownerImageUrl,
     }));
-    const sevenTv: PickerEmote[] = [...sevenTvEmotes.values()]
-      .map((emote) => {
+    const thirdParty: PickerEmote[] = (["7tv", "ffz", "bttv"] as const).map((providerId) => {
+      const channelNames = providerChannelEmoteNames.get(providerId) ?? new Set<string>();
+      return [...(providerEmotes.get(providerId)?.values() ?? [])].map((emote) => {
         const imageUrl =
           emote.variants.find((variant) => variant.scale === 2)?.url ??
           emote.variants.at(-1)?.url ??
           "";
         const largest = emote.variants.at(-1);
         return {
-          key: `7tv:${emote.id}`,
+          key: `${providerId}:${emote.id}`,
           name: emote.name,
           imageUrl,
-          provider: "7TV" as const,
-          scope: sevenTvChannelEmoteNames.has(emote.name)
+          provider:
+            providerId === "7tv"
+              ? "7TV" as const
+              : providerId === "ffz"
+                ? "FrankerFaceZ" as const
+                : "BetterTTV" as const,
+          providerId,
+          scope: channelNames.has(emote.name)
             ? "channel" as const
             : "global" as const,
           subscriptionOnly: false,
+          modifier: Boolean(emote.modifier),
           wide: (largest?.width ?? 0) >= (largest?.height ?? 1) * 1.8,
         };
-      })
-      .filter((emote) => emote.imageUrl);
-    return { twitch, sevenTv, combined: [...sevenTv, ...twitch] };
-  }, [sevenTvChannelEmoteNames, sevenTvEmotes, twitchEmotes]);
+      });
+    }).flat().filter((emote) => emote.imageUrl);
+    return {
+      twitch,
+      thirdParty,
+      combined: [...thirdParty, ...twitch],
+    };
+  }, [providerChannelEmoteNames, providerEmotes, twitchEmotes]);
 
   const sections = useMemo<Section[]>(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -171,12 +199,11 @@ export function EmotePicker({
         emotes: allEmotes.combined.filter((emote) => favorites.has(emote.key)),
       }];
     }
-    const source = provider === "7tv"
-      ? allEmotes.sevenTv
+    const source = provider === "7tv" || provider === "ffz" || provider === "bttv"
+      ? allEmotes.thirdParty.filter((emote) => emote.providerId === provider)
       : provider === "twitch"
         ? allEmotes.twitch
         : [];
-    if (provider === "ffz" || provider === "bttv") return [];
     if (provider === "twitch") {
       const grouped = new Map<string, Section>();
       for (const emote of source) {
@@ -200,20 +227,29 @@ export function EmotePicker({
       }
       return [...grouped.values()];
     }
-    return [
+    const providerSections: Section[] = [
       {
         id: `${provider}-channel`,
         label: channelName || "Channel emotes",
         scope: "channel",
-        emotes: source.filter((emote) => emote.scope === "channel"),
+        emotes: source.filter((emote) => !emote.modifier && emote.scope === "channel"),
       },
       {
         id: `${provider}-global`,
         label: "Global emotes",
         scope: "global",
-        emotes: source.filter((emote) => emote.scope === "global"),
+        emotes: source.filter((emote) => !emote.modifier && emote.scope === "global"),
+      },
+      {
+        id: `${provider}-effects`,
+        label: "Effects",
+        scope: "effect",
+        emotes: source.filter((emote) => emote.modifier),
       },
     ];
+    return providerSections.filter(
+      (section) => section.scope !== "effect" || section.emotes.length > 0,
+    );
   }, [allEmotes, channelName, favorites, provider, query]);
 
   function toggleFavorite(emote: PickerEmote) {
@@ -232,7 +268,7 @@ export function EmotePicker({
       return;
     }
     onSelect(emote.name);
-    onClose();
+    if (!emote.modifier) onClose();
   }
 
   function beginResize(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -272,12 +308,18 @@ export function EmotePicker({
     sectionHosts.current.get(sectionId)?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
-  const providers: Array<{ id: Provider; icon?: LucideIcon; mark: string; disabled?: boolean }> = [
+  const providers: Array<{
+    id: Provider;
+    icon?: LucideIcon;
+    logo?: ProviderLogoName;
+    mark: string;
+    disabled?: boolean;
+  }> = [
     { id: "favorites", icon: Star, mark: "" },
-    { id: "7tv", mark: "7TV" },
-    { id: "ffz", mark: "FFZ", disabled: true },
-    { id: "bttv", mark: "BT", disabled: true },
-    { id: "twitch", mark: "T" },
+    { id: "7tv", logo: "7tv", mark: "7TV" },
+    { id: "ffz", logo: "ffz", mark: "FFZ" },
+    { id: "bttv", logo: "bttv", mark: "BTTV" },
+    { id: "twitch", logo: "twitch", mark: "Twitch" },
   ];
 
   return (
@@ -297,13 +339,7 @@ export function EmotePicker({
 
       <div className="vw-emote-body">
         <div className="vw-emote-scroll" ref={scrollHost}>
-          {(provider === "ffz" || provider === "bttv") && !query.trim() ? (
-            <div className="vw-emote-unavailable">
-              <strong>{providerLabel(provider)}</strong>
-              <span>Provider support is coming next.</span>
-            </div>
-          ) : (
-            sections.map((section) => (
+          {sections.map((section) => (
               <section
                 className="vw-emote-section"
                 key={section.id}
@@ -322,21 +358,33 @@ export function EmotePicker({
                       aria-label={`${emote.name}, ${emote.provider}${favorites.has(emote.key) ? ", favorited" : ""}`}
                       className={[
                         emote.wide ? "wide" : "",
+                        emote.modifier ? "effect" : "",
                         emote.subscriptionOnly ? "subscription-only" : "",
                         favorites.has(emote.key) ? "favorite" : "",
                       ].filter(Boolean).join(" ")}
                       key={emote.key}
                       onClick={(event) => handleEmoteClick(event, emote)}
-                      title={`${emote.name} · ${emote.provider} · Alt-click to ${favorites.has(emote.key) ? "unfavorite" : "favorite"}`}
+                      title={
+                        emote.modifier
+                          ? `${emote.name} · ${emote.provider} effect · Applies to an adjacent emote`
+                          : `${emote.name} · ${emote.provider} · Alt-click to ${favorites.has(emote.key) ? "unfavorite" : "favorite"}`
+                      }
                       type="button"
                     >
-                      <img
-                        alt=""
-                        decoding="async"
-                        fetchPriority={index < 24 ? "high" : "auto"}
-                        loading="eager"
-                        src={emote.imageUrl}
-                      />
+                      {emote.modifier ? (
+                        <span className="effect-mark">
+                          <Sparkles size={14} />
+                          <small>{emote.name}</small>
+                        </span>
+                      ) : (
+                        <img
+                          alt=""
+                          decoding="async"
+                          fetchPriority={index < 24 ? "high" : "auto"}
+                          loading="eager"
+                          src={emote.imageUrl}
+                        />
+                      )}
                       {favorites.has(emote.key) && <Star className="favorite-mark" size={10} />}
                     </button>
                   ))}
@@ -349,8 +397,7 @@ export function EmotePicker({
                   )}
                 </div>
               </section>
-            ))
-          )}
+            ))}
         </div>
 
         {!query.trim() && sections.some((section) => section.scope) && (
@@ -367,6 +414,8 @@ export function EmotePicker({
                   <img alt="" src={section.avatarUrl ?? channelAvatarUrl} />
                 ) : section.scope === "channel" ? (
                   <span>{section.label.slice(0, 1).toUpperCase()}</span>
+                ) : section.scope === "effect" ? (
+                  <Sparkles size={18} />
                 ) : (
                   <Globe2 size={18} />
                 )}
@@ -392,7 +441,7 @@ export function EmotePicker({
             title={`${providerLabel(item.id)}${item.disabled ? " · Coming soon" : ""}`}
             type="button"
           >
-            <ProviderMark icon={item.icon} label={item.mark} />
+            <ProviderMark icon={item.icon} label={item.mark} logo={item.logo} />
           </button>
         ))}
       </nav>

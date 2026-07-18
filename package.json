@@ -1,9 +1,10 @@
 {
   "name": "violetwire",
-  "version": "0.1.0-alpha.1",
+  "version": "0.2.0-alpha.1",
   "private": true,
   "description": "A native-feeling Windows Twitch viewer",
   "author": "VioletWire contributors",
+  "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
     "url": "https://github.com/lucaboox/VioletWire.git"

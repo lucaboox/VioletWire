@@ -3,6 +3,7 @@ import {
   Fragment,
   memo,
   type ReactNode,
+  type CSSProperties,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -56,7 +57,7 @@ import type {
 } from "../../shared/twitch";
 import type { EmoteSetResult } from "../../shared/emotes";
 import type { AppPreferences } from "../../shared/preferences";
-import type { ProviderEmote } from "../../shared/emotes";
+import type { EmoteProvider, ProviderEmote } from "../../shared/emotes";
 import type {
   ChatBadgeAsset,
   ChatConnectionState,
@@ -65,9 +66,17 @@ import type {
 } from "../../shared/chat";
 import { formatChatTimestamp, messageMentionsLogin } from "../../shared/chat";
 import { applyChatMessage } from "../../shared/chat-messages";
+import { getChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
+import {
+  captureChatScrollAnchor,
+  restoreChatScrollAnchor,
+  type ChatScrollAnchor,
+} from "./chat-scroll";
 import { EmotePicker } from "./EmotePicker";
+import { ChatEmote } from "./ChatEmote";
+import { renderProviderText } from "./ProviderEmoteText";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
 
@@ -79,6 +88,15 @@ type ChatLayout = "hidden" | ChatPresentation;
 const signedOutState: TwitchAuthState = { status: "signed-out", account: null };
 const anonymousPlaybackState: PlaybackSessionState = { linked: false };
 const emptySearchResults: TwitchSearchResults = { channels: [], categories: [] };
+const emoteProviders: EmoteProvider[] = ["7tv", "ffz", "bttv"];
+
+function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>> {
+  return new Map(emoteProviders.map((provider) => [provider, new Map()]));
+}
+
+function emptyProviderChannelNames(): Map<EmoteProvider, Set<string>> {
+  return new Map(emoteProviders.map((provider) => [provider, new Set()]));
+}
 
 function formatUptime(startedAt: string | undefined, now: number): string {
   if (!startedAt) return "";
@@ -88,58 +106,48 @@ function formatUptime(startedAt: string | undefined, now: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-function renderSevenTvText(text: string, emotes: Map<string, ProviderEmote>, key: string): ReactNode[] {
-  return text.split(/(\s+)/).map((token, index) => {
-    const emote = emotes.get(token);
-    const variant = emote?.variants.find((item) => item.scale === 2) ?? emote?.variants.at(-1);
-    return variant ? (
-      <img
-        className="chat-emote"
-        key={`${key}-${index}`}
-        src={variant.url}
-        alt={emote?.name ?? token}
-        title={`${emote?.name ?? token} · 7TV`}
-        loading="lazy"
-      />
-    ) : (
-      token
-    );
-  });
-}
-
 function renderChatMessageText(
   message: ChatMessage,
-  sevenTvEmotes: Map<string, ProviderEmote>,
+  providerEmotes: Map<string, ProviderEmote>,
 ): ReactNode[] {
   const ranges = [...message.twitchEmotes].sort((left, right) => left.start - right.start);
-  if (ranges.length === 0) return renderSevenTvText(message.text, sevenTvEmotes, message.id);
+  if (ranges.length === 0) {
+    return renderProviderText(message.text, providerEmotes, message.id, "chat-emote");
+  }
   const output: ReactNode[] = [];
   let cursor = 0;
   ranges.forEach((range, index) => {
     if (range.start > cursor) {
       output.push(
-        ...renderSevenTvText(
+        ...renderProviderText(
           message.text.slice(cursor, range.start),
-          sevenTvEmotes,
+          providerEmotes,
           `${message.id}-text-${index}`,
+          "chat-emote",
         ),
       );
     }
     const name = message.text.slice(range.start, range.end + 1);
     output.push(
-      <img
+      <ChatEmote
         className="chat-emote"
+        imageUrl={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`}
         key={`${message.id}-twitch-${index}`}
-        src={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`}
-        alt={name}
-        title={`${name} · Twitch`}
-        loading="lazy"
+        name={name}
+        provider="twitch"
       />,
     );
     cursor = range.end + 1;
   });
   if (cursor < message.text.length) {
-    output.push(...renderSevenTvText(message.text.slice(cursor), sevenTvEmotes, `${message.id}-tail`));
+    output.push(
+      ...renderProviderText(
+        message.text.slice(cursor),
+        providerEmotes,
+        `${message.id}-tail`,
+        "chat-emote",
+      ),
+    );
   }
   return output;
 }
@@ -181,7 +189,7 @@ interface ChatMessageRowProps {
   deletedRevealed: boolean;
   onRevealDeleted: (id: string) => void;
   onReply: (message: ChatMessage) => void;
-  sevenTvEmotes: Map<string, ProviderEmote>;
+  providerEmotes: Map<string, ProviderEmote>;
 }
 
 // Memoized so a new chat message only renders its own row instead of
@@ -195,10 +203,57 @@ const ChatMessageRow = memo(function ChatMessageRow({
   deletedRevealed,
   onRevealDeleted,
   onReply,
-  sevenTvEmotes,
+  providerEmotes,
 }: ChatMessageRowProps) {
+  if (message.notice) {
+    return (
+      <div
+        className="native-chat-message chat-notice-message"
+        data-chat-message-id={message.id}
+      >
+        <div className="chat-notice-heading">
+          <Star fill="currentColor" size={15} />
+          <strong>{message.notice.systemMessage}</strong>
+        </div>
+        <div className="chat-notice-facts">
+          {message.notice.tier && <span>{message.notice.tier}</span>}
+          {message.notice.cumulativeMonths && (
+            <span>{message.notice.cumulativeMonths} months</span>
+          )}
+          {message.notice.streakMonths && (
+            <span>{message.notice.streakMonths} month streak</span>
+          )}
+          {message.notice.giftCount && <span>{message.notice.giftCount} gifts</span>}
+        </div>
+        {message.text && (
+          <div className="chat-notice-text">
+            {showTimestamp && (
+              <time dateTime={new Date(message.sentAt).toISOString()}>
+                {formatChatTimestamp(message.sentAt)}
+              </time>
+            )}
+            <strong
+              style={{
+                color: readableUsernameColor(
+                  message.color,
+                  oledMode ? "#000000" : "#18181b",
+                ),
+              }}
+            >
+              {message.displayName}
+            </strong>
+            <span className="chat-colon">:</span>{" "}
+            {renderChatMessageText(message, providerEmotes)}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
-    <div className={mentioned ? "native-chat-message mentioned" : "native-chat-message"}>
+    <div
+      className={mentioned ? "native-chat-message mentioned" : "native-chat-message"}
+      data-chat-message-id={message.id}
+    >
       {message.reply && (
         <span
           className="chat-reply-parent"
@@ -254,7 +309,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
             &lt;deleted&gt;
           </button>
         ) : (
-          renderChatMessageText(message, sevenTvEmotes)
+          renderChatMessageText(message, providerEmotes)
         )}
       </span>
       {!message.deleted && (
@@ -274,6 +329,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
 
 export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("home");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [playerReturnSection, setPlayerReturnSection] = useState<AppSection>("home");
   const [channelInput, setChannelInput] = useState("");
   const [topSearchResults, setTopSearchResults] =
@@ -322,8 +378,10 @@ export function App() {
     useState<ChatConnectionState>("disconnected");
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
-  const [sevenTvEmotes, setSevenTvEmotes] = useState<Map<string, ProviderEmote>>(new Map());
-  const [sevenTvChannelEmoteNames, setSevenTvChannelEmoteNames] = useState<Set<string>>(new Set());
+  const [providerEmoteMaps, setProviderEmoteMaps] = useState(emptyProviderEmoteMaps);
+  const [providerChannelNames, setProviderChannelNames] = useState(
+    emptyProviderChannelNames,
+  );
   const [twitchBadges, setTwitchBadges] = useState<Map<string, ChatBadgeAsset>>(new Map());
   const [twitchPickerEmotes, setTwitchPickerEmotes] = useState<TwitchPickerEmote[]>([]);
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
@@ -335,6 +393,17 @@ export function App() {
     const stored = Number(window.localStorage.getItem("glint.chat.historyLimit"));
     return Number.isInteger(stored) && stored >= 20 && stored <= 100 ? stored : 20;
   });
+  const [chatFontSize, setChatFontSize] = useState(() => {
+    const stored = Number(window.localStorage.getItem("glint.chat.fontSize"));
+    return Number.isInteger(stored) && stored >= 14 && stored <= 25 ? stored : 14;
+  });
+  const [chatEmoteSize, setChatEmoteSize] = useState(() => {
+    const stored = Number(window.localStorage.getItem("glint.chat.emoteSize"));
+    return Number.isInteger(stored) && stored >= 18 && stored <= 48 ? stored : 27;
+  });
+  const [chatOnLeft, setChatOnLeft] = useState(
+    () => window.localStorage.getItem("glint.chat.onLeft") === "true",
+  );
   const [revealedDeletedMessages, setRevealedDeletedMessages] = useState<Set<string>>(
     new Set(),
   );
@@ -355,6 +424,9 @@ export function App() {
     preferredPlayerMode: preferredMode,
     chatTimestamps,
     chatHistoryLimit,
+    chatFontSize,
+    chatEmoteSize,
+    chatOnLeft,
     chatOverlayOpacity: chatOpacity,
     mentionSoundEnabled,
     oledMode,
@@ -373,9 +445,22 @@ export function App() {
     behindLive: false,
     quality: "best",
   });
+  const chatProviderEmotes = useMemo(() => {
+    const combined = new Map<string, ProviderEmote>();
+    // Channel sets win over global sets in each service; provider priority
+    // follows the picker order so duplicate names resolve predictably.
+    for (const provider of emoteProviders) {
+      for (const emote of providerEmoteMaps.get(provider)?.values() ?? []) {
+        if (!combined.has(emote.name)) combined.set(emote.name, emote);
+      }
+    }
+    return combined;
+  }, [providerEmoteMaps]);
   const playerHost = useRef<HTMLDivElement>(null);
   const chatHost = useRef<HTMLDivElement>(null);
   const chatMessagesHost = useRef<HTMLDivElement>(null);
+  const chatScrollAnchor = useRef<ChatScrollAnchor | null>(null);
+  const chatAutoScrollRef = useRef(true);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
   const mentionSettings = useRef({ enabled: false, login: "" });
@@ -385,6 +470,34 @@ export function App() {
   const categoryStreamLoadPending = useRef(false);
   const nativeControlsTimer = useRef<number | null>(null);
   const lastPlayerPointerPosition = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!emotePickerOpen && !chatSettingsOpen) return;
+    const closeOpenChatMenus = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        emotePickerOpen &&
+        !target.closest(".emote-picker-anchor") &&
+        !target.closest(".native-detached-emote-picker")
+      ) {
+        setEmotePickerOpen(false);
+        if (activeMode === "native") {
+          window.desktop.player.setNativeEmotePicker(false);
+        }
+      }
+      if (
+        chatSettingsOpen &&
+        !target.closest(".chat-overlay-tools") &&
+        !target.closest(".chat-header-actions")
+      ) {
+        setChatSettingsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOpenChatMenus, true);
+    return () => document.removeEventListener("pointerdown", closeOpenChatMenus, true);
+  }, [activeMode, chatSettingsOpen, emotePickerOpen]);
+
   const revealNativeControls = useCallback(() => {
     if (!activeChannel || activeMode !== "native") return;
     setNativeControlsVisible(true);
@@ -402,6 +515,19 @@ export function App() {
       ? `${streamMetadata?.displayName ?? activeChannel} - VioletWire`
       : "VioletWire";
   }, [activeChannel, streamMetadata?.displayName]);
+
+  useEffect(() => {
+    window.desktop.player.setModalOpen(settingsOpen || topSearchOpen);
+  }, [settingsOpen, topSearchOpen]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSettingsOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [settingsOpen]);
 
   const loadNextBrowseCategories = useCallback(async () => {
     if (!browseCategoryCursor || browseCategoryLoadPending.current) return;
@@ -506,7 +632,15 @@ export function App() {
       window.removeEventListener("resize", syncPlayerBounds);
       window.removeEventListener("resize", syncChatBounds);
     };
-  }, [activeChannel, activeMode, chatPresentation, chatVisible, fullscreen, theaterMode]);
+  }, [
+    activeChannel,
+    activeMode,
+    chatOnLeft,
+    chatPresentation,
+    chatVisible,
+    fullscreen,
+    theaterMode,
+  ]);
 
   useEffect(() => {
     void refreshNativeAvailability();
@@ -520,6 +654,9 @@ export function App() {
       setPreferredMode(preferences.preferredPlayerMode);
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
+      setChatFontSize(preferences.chatFontSize);
+      setChatEmoteSize(preferences.chatEmoteSize);
+      setChatOnLeft(preferences.chatOnLeft);
       setChatOpacity(preferences.chatOverlayOpacity);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
       setOledMode(preferences.oledMode);
@@ -544,6 +681,9 @@ export function App() {
         preferredPlayerMode: preferredMode,
         chatTimestamps,
         chatHistoryLimit,
+        chatFontSize,
+        chatEmoteSize,
+        chatOnLeft,
         chatOverlayOpacity: chatOpacity,
         mentionSoundEnabled,
         oledMode,
@@ -551,6 +691,9 @@ export function App() {
       .catch(() => undefined);
   }, [
     chatHistoryLimit,
+    chatFontSize,
+    chatEmoteSize,
+    chatOnLeft,
     chatOpacity,
     chatTimestamps,
     mentionSoundEnabled,
@@ -591,6 +734,9 @@ export function App() {
       ) {
         playMentionPing();
       }
+      if (!chatAutoScrollRef.current && chatMessagesHost.current) {
+        chatScrollAnchor.current = captureChatScrollAnchor(chatMessagesHost.current);
+      }
       setChatMessages((current) => applyChatMessage(current, message));
     });
     const removeStateListener = window.desktop.chat.onState(setChatConnectionState);
@@ -620,25 +766,37 @@ export function App() {
   useEffect(() => {
     if (!activeChannel) return;
     let cancelled = false;
-    const requests = [window.desktop.emotes.getSevenTvGlobal()];
-    if (streamMetadata?.broadcasterId) {
-      requests.push(window.desktop.emotes.getSevenTvChannel(streamMetadata.broadcasterId));
+    const broadcasterId = streamMetadata?.broadcasterId;
+    const requests: Array<Promise<EmoteSetResult>> = [
+      window.desktop.emotes.getSevenTvGlobal(),
+      window.desktop.emotes.getFfzGlobal(),
+      window.desktop.emotes.getBttvGlobal(),
+    ];
+    if (broadcasterId) {
+      requests.push(
+        window.desktop.emotes.getSevenTvChannel(broadcasterId),
+        window.desktop.emotes.getFfzChannel(broadcasterId),
+        window.desktop.emotes.getBttvChannel(broadcasterId),
+      );
     }
     void Promise.allSettled(requests).then((results) => {
       if (cancelled) return;
-      const combined = new Map<string, ProviderEmote>();
-      const channelNames = new Set<string>();
-      // Channel results are last in the request list. Read them first so the
-      // picker shows channel-specific emotes before the large global set.
+      const nextMaps = emptyProviderEmoteMaps();
+      const nextChannelNames = emptyProviderChannelNames();
+      // Read channel responses first so channel assignments win name conflicts
+      // within the same provider.
       for (const result of [...results].reverse()) {
         if (result.status !== "fulfilled") continue;
         for (const emote of result.value.emotes) {
-          if (!combined.has(emote.name)) combined.set(emote.name, emote);
-          if (result.value.scope === "channel") channelNames.add(emote.name);
+          const providerMap = nextMaps.get(result.value.provider)!;
+          if (!providerMap.has(emote.name)) providerMap.set(emote.name, emote);
+          if (result.value.scope === "channel") {
+            nextChannelNames.get(result.value.provider)!.add(emote.name);
+          }
         }
       }
-      setSevenTvEmotes(combined);
-      setSevenTvChannelEmoteNames(channelNames);
+      setProviderEmoteMaps(nextMaps);
+      setProviderChannelNames(nextChannelNames);
     });
     return () => {
       cancelled = true;
@@ -669,10 +827,20 @@ export function App() {
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
     -1,
   );
+  const chatMentionCandidates = useMemo(
+    () => getChatMentionCandidates(chatMessages, "", 100),
+    [chatMessages],
+  );
 
   useLayoutEffect(() => {
     const host = chatMessagesHost.current;
-    if (host && chatAutoScroll) host.scrollTop = host.scrollHeight;
+    if (!host) return;
+    if (chatAutoScroll) {
+      host.scrollTop = host.scrollHeight;
+    } else if (chatScrollAnchor.current) {
+      restoreChatScrollAnchor(host, chatScrollAnchor.current);
+      chatScrollAnchor.current = null;
+    }
   }, [chatAutoScroll, chatMessages]);
 
   useEffect(() => {
@@ -717,13 +885,16 @@ export function App() {
     const host = chatMessagesHost.current;
     if (!host) return;
     const distanceFromBottom = host.scrollHeight - host.scrollTop - host.clientHeight;
-    setChatAutoScroll(distanceFromBottom < 36);
+    const atBottom = distanceFromBottom < 36;
+    chatAutoScrollRef.current = atBottom;
+    setChatAutoScroll(atBottom);
   }
 
   function scrollChatToCurrent() {
     const host = chatMessagesHost.current;
     if (!host) return;
     host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
+    chatAutoScrollRef.current = true;
     setChatAutoScroll(true);
   }
 
@@ -935,6 +1106,7 @@ export function App() {
     if (!activeChannel) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target;
       if (
         target instanceof Element &&
@@ -1115,7 +1287,7 @@ export function App() {
 
   async function beginSignIn() {
     if (authState.status === "unconfigured") {
-      setActiveSection("settings");
+      setSettingsOpen(true);
       setNotice("Add your Twitch developer Client ID, then sign in.");
       return;
     }
@@ -1232,18 +1404,49 @@ export function App() {
     await openBrowseCategory(category);
   }
 
+  async function chooseStreamCategory() {
+    const metadata = streamMetadata;
+    if (!metadata?.categoryId || !metadata.category) return;
+
+    try {
+      let category = browseCategories.find((item) => item.id === metadata.categoryId);
+      if (!category) {
+        const result = await window.desktop.twitch.getBrowseCategories(metadata.category);
+        category = result.items.find((item) => item.id === metadata.categoryId);
+      }
+      category ??= {
+        id: metadata.categoryId,
+        name: metadata.category,
+        boxArtUrl: `https://static-cdn.jtvnw.net/ttv-boxart/${encodeURIComponent(metadata.categoryId)}-570x760.jpg`,
+      };
+
+      await closePlayer();
+      setActiveSection("browse");
+      await openBrowseCategory(category);
+    } catch (reason) {
+      setNotice(
+        reason instanceof Error
+          ? reason.message
+          : `Unable to open the ${metadata.category} category.`,
+      );
+    }
+  }
+
   function chooseSearchChannel(login: string) {
     setTopSearchOpen(false);
     void watchChannel(login);
   }
 
   async function watchChannel(channel: string) {
+    setSettingsOpen(false);
     setError(null);
     setStreamMetadata(null);
     setChatMessages([]);
     setReplyingTo(null);
     setEmotePickerOpen(false);
     setRevealedDeletedMessages(new Set());
+    chatAutoScrollRef.current = true;
+    chatScrollAnchor.current = null;
     setChatAutoScroll(true);
     setChannelInput(channel);
     try {
@@ -1283,6 +1486,11 @@ export function App() {
   }
 
   async function navigateTo(section: AppSection) {
+    if (section === "settings") {
+      setSettingsOpen(true);
+      return;
+    }
+    setSettingsOpen(false);
     if (activeChannel) await closePlayer();
     if (section === "browse" && activeSection === "browse") {
       setSelectedBrowseCategory(null);
@@ -1429,22 +1637,27 @@ export function App() {
       className={[
         "app-shell",
         oledMode ? "oled-mode" : "",
+        chatOnLeft ? "chat-left" : "",
         theaterMode ? "theater-mode" : "",
         fullscreen ? "fullscreen-mode" : "",
         fullscreen && !nativeControlsVisible ? "controls-hidden" : "",
       ].join(" ")}
+      style={{
+        "--chat-font-size": `${chatFontSize}px`,
+        "--chat-emote-size": `${chatEmoteSize}px`,
+      } as CSSProperties}
     >
       {notice && (
         <div className="app-toast" key={notice} role="status" aria-live="polite">
           {notice}
         </div>
       )}
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark"><img alt="" src={violetWireIcon} /></span>
-          <span>VioletWire</span>
-        </div>
+      <div className="brand">
+        <span className="brand-mark"><img alt="" src={violetWireIcon} /></span>
+        <span>VioletWire</span>
+      </div>
 
+      <aside className="sidebar">
         <section className="followed-rail" aria-labelledby="followed-heading">
           <div className="rail-heading">
             <span id="followed-heading">Followed channels</span>
@@ -1648,7 +1861,7 @@ export function App() {
             className="sign-in"
             disabled={authBusy}
             onClick={() =>
-              authState.status === "signed-in" ? void navigateTo("settings") : void beginSignIn()
+              authState.status === "signed-in" ? setSettingsOpen(true) : void beginSignIn()
             }
             type="button"
             title={authState.status === "signed-in" ? "Account settings" : "Sign in with Twitch"}
@@ -1669,14 +1882,14 @@ export function App() {
             )}
           </button>
           <button
-            aria-current={activeSection === "settings" ? "page" : undefined}
+            aria-current={settingsOpen ? "page" : undefined}
             aria-label="Settings"
             className={
-              activeSection === "settings"
+              settingsOpen
                 ? "top-settings-button active"
                 : "top-settings-button"
             }
-            onClick={() => void navigateTo("settings")}
+            onClick={() => setSettingsOpen((current) => !current)}
             title="Settings"
             type="button"
           >
@@ -1742,13 +1955,39 @@ export function App() {
               )}
               <div className="channel-identity">
                 <div>
-                  <strong>{streamMetadata?.displayName ?? activeChannel}</strong>
                   <span className="stream-title" title={streamMetadata?.title}>
                     {streamMetadata?.title ??
                       (activeMode === "native"
                         ? "Native playback · experimental"
                         : "Official Twitch playback")}
                   </span>
+                  <div className="channel-name-line">
+                    <strong>{streamMetadata?.displayName ?? activeChannel}</strong>
+                    {streamMetadata?.category && (
+                      <button
+                        className="toolbar-category"
+                        disabled={!streamMetadata.categoryId}
+                        onClick={() => void chooseStreamCategory()}
+                        title={`Browse ${streamMetadata.category}`}
+                        type="button"
+                      >
+                        {streamMetadata.category}
+                      </button>
+                    )}
+                    {streamMetadata?.language && (
+                      <span className="toolbar-stream-tag">
+                        {streamMetadata.language.toUpperCase()}
+                      </span>
+                    )}
+                    {streamMetadata?.tags?.slice(0, 2).map((tag) => (
+                      <span className="toolbar-stream-tag" key={tag} title={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                    {streamMetadata?.isMature && (
+                      <span className="toolbar-stream-tag mature">Mature</span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1856,7 +2095,7 @@ export function App() {
                   title="Show stream chat"
                   type="button"
                 >
-                  <ChevronLeft size={19} />
+                  {chatOnLeft ? <ChevronRight size={19} /> : <ChevronLeft size={19} />}
                 </button>
               )}
               <div className={activeMode === "native" ? "video-column native" : "video-column"}>
@@ -1896,7 +2135,6 @@ export function App() {
                     </div>
                   )}
                 </div>
-
               </div>
               {chatVisible && !(activeMode === "native" && chatPresentation === "overlay") && (
                 <aside
@@ -1960,6 +2198,36 @@ export function App() {
                             />
                           </label>
                           <label>
+                            <span>Font size: {chatFontSize}px</span>
+                            <input
+                              aria-label="Chat font size"
+                              max="25"
+                              min="14"
+                              onChange={(event) => setChatFontSize(Number(event.target.value))}
+                              type="range"
+                              value={chatFontSize}
+                            />
+                          </label>
+                          <label>
+                            <span>Emote size: {chatEmoteSize}px</span>
+                            <input
+                              aria-label="Chat emote size"
+                              max="48"
+                              min="18"
+                              onChange={(event) => setChatEmoteSize(Number(event.target.value))}
+                              type="range"
+                              value={chatEmoteSize}
+                            />
+                          </label>
+                          <label className="chat-toggle-setting">
+                            <span>Chat on left</span>
+                            <input
+                              checked={chatOnLeft}
+                              onChange={(event) => setChatOnLeft(event.target.checked)}
+                              type="checkbox"
+                            />
+                          </label>
+                          <label>
                             <span>History: {chatHistoryLimit}</span>
                             <input
                               aria-label="Chat history message count"
@@ -1985,7 +2253,11 @@ export function App() {
                       title="Collapse chat"
                       type="button"
                     >
-                      <ChevronRight size={18} />
+                      {chatOnLeft && chatPresentation === "side" ? (
+                        <ChevronLeft size={18} />
+                      ) : (
+                        <ChevronRight size={18} />
+                      )}
                     </button>
                     <strong>Stream Chat</strong>
                     <div className="chat-header-actions">
@@ -2015,6 +2287,36 @@ export function App() {
                             <input
                               checked={mentionSoundEnabled}
                               onChange={(event) => setMentionSoundEnabled(event.target.checked)}
+                              type="checkbox"
+                            />
+                          </label>
+                          <label>
+                            <span>Font size: {chatFontSize}px</span>
+                            <input
+                              aria-label="Chat font size"
+                              max="25"
+                              min="14"
+                              onChange={(event) => setChatFontSize(Number(event.target.value))}
+                              type="range"
+                              value={chatFontSize}
+                            />
+                          </label>
+                          <label>
+                            <span>Emote size: {chatEmoteSize}px</span>
+                            <input
+                              aria-label="Chat emote size"
+                              max="48"
+                              min="18"
+                              onChange={(event) => setChatEmoteSize(Number(event.target.value))}
+                              type="range"
+                              value={chatEmoteSize}
+                            />
+                          </label>
+                          <label className="chat-toggle-setting">
+                            <span>Chat on left</span>
+                            <input
+                              checked={chatOnLeft}
+                              onChange={(event) => setChatOnLeft(event.target.checked)}
                               type="checkbox"
                             />
                           </label>
@@ -2060,7 +2362,7 @@ export function App() {
                           oledMode={oledMode}
                           onRevealDeleted={revealDeletedMessage}
                           onReply={beginReply}
-                          sevenTvEmotes={sevenTvEmotes}
+                          providerEmotes={chatProviderEmotes}
                           showTimestamp={chatTimestamps}
                         />
                         {index === chatHistoryBoundary && (
@@ -2083,17 +2385,36 @@ export function App() {
                     <form className="native-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>
                       {replyingTo && (
                         <div className="chat-reply-composer">
-                          <span>
-                            Replying to <strong>{replyingTo.displayName}</strong>
-                          </span>
-                          <button
-                            aria-label="Cancel reply"
-                            onClick={() => setReplyingTo(null)}
-                            title="Cancel reply"
-                            type="button"
-                          >
-                            <X size={14} />
-                          </button>
+                          <div className="chat-reply-heading">
+                            <span><Reply size={13} /> Replying to @{replyingTo.login}:</span>
+                            <button
+                              aria-label="Cancel reply"
+                              onClick={() => setReplyingTo(null)}
+                              title="Cancel reply"
+                              type="button"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                          <div className="chat-reply-preview">
+                            {replyingTo.badges.slice(0, 1).map((badgeKey) => {
+                              const badge = twitchBadges.get(badgeKey);
+                              return badge ? (
+                                <img alt={badge.title} key={badgeKey} src={badge.imageUrl} />
+                              ) : null;
+                            })}
+                            <strong
+                              style={{
+                                color: readableUsernameColor(
+                                  replyingTo.color,
+                                  oledMode ? "#000000" : "#18181b",
+                                ),
+                              }}
+                            >
+                              {replyingTo.displayName}:
+                            </strong>
+                            <span>{replyingTo.text}</span>
+                          </div>
                         </div>
                       )}
                       <div className="chat-composer-box">
@@ -2101,14 +2422,17 @@ export function App() {
                           aria-label="Send a chat message"
                           disabled={authState.status !== "signed-in"}
                           maxLength={500}
+                          mentionCandidates={chatMentionCandidates}
                           onValueChange={setChatInput}
                           placeholder={
                             authState.status === "signed-in"
-                              ? "Send a message"
+                              ? replyingTo
+                                ? `@${replyingTo.login}`
+                                : "Send a message"
                               : "Sign in to send messages"
                           }
                           ref={chatInputHost}
-                          sevenTvEmotes={sevenTvEmotes}
+                          sevenTvEmotes={chatProviderEmotes}
                           twitchEmotes={twitchPickerEmotes}
                           value={chatInput}
                         />
@@ -2141,8 +2465,8 @@ export function App() {
                                       `${current}${current && !current.endsWith(" ") ? " " : ""}${name} `,
                                     )
                                   }
-                                  sevenTvChannelEmoteNames={sevenTvChannelEmoteNames}
-                                  sevenTvEmotes={sevenTvEmotes}
+                                  providerChannelEmoteNames={providerChannelNames}
+                                  providerEmotes={providerEmoteMaps}
                                   twitchEmotes={twitchPickerEmotes}
                                 />
                               {/*
@@ -2271,7 +2595,7 @@ export function App() {
                           disabled={authState.status !== "signed-in" || !chatInput.trim()}
                           type="submit"
                         >
-                          Chat
+                          {replyingTo ? "Reply" : "Chat"}
                         </button>
                       </div>
                     </form>
@@ -2746,6 +3070,175 @@ export function App() {
               </div>
             )}
           </section>
+        )}
+        {settingsOpen && (
+          <div
+            className="settings-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setSettingsOpen(false);
+            }}
+            role="presentation"
+          >
+            <section
+              aria-labelledby="settings-modal-title"
+              aria-modal="true"
+              className="settings-modal-panel"
+              role="dialog"
+            >
+              <header className="settings-modal-header">
+                <div>
+                  <span>VIOLETWIRE</span>
+                  <h2 id="settings-modal-title">Settings</h2>
+                  <p>Changes save automatically without closing your stream.</p>
+                </div>
+                <button
+                  aria-label="Close settings"
+                  onClick={() => setSettingsOpen(false)}
+                  title="Close settings"
+                  type="button"
+                >
+                  <X size={19} />
+                </button>
+              </header>
+              <div className="settings-modal-content">
+                <section>
+                  <h3>Account</h3>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Twitch API account</strong>
+                      <span>
+                        {authState.status === "signed-in"
+                          ? `Connected as ${authState.account.displayName}`
+                          : "Not signed in"}
+                      </span>
+                    </div>
+                    {authState.status === "signed-in" ? (
+                      <button className="secondary-button" onClick={() => void signOut()} type="button">
+                        Sign out
+                      </button>
+                    ) : authState.status === "signed-out" ? (
+                      <button className="primary-button" onClick={() => void beginSignIn()} type="button">
+                        <LogIn size={15} /> Sign in
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Twitch website session</strong>
+                      <span>
+                        {playbackSession.linked
+                          ? `Linked${playbackSession.login ? ` as ${playbackSession.login}` : ""}`
+                          : "Optional session used by Standard playback."}
+                      </span>
+                    </div>
+                    <button
+                      className="secondary-button"
+                      disabled={playbackSessionBusy}
+                      onClick={() =>
+                        playbackSession.linked
+                          ? void unlinkPlaybackSession()
+                          : void linkPlaybackSession()
+                      }
+                      type="button"
+                    >
+                      {playbackSession.linked ? <Unlink size={14} /> : <ExternalLink size={14} />}
+                      {playbackSession.linked ? "Remove" : "Link session"}
+                    </button>
+                  </div>
+                </section>
+                <section>
+                  <h3>Playback</h3>
+                  <div className="settings-preview">
+                    <span>
+                      <strong>Default playback engine</strong>
+                      <small>
+                        {preferredMode === "native"
+                          ? nativeAvailability?.available
+                            ? "Native Experimental is ready"
+                            : nativeAvailability?.reason ?? "Checking Native availability…"
+                          : "Twitch’s official player and controls"}
+                      </small>
+                    </span>
+                    <div className="mode-switch">
+                      <button
+                        aria-pressed={preferredMode === "official"}
+                        className={preferredMode === "official" ? "active" : ""}
+                        onClick={() => void choosePreferredMode("official")}
+                        type="button"
+                      >
+                        Standard
+                      </button>
+                      <button
+                        aria-pressed={preferredMode === "native"}
+                        className={preferredMode === "native" ? "active experimental" : "experimental"}
+                        onClick={() => void choosePreferredMode("native")}
+                        type="button"
+                      >
+                        Native
+                      </button>
+                    </div>
+                  </div>
+                </section>
+                <section>
+                  <h3>Chat and appearance</h3>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Third-party emotes</strong>
+                      <span>7TV, FrankerFaceZ, and BetterTTV global and channel sets are enabled and cached.</span>
+                    </div>
+                    <span className="status-pill">Enabled</span>
+                  </div>
+                  <div className="settings-card">
+                    <div>
+                      <strong>OLED mode</strong>
+                      <span>Use true black backgrounds throughout VioletWire.</span>
+                    </div>
+                    <button
+                      aria-pressed={oledMode}
+                      className={oledMode ? "settings-switch active" : "settings-switch"}
+                      onClick={toggleOledMode}
+                      type="button"
+                    >
+                      <span />
+                    </button>
+                  </div>
+                </section>
+                <section>
+                  <h3>Updates</h3>
+                  <div className="settings-card">
+                    <div>
+                      <strong>VioletWire updates</strong>
+                      <span>
+                        {updateStatus.currentVersion
+                          ? `Version ${updateStatus.currentVersion} · `
+                          : ""}
+                        {updateStatus.message ?? "Checks GitHub Releases automatically."}
+                      </span>
+                    </div>
+                    <button
+                      className="secondary-button"
+                      disabled={
+                        updateStatus.state === "disabled" ||
+                        updateStatus.state === "checking" ||
+                        updateStatus.state === "downloading"
+                      }
+                      onClick={() => {
+                        if (updateStatus.state === "downloaded") {
+                          window.desktop.updates.install();
+                        } else {
+                          void window.desktop.updates.check().then(setUpdateStatus);
+                        }
+                      }}
+                      type="button"
+                    >
+                      <RefreshCw size={14} />
+                      {updateStatus.state === "downloaded" ? "Restart to update" : "Check now"}
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </section>
+          </div>
         )}
         {deviceAuthorization && (
           <div className="modal-backdrop" role="presentation">

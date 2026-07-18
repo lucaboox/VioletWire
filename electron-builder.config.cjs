@@ -16,6 +16,7 @@ module.exports = {
   files: ["dist/**/*", "dist-electron/**/*", "package.json"],
   extraResources: [
     { from: "build/icon.png", to: "icon.png" },
+    { from: "THIRD_PARTY_NOTICES.md", to: "THIRD_PARTY_NOTICES.md" },
     { from: "vendor/native", to: "native" },
   ],
   win: {

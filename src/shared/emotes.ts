@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-export const emoteProviderSchema = z.enum(["7tv"]);
+export const emoteProviderSchema = z.enum(["7tv", "ffz", "bttv"]);
+export type EmoteProvider = z.infer<typeof emoteProviderSchema>;
 
 export interface EmoteImageVariant {
   url: string;
@@ -13,13 +14,15 @@ export interface EmoteImageVariant {
 export interface ProviderEmote {
   id: string;
   name: string;
-  provider: "7tv";
+  provider: EmoteProvider;
   animated: boolean;
+  modifier?: boolean;
+  modifierFlags?: number;
   variants: EmoteImageVariant[];
 }
 
 export interface EmoteSetResult {
-  provider: "7tv";
+  provider: EmoteProvider;
   scope: "global" | "channel";
   emotes: ProviderEmote[];
   cachedAt: number;
@@ -29,5 +32,9 @@ export interface EmoteSetResult {
 export interface EmoteApi {
   getSevenTvGlobal(): Promise<EmoteSetResult>;
   getSevenTvChannel(broadcasterId: string): Promise<EmoteSetResult>;
+  getFfzGlobal(): Promise<EmoteSetResult>;
+  getFfzChannel(broadcasterId: string): Promise<EmoteSetResult>;
+  getBttvGlobal(): Promise<EmoteSetResult>;
+  getBttvChannel(broadcasterId: string): Promise<EmoteSetResult>;
   clearCache(): Promise<void>;
 }

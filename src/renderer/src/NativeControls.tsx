@@ -1,11 +1,13 @@
 import {
   Fragment,
   memo,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -25,6 +27,7 @@ import {
   SlidersHorizontal,
   Settings,
   Smile,
+  Star,
   Tv,
   Volume2,
   VolumeX,
@@ -43,12 +46,24 @@ import {
   type ChatMessage,
   type TwitchPickerEmote,
 } from "../../shared/chat";
-import type { ProviderEmote } from "../../shared/emotes";
+import type {
+  EmoteProvider,
+  EmoteSetResult,
+  ProviderEmote,
+} from "../../shared/emotes";
 import type { AppPreferences } from "../../shared/preferences";
 import { applyChatMessage } from "../../shared/chat-messages";
+import { getChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
 import { EmotePicker } from "./EmotePicker";
+import { ChatEmote } from "./ChatEmote";
+import { renderProviderText } from "./ProviderEmoteText";
+import {
+  captureChatScrollAnchor,
+  restoreChatScrollAnchor,
+  type ChatScrollAnchor,
+} from "./chat-scroll";
 
 const initialState: NativePlayerState = {
   status: "idle",
@@ -59,6 +74,15 @@ const initialState: NativePlayerState = {
   behindLive: false,
   quality: "best",
 };
+const emoteProviders: EmoteProvider[] = ["7tv", "ffz", "bttv"];
+
+function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>> {
+  return new Map(emoteProviders.map((provider) => [provider, new Map()]));
+}
+
+function emptyProviderChannelNames(): Map<EmoteProvider, Set<string>> {
+  return new Map(emoteProviders.map((provider) => [provider, new Set()]));
+}
 
 function renderOverlayText(
   message: ChatMessage,
@@ -68,34 +92,18 @@ function renderOverlayText(
   const output: ReactNode[] = [];
   let cursor = 0;
   const appendText = (text: string, key: string) => {
-    output.push(
-      ...text.split(/(\s+)/).map((token, index) => {
-        const emote = sevenTvEmotes.get(token);
-        const variant = emote?.variants.find((item) => item.scale === 2) ?? emote?.variants.at(-1);
-        return variant ? (
-          <img
-            alt={emote?.name ?? token}
-            className="native-overlay-emote"
-            key={`${key}-${index}`}
-            loading="lazy"
-            src={variant.url}
-            title={`${emote?.name ?? token} · 7TV`}
-          />
-        ) : token;
-      }),
-    );
+    output.push(...renderProviderText(text, sevenTvEmotes, key, "native-overlay-emote"));
   };
   twitchRanges.forEach((range, index) => {
     if (range.start > cursor) appendText(message.text.slice(cursor, range.start), `${message.id}-${index}`);
     const name = message.text.slice(range.start, range.end + 1);
     output.push(
-      <img
-        alt={name}
+      <ChatEmote
         className="native-overlay-emote"
+        imageUrl={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`}
         key={`${message.id}-twitch-${index}`}
-        loading="lazy"
-        src={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`}
-        title={`${name} · Twitch`}
+        name={name}
+        provider="twitch"
       />,
     );
     cursor = range.end + 1;
@@ -113,7 +121,7 @@ interface OverlayChatMessageRowProps {
   deletedRevealed: boolean;
   onRevealDeleted: (id: string) => void;
   onReply: (message: ChatMessage) => void;
-  sevenTvEmotes: Map<string, ProviderEmote>;
+  providerEmotes: Map<string, ProviderEmote>;
 }
 
 // Memoized so a new chat message only renders its own row instead of
@@ -127,13 +135,43 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
   deletedRevealed,
   onRevealDeleted,
   onReply,
-  sevenTvEmotes,
+  providerEmotes,
 }: OverlayChatMessageRowProps) {
+  if (message.notice) {
+    return (
+      <div
+        className="native-video-chat-message native-chat-notice"
+        data-chat-message-id={message.id}
+      >
+        <div className="native-chat-notice-heading">
+          <Star fill="currentColor" size={14} />
+          <strong>{message.notice.systemMessage}</strong>
+        </div>
+        <div className="native-chat-notice-facts">
+          {message.notice.tier && <span>{message.notice.tier}</span>}
+          {message.notice.cumulativeMonths && (
+            <span>{message.notice.cumulativeMonths} months</span>
+          )}
+          {message.notice.streakMonths && (
+            <span>{message.notice.streakMonths} month streak</span>
+          )}
+          {message.notice.giftCount && <span>{message.notice.giftCount} gifts</span>}
+        </div>
+        {message.text && (
+          <div className="native-chat-notice-text">
+            <strong>{message.displayName}:</strong>{" "}
+            {renderOverlayText(message, providerEmotes)}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div
       className={
         mentioned ? "native-video-chat-message mentioned" : "native-video-chat-message"
       }
+      data-chat-message-id={message.id}
     >
       {message.reply && (
         <span className="native-chat-reply-parent" title={message.reply.parentMessageBody}>
@@ -180,7 +218,7 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
           &lt;deleted&gt;
         </button>
       ) : (
-        renderOverlayText(message, sevenTvEmotes)
+        renderOverlayText(message, providerEmotes)
       )}
       {!message.deleted && (
         <button
@@ -219,6 +257,14 @@ export function NativeControls() {
     const stored = Number(window.localStorage.getItem("glint.chat.historyLimit"));
     return Number.isInteger(stored) && stored >= 20 && stored <= 100 ? stored : 20;
   });
+  const [chatFontSize, setChatFontSize] = useState(() => {
+    const stored = Number(window.localStorage.getItem("glint.chat.fontSize"));
+    return Number.isInteger(stored) && stored >= 14 && stored <= 25 ? stored : 14;
+  });
+  const [chatEmoteSize, setChatEmoteSize] = useState(() => {
+    const stored = Number(window.localStorage.getItem("glint.chat.emoteSize"));
+    return Number.isInteger(stored) && stored >= 18 && stored <= 48 ? stored : 27;
+  });
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
   const [revealedDeletedMessages, setRevealedDeletedMessages] = useState<Set<string>>(
     new Set(),
@@ -234,6 +280,8 @@ export function NativeControls() {
   const legacyPreferences = useRef({
     chatTimestamps,
     chatHistoryLimit,
+    chatFontSize,
+    chatEmoteSize,
     chatOverlayOpacity: chatOpacity,
     mentionSoundEnabled,
     oledMode,
@@ -241,19 +289,60 @@ export function NativeControls() {
   });
   const [chatBadges, setChatBadges] = useState<Map<string, ChatBadgeAsset>>(new Map());
   const [twitchPickerEmotes, setTwitchPickerEmotes] = useState<TwitchPickerEmote[]>([]);
-  const [sevenTvEmotes, setSevenTvEmotes] = useState<Map<string, ProviderEmote>>(new Map());
-  const [sevenTvChannelEmoteNames, setSevenTvChannelEmoteNames] = useState<Set<string>>(new Set());
+  const [providerEmoteMaps, setProviderEmoteMaps] = useState(emptyProviderEmoteMaps);
+  const [providerChannelNames, setProviderChannelNames] = useState(
+    emptyProviderChannelNames,
+  );
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [detachedEmotePickerOpen, setDetachedEmotePickerOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const activityTimer = useRef<number | null>(null);
   const lastPointerPosition = useRef<{ x: number; y: number } | null>(null);
   const chatMessagesHost = useRef<HTMLDivElement>(null);
+  const chatScrollAnchor = useRef<ChatScrollAnchor | null>(null);
+  const chatAutoScrollRef = useRef(true);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
   const detachedPickerHost = useRef<HTMLDivElement>(null);
   const currentChannel = useRef<string | null>(null);
   const channel = context?.channel;
+  const chatProviderEmotes = useMemo(() => {
+    const combined = new Map<string, ProviderEmote>();
+    for (const provider of emoteProviders) {
+      for (const emote of providerEmoteMaps.get(provider)?.values() ?? []) {
+        if (!combined.has(emote.name)) combined.set(emote.name, emote);
+      }
+    }
+    return combined;
+  }, [providerEmoteMaps]);
+
+  useEffect(() => {
+    if (!emotePickerOpen && !detachedEmotePickerOpen && !chatSettingsOpen) return;
+    const closeOpenChatMenus = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        emotePickerOpen &&
+        !target.closest(".native-emote-picker-anchor")
+      ) {
+        setEmotePickerOpen(false);
+      }
+      if (
+        detachedEmotePickerOpen &&
+        !target.closest(".native-detached-emote-picker")
+      ) {
+        window.desktop.player.setNativeEmotePicker(false);
+      }
+      if (
+        chatSettingsOpen &&
+        !target.closest(".native-video-chat-tools")
+      ) {
+        setChatSettingsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOpenChatMenus, true);
+    return () => document.removeEventListener("pointerdown", closeOpenChatMenus, true);
+  }, [chatSettingsOpen, detachedEmotePickerOpen, emotePickerOpen]);
 
   useEffect(() => window.desktop.player.onNativeState(setState), []);
 
@@ -302,6 +391,8 @@ export function NativeControls() {
           currentChannel.current = nextContext.channel;
           setChatMessages([]);
           setRevealedDeletedMessages(new Set());
+          chatAutoScrollRef.current = true;
+          chatScrollAnchor.current = null;
           setChatAutoScroll(true);
           setReplyingTo(null);
         }
@@ -324,6 +415,8 @@ export function NativeControls() {
       setChatOpacity(preferences.chatOverlayOpacity);
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
+      setChatFontSize(preferences.chatFontSize);
+      setChatEmoteSize(preferences.chatEmoteSize);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
       setOledMode(preferences.oledMode);
       setAudioCompressionPreference(preferences.audioCompression);
@@ -352,6 +445,8 @@ export function NativeControls() {
         chatOverlayOpacity: chatOpacity,
         chatTimestamps,
         chatHistoryLimit,
+        chatFontSize,
+        chatEmoteSize,
         mentionSoundEnabled,
         audioCompression: audioCompressionPreference,
       })
@@ -359,6 +454,8 @@ export function NativeControls() {
   }, [
     audioCompressionPreference,
     chatHistoryLimit,
+    chatFontSize,
+    chatEmoteSize,
     chatOpacity,
     chatTimestamps,
     mentionSoundEnabled,
@@ -375,6 +472,9 @@ export function NativeControls() {
             return next;
           });
         }
+        if (!chatAutoScrollRef.current && chatMessagesHost.current) {
+          chatScrollAnchor.current = captureChatScrollAnchor(chatMessagesHost.current);
+        }
         setChatMessages((current) => applyChatMessage(current, message));
       }),
     [],
@@ -382,7 +482,13 @@ export function NativeControls() {
 
   useLayoutEffect(() => {
     const host = chatMessagesHost.current;
-    if (host && chatAutoScroll) host.scrollTop = host.scrollHeight;
+    if (!host) return;
+    if (chatAutoScroll) {
+      host.scrollTop = host.scrollHeight;
+    } else if (chatScrollAnchor.current) {
+      restoreChatScrollAnchor(host, chatScrollAnchor.current);
+      chatScrollAnchor.current = null;
+    }
   }, [chatAutoScroll, chatMessages]);
 
   useEffect(() => {
@@ -400,33 +506,41 @@ export function NativeControls() {
     void Promise.allSettled([
       window.desktop.chat.getAssets(channel),
       window.desktop.emotes.getSevenTvGlobal(),
-    ]).then(async ([assetsResult, globalResult]) => {
+      window.desktop.emotes.getFfzGlobal(),
+      window.desktop.emotes.getBttvGlobal(),
+    ]).then(async ([assetsResult, ...globalResults]) => {
       if (cancelled) return;
       if (assetsResult.status === "fulfilled") {
         setChatBadges(new Map(assetsResult.value.badges.map((badge) => [badge.key, badge])));
         setTwitchPickerEmotes(assetsResult.value.emotes);
       }
-      const combined = new Map<string, ProviderEmote>();
-      const channelNames = new Set<string>();
-      if (assetsResult.status === "fulfilled") {
-        const channelResult = await window.desktop.emotes
-          .getSevenTvChannel(assetsResult.value.broadcasterId)
-          .catch(() => null);
-        if (channelResult) {
-          for (const emote of channelResult.emotes) {
-            combined.set(emote.name, emote);
-            channelNames.add(emote.name);
-          }
+      const nextMaps = emptyProviderEmoteMaps();
+      const nextChannelNames = emptyProviderChannelNames();
+      const channelResults: PromiseSettledResult<EmoteSetResult>[] =
+        assetsResult.status === "fulfilled"
+          ? await Promise.allSettled([
+              window.desktop.emotes.getSevenTvChannel(assetsResult.value.broadcasterId),
+              window.desktop.emotes.getFfzChannel(assetsResult.value.broadcasterId),
+              window.desktop.emotes.getBttvChannel(assetsResult.value.broadcasterId),
+            ])
+          : [];
+      for (const result of channelResults) {
+        if (result.status !== "fulfilled") continue;
+        for (const emote of result.value.emotes) {
+          nextMaps.get(result.value.provider)!.set(emote.name, emote);
+          nextChannelNames.get(result.value.provider)!.add(emote.name);
         }
       }
-      if (globalResult.status === "fulfilled") {
-        for (const emote of globalResult.value.emotes) {
-          if (!combined.has(emote.name)) combined.set(emote.name, emote);
+      for (const result of globalResults) {
+        if (result.status !== "fulfilled") continue;
+        for (const emote of result.value.emotes) {
+          const providerMap = nextMaps.get(result.value.provider)!;
+          if (!providerMap.has(emote.name)) providerMap.set(emote.name, emote);
         }
       }
       if (!cancelled) {
-        setSevenTvEmotes(combined);
-        setSevenTvChannelEmoteNames(channelNames);
+        setProviderEmoteMaps(nextMaps);
+        setProviderChannelNames(nextChannelNames);
       }
     });
     return () => {
@@ -471,13 +585,16 @@ export function NativeControls() {
   function handleChatScroll() {
     const host = chatMessagesHost.current;
     if (!host) return;
-    setChatAutoScroll(host.scrollHeight - host.scrollTop - host.clientHeight < 36);
+    const atBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 36;
+    chatAutoScrollRef.current = atBottom;
+    setChatAutoScroll(atBottom);
   }
 
   function scrollChatToCurrent() {
     const host = chatMessagesHost.current;
     if (!host) return;
     host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
+    chatAutoScrollRef.current = true;
     setChatAutoScroll(true);
   }
 
@@ -585,6 +702,7 @@ export function NativeControls() {
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
     -1,
   );
+  const chatMentionCandidates = getChatMentionCandidates(chatMessages, "", 100);
   const chatIcon = !context.chatVisible ? (
     <MessageSquare size={18} />
   ) : context.chatPresentation === "overlay" ? (
@@ -607,6 +725,10 @@ export function NativeControls() {
         if (event.target === event.currentTarget) closeMenu();
       }}
       onPointerMove={reportPointerActivity}
+      style={{
+        "--chat-font-size": `${chatFontSize}px`,
+        "--chat-emote-size": `${chatEmoteSize}px`,
+      } as CSSProperties}
     >
       {detachedEmotePickerOpen && channel && (
         <div className="native-detached-emote-picker" ref={detachedPickerHost}>
@@ -614,8 +736,8 @@ export function NativeControls() {
             channelName={channel}
             onClose={() => window.desktop.player.setNativeEmotePicker(false)}
             onSelect={(name) => window.desktop.player.sendNativeEmoteSelection(name)}
-            sevenTvChannelEmoteNames={sevenTvChannelEmoteNames}
-            sevenTvEmotes={sevenTvEmotes}
+            providerChannelEmoteNames={providerChannelNames}
+            providerEmotes={providerEmoteMaps}
             twitchEmotes={twitchPickerEmotes}
           />
         </div>
@@ -692,6 +814,28 @@ export function NativeControls() {
                   />
                 </label>
                 <label>
+                  <span>Font size: {chatFontSize}px</span>
+                  <input
+                    aria-label="Chat font size"
+                    max="25"
+                    min="14"
+                    onChange={(event) => setChatFontSize(Number(event.target.value))}
+                    type="range"
+                    value={chatFontSize}
+                  />
+                </label>
+                <label>
+                  <span>Emote size: {chatEmoteSize}px</span>
+                  <input
+                    aria-label="Chat emote size"
+                    max="48"
+                    min="18"
+                    onChange={(event) => setChatEmoteSize(Number(event.target.value))}
+                    type="range"
+                    value={chatEmoteSize}
+                  />
+                </label>
+                <label>
                   <span>History: {chatHistoryLimit}</span>
                   <input
                     aria-label="Chat history message count"
@@ -723,7 +867,7 @@ export function NativeControls() {
                 oledMode={oledMode}
                 onRevealDeleted={revealDeletedMessage}
                 onReply={beginReply}
-                sevenTvEmotes={sevenTvEmotes}
+                providerEmotes={chatProviderEmotes}
                 showTimestamp={chatTimestamps}
               />
               {index === chatHistoryBoundary && (
@@ -742,27 +886,47 @@ export function NativeControls() {
           <form className="native-video-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>
             {replyingTo && (
               <div className="native-chat-reply-composer">
-                <span>
-                  Replying to <strong>{replyingTo.displayName}</strong>
-                </span>
-                <button
-                  aria-label="Cancel reply"
-                  onClick={() => setReplyingTo(null)}
-                  title="Cancel reply"
-                  type="button"
-                >
-                  <X size={13} />
-                </button>
+                <div className="chat-reply-heading">
+                  <span><Reply size={13} /> Replying to @{replyingTo.login}:</span>
+                  <button
+                    aria-label="Cancel reply"
+                    onClick={() => setReplyingTo(null)}
+                    title="Cancel reply"
+                    type="button"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="chat-reply-preview">
+                  {replyingTo.badges.slice(0, 1).map((badgeKey) => {
+                    const badge = chatBadges.get(badgeKey);
+                    return badge ? (
+                      <img alt={badge.title} key={badgeKey} src={badge.imageUrl} />
+                    ) : null;
+                  })}
+                  <strong
+                    style={{
+                      color: readableUsernameColor(
+                        replyingTo.color,
+                        oledMode ? "#000000" : "#18181b",
+                      ),
+                    }}
+                  >
+                    {replyingTo.displayName}:
+                  </strong>
+                  <span>{replyingTo.text}</span>
+                </div>
               </div>
             )}
             <div className="native-chat-composer-box">
               <ChatComposerInput
                 aria-label="Send a chat message"
                 maxLength={500}
+                mentionCandidates={chatMentionCandidates}
                 onValueChange={setChatInput}
-                placeholder="Send a message"
+                placeholder={replyingTo ? `@${replyingTo.login}` : "Send a message"}
                 ref={chatInputHost}
-                sevenTvEmotes={sevenTvEmotes}
+                sevenTvEmotes={chatProviderEmotes}
                 twitchEmotes={twitchPickerEmotes}
                 value={chatInput}
               />
@@ -788,8 +952,8 @@ export function NativeControls() {
                             `${current}${current && !current.endsWith(" ") ? " " : ""}${name} `,
                           )
                         }
-                        sevenTvChannelEmoteNames={sevenTvChannelEmoteNames}
-                        sevenTvEmotes={sevenTvEmotes}
+                        providerChannelEmoteNames={providerChannelNames}
+                        providerEmotes={providerEmoteMaps}
                         twitchEmotes={twitchPickerEmotes}
                       />
                     {/*
@@ -918,7 +1082,7 @@ export function NativeControls() {
                 disabled={!chatInput.trim()}
                 type="submit"
               >
-                Chat
+                {replyingTo ? "Reply" : "Chat"}
               </button>
             </div>
           </form>

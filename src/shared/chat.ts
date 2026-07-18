@@ -20,6 +20,24 @@ export interface ChatMessage {
   badges: string[];
   sentAt: number;
   twitchEmotes: TwitchChatEmoteRange[];
+  notice?: {
+    type:
+      | "sub"
+      | "resub"
+      | "subgift"
+      | "submysterygift"
+      | "giftpaidupgrade"
+      | "anongiftpaidupgrade"
+      | "raid"
+      | "bitsbadgetier"
+      | "other";
+    systemMessage: string;
+    cumulativeMonths?: number;
+    streakMonths?: number;
+    recipientDisplayName?: string;
+    giftCount?: number;
+    tier?: string;
+  };
   reply?: {
     parentMessageId: string;
     parentUserLogin: string;

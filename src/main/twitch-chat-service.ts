@@ -154,6 +154,42 @@ export class TwitchChatService {
         deleted: true,
       };
     }
+    const userNoticeMatch =
+      /^(?:@([^ ]+) )?:tmi\.twitch\.tv USERNOTICE #([^ ]+)(?: :?([\s\S]*))?$/.exec(
+        line,
+      );
+    if (userNoticeMatch) {
+      const tags = this.parseTags(userNoticeMatch[1] ?? "");
+      const noticeType = this.parseNoticeType(tags["msg-id"]);
+      const login = tags.login ?? "";
+      return {
+        id: tags.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        channel: userNoticeMatch[2],
+        login,
+        displayName: tags["display-name"] || login || "Twitch",
+        color: /^#[0-9a-f]{6}$/i.test(tags.color ?? "") ? tags.color : "#a1a1aa",
+        text: userNoticeMatch[3] ?? "",
+        badges: (tags.badges ?? "").split(",").filter(Boolean),
+        sentAt: Number(tags["tmi-sent-ts"]) || Date.now(),
+        twitchEmotes: this.parseEmotes(tags.emotes ?? ""),
+        notice: {
+          type: noticeType,
+          systemMessage:
+            tags["system-msg"] ||
+            this.fallbackNoticeMessage(noticeType, tags["display-name"] || login),
+          cumulativeMonths: this.optionalPositiveNumber(
+            tags["msg-param-cumulative-months"],
+          ),
+          streakMonths: this.optionalPositiveNumber(tags["msg-param-streak-months"]),
+          recipientDisplayName:
+            tags["msg-param-recipient-display-name"] ||
+            tags["msg-param-recipient-user-name"] ||
+            undefined,
+          giftCount: this.optionalPositiveNumber(tags["msg-param-mass-gift-count"]),
+          tier: this.formatSubscriptionTier(tags["msg-param-sub-plan"]),
+        },
+      };
+    }
     const match = /^(?:@([^ ]+) )?:([^! ]+)!.* PRIVMSG #([^ ]+) :?([\s\S]*)$/.exec(line);
     if (!match) return null;
     const tags = this.parseTags(match[1] ?? "");
@@ -180,6 +216,50 @@ export class TwitchChatService {
           }
         : undefined,
     };
+  }
+
+  private parseNoticeType(rawType: string | undefined): NonNullable<ChatMessage["notice"]>["type"] {
+    switch (rawType) {
+      case "sub":
+      case "resub":
+      case "subgift":
+      case "submysterygift":
+      case "giftpaidupgrade":
+      case "anongiftpaidupgrade":
+      case "raid":
+      case "bitsbadgetier":
+        return rawType;
+      default:
+        return "other";
+    }
+  }
+
+  private optionalPositiveNumber(rawValue: string | undefined): number | undefined {
+    if (!rawValue) return undefined;
+    const value = Number(rawValue);
+    return Number.isInteger(value) && value > 0 ? value : undefined;
+  }
+
+  private formatSubscriptionTier(rawTier: string | undefined): string | undefined {
+    if (!rawTier) return undefined;
+    if (rawTier === "Prime") return "Prime";
+    if (rawTier === "1000") return "Tier 1";
+    if (rawTier === "2000") return "Tier 2";
+    if (rawTier === "3000") return "Tier 3";
+    return undefined;
+  }
+
+  private fallbackNoticeMessage(
+    type: NonNullable<ChatMessage["notice"]>["type"],
+    displayName: string,
+  ): string {
+    const name = displayName || "Someone";
+    if (type === "sub") return `${name} subscribed!`;
+    if (type === "resub") return `${name} resubscribed!`;
+    if (type === "subgift") return `${name} gifted a subscription!`;
+    if (type === "submysterygift") return `${name} gifted subscriptions to the community!`;
+    if (type === "raid") return `${name} is raiding!`;
+    return "Twitch chat event";
   }
 
   private emitMessage(message: ChatMessage): void {

@@ -88,10 +88,12 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
 ### Chat and emotes
 
 - Native Twitch chat reading and sending
-- Twitch badges, colors, emotes, replies, moderation events, and deleted messages
+- Twitch badges, colors, emotes, replies, subscription notices, moderation events, and deleted messages
 - 7TV global and channel emotes
+- FrankerFaceZ and BetterTTV global and channel emotes
 - Channel-aware Twitch emote picker
-- Searchable Twitch and 7TV emote groups
+- Searchable Twitch, 7TV, FrankerFaceZ, and BetterTTV emote groups
+- Rich emote tooltips with provider attribution
 - Configurable timestamps and recent-message history
 - Pause autoscroll while reading older messages
 - Bounded message history to prevent unbounded memory growth
@@ -214,6 +216,14 @@ source locations.
 
 ## Project license
 
-No license has been selected for VioletWire itself yet. Until a license is added,
-the source code remains under default copyright. Third-party projects retain
-their own licenses.
+Copyright (C) 2026 lucaboox and VioletWire contributors.
+
+VioletWire-authored source code is free software licensed under the
+[GNU General Public License v3.0 or later](LICENSE). If you distribute a
+modified version of VioletWire, the GPL requires you to provide its
+corresponding source code under the same license.
+
+Bundled third-party software, provider marks, and adapted assets are not
+relicensed under the GPL. They remain subject to their respective licenses and
+notices described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
+[native runtime source information](third_party/NATIVE_RUNTIME_SOURCES.md).

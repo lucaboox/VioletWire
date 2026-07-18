@@ -169,6 +169,9 @@ export interface NativePlayerState {
 }
 
 export interface DesktopApi {
+  system: {
+    openExternal(url: string): Promise<void>;
+  };
   twitch: TwitchApi;
   emotes: EmoteApi;
   chat: ChatApi;
@@ -196,6 +199,7 @@ export interface DesktopApi {
     setNativeControlsVisible(visible: boolean): void;
     setNativeControlsExpanded(expanded: boolean): void;
     setNativeEmotePicker(open: boolean): void;
+    setModalOpen(open: boolean): void;
     setNativeEmotePickerBounds(bounds: PlayerBounds | null): void;
     setNativeControlsContext(context: NativeControlsContext): void;
     onNativeControlsVisibility(listener: (visible: boolean) => void): () => void;

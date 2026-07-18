@@ -4,16 +4,19 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ClipboardEvent,
   type FormEvent,
 } from "react";
 import type { ProviderEmote } from "../../shared/emotes";
 import type { TwitchPickerEmote } from "../../shared/chat";
+import type { ChatMentionCandidate } from "../../shared/chat-content";
 
 interface ChatComposerInputProps {
   "aria-label": string;
   disabled?: boolean;
   maxLength: number;
+  mentionCandidates: ChatMentionCandidate[];
   onValueChange(value: string): void;
   placeholder: string;
   sevenTvEmotes: Map<string, ProviderEmote>;
@@ -24,6 +27,10 @@ interface ChatComposerInputProps {
 interface EmoteImage {
   imageUrl: string;
   provider: string;
+}
+
+interface EmoteSuggestion extends EmoteImage {
+  name: string;
 }
 
 function readEditorText(editor: HTMLElement): string {
@@ -45,12 +52,55 @@ function placeCaretAtEnd(editor: HTMLElement): void {
   selection?.addRange(range);
 }
 
+interface ActiveMention {
+  end: number;
+  query: string;
+  start: number;
+}
+
+function getCaretTextOffset(editor: HTMLElement): number | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !editor.contains(selection.focusNode)) return null;
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.setEnd(selection.focusNode!, selection.focusOffset);
+  const fragment = document.createElement("div");
+  fragment.append(range.cloneContents());
+  return readEditorText(fragment).length;
+}
+
+function findActiveMention(text: string, caretOffset: number | null): ActiveMention | null {
+  if (caretOffset === null) return null;
+  const beforeCaret = text.slice(0, caretOffset);
+  const match = /(?:^|\s)@([a-zA-Z0-9_]*)$/.exec(beforeCaret);
+  if (!match) return null;
+  const query = match[1];
+  return {
+    start: caretOffset - query.length - 1,
+    end: caretOffset,
+    query,
+  };
+}
+
+function findActiveEmote(text: string, caretOffset: number | null): ActiveMention | null {
+  if (caretOffset === null) return null;
+  const beforeCaret = text.slice(0, caretOffset);
+  const match = /(?:^|\s)([a-zA-Z0-9_][a-zA-Z0-9_:-]+)$/.exec(beforeCaret);
+  if (!match) return null;
+  return {
+    start: caretOffset - match[1].length,
+    end: caretOffset,
+    query: match[1],
+  };
+}
+
 export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputProps>(
   function ChatComposerInput(
     {
       "aria-label": ariaLabel,
       disabled = false,
       maxLength,
+      mentionCandidates,
       onValueChange,
       placeholder,
       sevenTvEmotes,
@@ -60,15 +110,26 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     forwardedRef,
   ) {
     const localRef = useRef<HTMLDivElement | null>(null);
+    const [activeMention, setActiveMention] = useState<ActiveMention | null>(null);
+    const [selectedMention, setSelectedMention] = useState(0);
+    const [activeEmote, setActiveEmote] = useState<ActiveMention | null>(null);
+    const [selectedEmote, setSelectedEmote] = useState(0);
     const emoteImages = useMemo(() => {
       const images = new Map<string, EmoteImage>();
       for (const emote of twitchEmotes) {
         images.set(emote.name, { imageUrl: emote.imageUrl, provider: "Twitch" });
       }
       for (const emote of sevenTvEmotes.values()) {
+        if (emote.modifier) continue;
         const variant =
           emote.variants.find((item) => item.scale === 2) ?? emote.variants.at(-1);
-        if (variant) images.set(emote.name, { imageUrl: variant.url, provider: "7TV" });
+        const provider =
+          emote.provider === "7tv"
+            ? "7TV"
+            : emote.provider === "ffz"
+              ? "FrankerFaceZ"
+              : "BetterTTV";
+        if (variant) images.set(emote.name, { imageUrl: variant.url, provider });
       }
       return images;
     }, [sevenTvEmotes, twitchEmotes]);
@@ -109,14 +170,71 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
       const editor = localRef.current;
       if (!editor || readEditorText(editor) === value) return;
       renderValue(editor, value);
+      setActiveMention(null);
+      setActiveEmote(null);
     }, [renderValue, value]);
 
     function updateValue(convertEmotes = false): void {
       const editor = localRef.current;
       if (!editor) return;
       const nextValue = readEditorText(editor).slice(0, maxLength);
+      const caretOffset = getCaretTextOffset(editor);
+      const mention = findActiveMention(nextValue, caretOffset);
       onValueChange(nextValue);
+      setActiveMention(mention);
+      setActiveEmote(mention ? null : findActiveEmote(nextValue, caretOffset));
+      setSelectedMention(0);
+      setSelectedEmote(0);
       if (convertEmotes) renderValue(editor, nextValue);
+    }
+
+    const matchingMentions = useMemo(() => {
+      if (!activeMention) return [];
+      const query = activeMention.query.toLowerCase();
+      return mentionCandidates
+        .filter(
+          ({ displayName, login }) =>
+            !query ||
+            login.toLowerCase().startsWith(query) ||
+            displayName.toLowerCase().startsWith(query),
+        )
+        .slice(0, 8);
+    }, [activeMention, mentionCandidates]);
+
+    function insertMention(candidate: ChatMentionCandidate): void {
+      const editor = localRef.current;
+      if (!editor || !activeMention) return;
+      const currentValue = readEditorText(editor);
+      const nextValue = `${currentValue.slice(0, activeMention.start)}@${candidate.login} ${currentValue.slice(activeMention.end)}`;
+      setActiveMention(null);
+      onValueChange(nextValue.slice(0, maxLength));
+    }
+
+    const matchingEmotes = useMemo(() => {
+      if (!activeEmote) return [];
+      const query = activeEmote.query.toLowerCase();
+      return [...emoteImages.entries()]
+        .filter(([name]) => name.toLowerCase().startsWith(query))
+        .map(([name, emote]): EmoteSuggestion => ({ ...emote, name }))
+        .slice(0, 100);
+    }, [activeEmote, emoteImages]);
+    const visibleEmoteStart = Math.floor(selectedEmote / 5) * 5;
+    const visibleEmotes = matchingEmotes.slice(visibleEmoteStart, visibleEmoteStart + 5);
+
+    function insertEmote(candidate: EmoteSuggestion): void {
+      const editor = localRef.current;
+      if (!editor || !activeEmote) return;
+      const currentValue = readEditorText(editor);
+      const nextValue = `${currentValue.slice(0, activeEmote.start)}${candidate.name} ${currentValue.slice(activeEmote.end)}`;
+      setActiveEmote(null);
+      onValueChange(nextValue.slice(0, maxLength));
+    }
+
+    function moveEmoteSelection(direction: number): void {
+      if (matchingEmotes.length === 0) return;
+      setSelectedEmote(
+        (current) => (current + direction + matchingEmotes.length) % matchingEmotes.length,
+      );
     }
 
     function handlePaste(event: ClipboardEvent<HTMLDivElement>): void {
@@ -159,6 +277,52 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
             updateValue(nativeEvent.data === " " || nativeEvent.inputType === "insertParagraph");
           }}
           onKeyDown={(event) => {
+            if (activeMention && matchingMentions.length > 0) {
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const direction = event.key === "ArrowDown" ? 1 : -1;
+                setSelectedMention(
+                  (current) =>
+                    (current + direction + matchingMentions.length) %
+                    matchingMentions.length,
+                );
+                return;
+              }
+              if (event.key === "Tab") {
+                event.preventDefault();
+                insertMention(matchingMentions[selectedMention] ?? matchingMentions[0]);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setActiveMention(null);
+                return;
+              }
+            }
+            if (activeEmote && matchingEmotes.length > 0) {
+              if (
+                event.key === "ArrowRight" ||
+                event.key === "ArrowDown" ||
+                event.key === "ArrowLeft" ||
+                event.key === "ArrowUp"
+              ) {
+                event.preventDefault();
+                moveEmoteSelection(
+                  event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1,
+                );
+                return;
+              }
+              if (event.key === "Tab") {
+                event.preventDefault();
+                insertEmote(matchingEmotes[selectedEmote] ?? matchingEmotes[0]);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setActiveEmote(null);
+                return;
+              }
+            }
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               event.currentTarget.closest("form")?.requestSubmit();
@@ -170,6 +334,75 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
           spellCheck
           suppressContentEditableWarning
         />
+        {activeMention && matchingMentions.length > 0 && (
+          <div className="mention-suggestions" role="listbox" aria-label="Chat usernames">
+            {matchingMentions.map((candidate, index) => (
+              <button
+                aria-selected={index === selectedMention}
+                className={index === selectedMention ? "selected" : ""}
+                key={candidate.login}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
+                onClick={() => insertMention(candidate)}
+                role="option"
+                type="button"
+              >
+                <span
+                  className="mention-suggestion-avatar"
+                  style={{ backgroundColor: candidate.color || "#9147ff" }}
+                >
+                  {candidate.displayName.slice(0, 1).toUpperCase()}
+                </span>
+                <strong>{candidate.displayName}</strong>
+                <small>@{candidate.login}</small>
+              </button>
+            ))}
+          </div>
+        )}
+        {!activeMention && activeEmote && matchingEmotes.length > 0 && (
+          <div className="emote-suggestions" role="listbox" aria-label="Matching emotes">
+            <button
+              aria-label="Previous matching emote"
+              className="emote-suggestion-step"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => moveEmoteSelection(-1)}
+              type="button"
+            >
+              ‹
+            </button>
+            <div className="emote-suggestion-results">
+              {visibleEmotes.map((emote, index) => {
+                const absoluteIndex = visibleEmoteStart + index;
+                return (
+                  <button
+                    aria-label={`${emote.name}, ${emote.provider}`}
+                    aria-selected={absoluteIndex === selectedEmote}
+                    className={absoluteIndex === selectedEmote ? "selected" : ""}
+                    key={`${emote.provider}-${emote.name}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => insertEmote(emote)}
+                    role="option"
+                    title={`${emote.name} · ${emote.provider}`}
+                    type="button"
+                  >
+                    <img alt="" src={emote.imageUrl} />
+                    <span>{emote.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              aria-label="Next matching emote"
+              className="emote-suggestion-step"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => moveEmoteSelection(1)}
+              type="button"
+            >
+              ›
+            </button>
+          </div>
+        )}
       </div>
     );
   },

@@ -23,4 +23,25 @@ describe("TwitchChatService replies", () => {
       threadUserLogin: "parent",
     });
   });
+
+  it("parses subscription USERNOTICE metadata and the subscriber message", () => {
+    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const internals = service as unknown as TwitchChatServiceInternals;
+    const message = internals.parseMessageLine(
+      "@badge-info=subscriber/14;badges=subscriber/12;color=#00FF7F;display-name=VioletFan;emotes=;id=51d6bd60-6c94-4f43-b78f-1c125fb51694;login=violetfan;msg-id=resub;msg-param-cumulative-months=14;msg-param-streak-months=4;msg-param-sub-plan=1000;system-msg=VioletFan\\ssubscribed\\sat\\sTier\\s1.\\sThey've\\ssubscribed\\sfor\\s14\\smonths!;tmi-sent-ts=1720000000000 :tmi.twitch.tv USERNOTICE #channel :Love the stream!",
+    );
+
+    expect(message).toMatchObject({
+      displayName: "VioletFan",
+      text: "Love the stream!",
+      notice: {
+        type: "resub",
+        cumulativeMonths: 14,
+        streakMonths: 4,
+        tier: "Tier 1",
+        systemMessage:
+          "VioletFan subscribed at Tier 1. They've subscribed for 14 months!",
+      },
+    });
+  });
 });

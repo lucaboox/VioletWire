@@ -12,6 +12,7 @@ export const twitchUserSchema = z.object({
   login: z.string(),
   display_name: z.string(),
   profile_image_url: z.string().url(),
+  description: z.string().optional().default(""),
 });
 
 export const twitchStreamSchema = z.object({
@@ -25,6 +26,7 @@ export const twitchStreamSchema = z.object({
   viewer_count: z.number().int().nonnegative(),
   started_at: z.string(),
   language: z.string(),
+  tags: z.array(z.string()).optional().default([]),
   thumbnail_url: z.string(),
   is_mature: z.boolean().optional().default(false),
 });
@@ -109,12 +111,15 @@ export interface StreamMetadata {
   login: string;
   displayName: string;
   profileImageUrl: string;
+  description?: string;
   isLive: boolean;
   title?: string;
+  categoryId?: string;
   category?: string;
   viewerCount?: number;
   startedAt?: string;
   language?: string;
+  tags?: string[];
   isMature?: boolean;
   isFollowed?: boolean;
   subscription?: {

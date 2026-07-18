@@ -22,6 +22,9 @@ import type {
 } from "../shared/preferences";
 
 const api: DesktopApi = {
+  system: {
+    openExternal: (url: string) => ipcRenderer.invoke("system:open-external", url),
+  },
   twitch: {
     getAuthState: () => ipcRenderer.invoke("twitch:get-auth-state"),
     beginSignIn: () => ipcRenderer.invoke("twitch:begin-sign-in"),
@@ -48,6 +51,12 @@ const api: DesktopApi = {
     getSevenTvGlobal: () => ipcRenderer.invoke("emotes:7tv-global"),
     getSevenTvChannel: (broadcasterId: string) =>
       ipcRenderer.invoke("emotes:7tv-channel", broadcasterId),
+    getFfzGlobal: () => ipcRenderer.invoke("emotes:ffz-global"),
+    getFfzChannel: (broadcasterId: string) =>
+      ipcRenderer.invoke("emotes:ffz-channel", broadcasterId),
+    getBttvGlobal: () => ipcRenderer.invoke("emotes:bttv-global"),
+    getBttvChannel: (broadcasterId: string) =>
+      ipcRenderer.invoke("emotes:bttv-channel", broadcasterId),
     clearCache: () => ipcRenderer.invoke("emotes:clear-cache"),
   } satisfies EmoteApi,
   chat: {
@@ -119,6 +128,8 @@ const api: DesktopApi = {
       ipcRenderer.send("native-controls:set-expanded", expanded),
     setNativeEmotePicker: (open: boolean) =>
       ipcRenderer.send("native-controls:set-emote-picker", open),
+    setModalOpen: (open: boolean) =>
+      ipcRenderer.send("player:set-modal-open", open),
     setNativeEmotePickerBounds: (bounds: PlayerBounds | null) =>
       ipcRenderer.send("native-controls:set-emote-picker-bounds", bounds),
     setNativeControlsContext: (context: NativeControlsContext) =>

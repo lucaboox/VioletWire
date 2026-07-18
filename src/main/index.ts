@@ -3,6 +3,7 @@ import {
   BaseWindow,
   BrowserWindow,
   ipcMain,
+  shell,
   WebContentsView,
   type Rectangle,
 } from "electron";
@@ -27,6 +28,7 @@ import { NativePlayer } from "./native-player";
 import { TwitchService } from "./twitch-service";
 import { PlaybackSessionService } from "./playback-session";
 import { SevenTvService } from "./seven-tv-service";
+import { ThirdPartyEmoteService } from "./third-party-emote-service";
 import { TwitchChatService } from "./twitch-chat-service";
 import { UpdateService } from "./update-service";
 import { startRendererServer, type RendererServer } from "./renderer-server";
@@ -82,6 +84,7 @@ let activeChannelName: string | null = null;
 let rendererServer: RendererServer | null = null;
 const playbackSessionService = new PlaybackSessionService(() => mainWindow);
 const sevenTvService = new SevenTvService();
+const thirdPartyEmoteService = new ThirdPartyEmoteService();
 function sendToWindow(window: BrowserWindow | null, channel: string, ...args: unknown[]): void {
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
   window.webContents.send(channel, ...args);
@@ -248,8 +251,14 @@ function applyNativeControlsBounds(): void {
           ? {
               x: Math.max(0, measuredPicker.x - pickerMargin),
               y: Math.max(0, measuredPicker.y - pickerMargin),
-              width: Math.min(width, measuredPicker.width + pickerMargin * 2),
-              height: Math.min(height, measuredPicker.height + pickerMargin * 2),
+              width: Math.min(
+                width - Math.max(0, measuredPicker.x - pickerMargin),
+                measuredPicker.width + pickerMargin * 2,
+              ),
+              height: Math.min(
+                height - Math.max(0, measuredPicker.y - pickerMargin),
+                measuredPicker.height + pickerMargin * 2,
+              ),
             }
           : {
               x: Math.max(0, width - Math.min(640, width)),
@@ -763,6 +772,11 @@ ipcMain.on("native-controls:set-emote-picker", (_event, input: unknown) => {
     applyNativeControlsBounds();
   }
 });
+ipcMain.on("player:set-modal-open", (_event, input: unknown) => {
+  if (typeof input !== "boolean" || activePlayerMode !== "native") return;
+  if (input) suspendDetachedNativeSurfaces();
+  else restoreDetachedNativeSurfaces();
+});
 
 ipcMain.on("native-controls:set-emote-picker-bounds", (_event, input: unknown) => {
   if (input === null) {
@@ -829,6 +843,17 @@ ipcMain.handle("window:set-fullscreen", (_event, fullscreen: unknown) => {
   return mainWindow.isFullScreen();
 });
 
+ipcMain.handle("system:open-external", async (_event, input: unknown) => {
+  if (typeof input !== "string" || input.length > 2_048) {
+    throw new Error("Invalid external link.");
+  }
+  const url = new URL(input);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Only web links can be opened.");
+  }
+  await shell.openExternal(url.toString());
+});
+
 ipcMain.handle("channel:open-action", async (_event, rawChannel: unknown, rawAction: unknown) => {
   const channel = channelNameSchema.parse(rawChannel);
   const action = channelActionSchema.parse(rawAction);
@@ -883,7 +908,19 @@ ipcMain.handle("emotes:7tv-channel", (_event, broadcasterId: unknown) => {
   if (typeof broadcasterId !== "string") throw new Error("Broadcaster ID must be text.");
   return sevenTvService.getChannel(broadcasterId);
 });
-ipcMain.handle("emotes:clear-cache", () => sevenTvService.clear());
+ipcMain.handle("emotes:ffz-global", () => thirdPartyEmoteService.getFfzGlobal());
+ipcMain.handle("emotes:ffz-channel", (_event, broadcasterId: unknown) => {
+  if (typeof broadcasterId !== "string") throw new Error("Broadcaster ID must be text.");
+  return thirdPartyEmoteService.getFfzChannel(broadcasterId);
+});
+ipcMain.handle("emotes:bttv-global", () => thirdPartyEmoteService.getBttvGlobal());
+ipcMain.handle("emotes:bttv-channel", (_event, broadcasterId: unknown) => {
+  if (typeof broadcasterId !== "string") throw new Error("Broadcaster ID must be text.");
+  return thirdPartyEmoteService.getBttvChannel(broadcasterId);
+});
+ipcMain.handle("emotes:clear-cache", async () => {
+  await Promise.all([sevenTvService.clear(), thirdPartyEmoteService.clear()]);
+});
 ipcMain.handle("chat:send", (
   _event,
   rawChannel: unknown,

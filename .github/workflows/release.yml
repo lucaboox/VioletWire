@@ -36,6 +36,17 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $escapedVersion = [regex]::Escape($version)
+          $releaseNotes = [regex]::Match(
+            $changelog,
+            "(?ms)^## \[$escapedVersion\].*?(?=^## \[|\z)"
+          )
+          if (-not $releaseNotes.Success) {
+            throw "CHANGELOG.md does not contain release notes for $version."
+          }
+          $notesPath = Join-Path $env:RUNNER_TEMP "violetwire-release-notes.md"
+          $releaseNotes.Value.Trim() | Set-Content $notesPath -Encoding utf8
           $assets = @(
             "release/VioletWire-Setup-$version-x64.exe",
             "release/VioletWire-Setup-$version-x64.exe.blockmap",
@@ -43,12 +54,17 @@ jobs:
           )
           if (gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY 2>$null) {
             gh release upload $env:GITHUB_REF_NAME @assets --clobber --repo $env:GITHUB_REPOSITORY
+            gh release edit $env:GITHUB_REF_NAME `
+              --repo $env:GITHUB_REPOSITORY `
+              --title $version `
+              --latest `
+              --notes-file $notesPath
           } else {
             gh release create $env:GITHUB_REF_NAME @assets `
               --repo $env:GITHUB_REPOSITORY `
               --title $version `
               --latest `
-              --notes "Initial release."
+              --notes-file $notesPath
           }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

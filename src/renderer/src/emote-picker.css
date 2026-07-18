@@ -142,6 +142,27 @@
   object-fit: contain;
 }
 
+.vw-emote-grid > button.effect {
+  grid-column: span 2;
+}
+
+.vw-emote-grid .effect-mark {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  color: #d8b4fe;
+}
+
+.vw-emote-grid .effect-mark small {
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vw-emote-grid .subscription-only::after {
   position: absolute;
   right: 1px;
@@ -230,6 +251,22 @@
   opacity: .38;
 }
 
+.vw-emote-providers .provider-logo {
+  display: block;
+  width: 21px;
+  height: 21px;
+  color: currentColor;
+}
+
+.vw-emote-providers .provider-logo-7tv {
+  width: 23px;
+}
+
+.vw-emote-providers .provider-logo-twitch {
+  width: 19px;
+  height: 22px;
+}
+
 .vw-emote-search {
   display: flex;
   align-items: center;
@@ -273,4 +310,84 @@
 .vw-emote-unavailable strong {
   color: #e4e4e7;
   font-size: 16px;
+}
+
+.chat-emote-effect {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.chat-emote-effect.emote-effect-wide > .chat-emote-hover > img {
+  width: calc(var(--chat-emote-size, 27px) * 4);
+  max-width: none;
+  object-fit: fill;
+}
+
+.chat-emote-effect.emote-effect-flip-x > .chat-emote-hover > img {
+  transform: scaleX(-1);
+}
+
+.chat-emote-effect.emote-effect-flip-y > .chat-emote-hover > img {
+  transform: scaleY(-1);
+}
+
+.chat-emote-effect.emote-effect-rotate-left > .chat-emote-hover > img {
+  transform: rotate(-90deg);
+}
+
+.chat-emote-effect.emote-effect-rotate-right > .chat-emote-hover > img {
+  transform: rotate(90deg);
+}
+
+.chat-emote-effect.emote-effect-zero-space {
+  margin-left: -4px;
+}
+
+.chat-emote-effect.emote-effect-cursed > .chat-emote-hover > img {
+  filter: grayscale(1) brightness(.7) contrast(2.5);
+}
+
+.chat-emote-effect.emote-effect-hyper > .chat-emote-hover > img {
+  filter: saturate(2.5) contrast(1.8) sepia(.35) hue-rotate(310deg);
+}
+
+.chat-emote-effect.emote-effect-rainbow > .chat-emote-hover > img,
+.chat-emote-effect.emote-effect-party > .chat-emote-hover > img {
+  animation: vw-emote-rainbow 1.5s linear infinite;
+}
+
+.chat-emote-effect.emote-effect-shake > .chat-emote-hover > img {
+  animation: vw-emote-shake .5s steps(2, jump-none) infinite;
+}
+
+.chat-emote-effect.emote-effect-jam > .chat-emote-hover > img {
+  transform-origin: 50% 100%;
+  animation: vw-emote-jam .5s ease-in-out infinite alternate;
+}
+
+.chat-emote-effect.emote-effect-bounce > .chat-emote-hover > img {
+  transform-origin: 50% 100%;
+  animation: vw-emote-bounce .75s ease-in-out infinite;
+}
+
+@keyframes vw-emote-rainbow {
+  to { filter: sepia(.5) hue-rotate(360deg) saturate(2.5); }
+}
+
+@keyframes vw-emote-shake {
+  0%, 100% { transform: translate(0, 1px); }
+  25% { transform: translate(2px, -1px); }
+  50% { transform: translate(-2px, 1px); }
+  75% { transform: translate(1px, -2px); }
+}
+
+@keyframes vw-emote-jam {
+  from { transform: rotate(-8deg) scaleY(.92); }
+  to { transform: rotate(8deg) scaleY(1.05); }
+}
+
+@keyframes vw-emote-bounce {
+  0%, 100% { transform: scale(1, 1); }
+  35% { transform: scale(1.08, .78); }
+  65% { transform: scaleX(-1) scale(1.05, 1.08); }
 }

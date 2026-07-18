@@ -517,12 +517,15 @@ export class TwitchService {
       login: broadcaster.login,
       displayName: broadcaster.display_name,
       profileImageUrl: broadcaster.profile_image_url,
+      description: broadcaster.description,
       isLive: Boolean(stream),
       title: stream?.title,
+      categoryId: stream?.game_id,
       category: stream?.game_name,
       viewerCount: stream?.viewer_count,
       startedAt: stream?.started_at,
       language: stream?.language,
+      tags: stream?.tags,
       isMature: stream?.is_mature,
     };
 

@@ -29,6 +29,9 @@ describe("PreferencesService", () => {
       preferredPlayerMode: "native",
       chatTimestamps: false,
       chatHistoryLimit: 70,
+      chatFontSize: 18,
+      chatEmoteSize: 32,
+      chatOnLeft: true,
       chatOverlayOpacity: 65,
     });
     const ignoredSecondMigration = await service.getOrMigrate({
@@ -39,6 +42,9 @@ describe("PreferencesService", () => {
       preferredPlayerMode: "native",
       chatTimestamps: false,
       chatHistoryLimit: 70,
+      chatFontSize: 18,
+      chatEmoteSize: 32,
+      chatOnLeft: true,
       chatOverlayOpacity: 65,
     });
     expect(ignoredSecondMigration.preferredPlayerMode).toBe("native");
@@ -51,6 +57,9 @@ describe("PreferencesService", () => {
       preferredPlayerMode: "native",
       chatTimestamps: false,
       chatHistoryLimit: 100,
+      chatFontSize: 21,
+      chatEmoteSize: 40,
+      chatOnLeft: true,
       chatOverlayOpacity: 42,
       mentionSoundEnabled: true,
       oledMode: true,
@@ -64,6 +73,9 @@ describe("PreferencesService", () => {
       preferredPlayerMode: "native",
       chatTimestamps: false,
       chatHistoryLimit: 100,
+      chatFontSize: 21,
+      chatEmoteSize: 40,
+      chatOnLeft: true,
       chatOverlayOpacity: 42,
       mentionSoundEnabled: true,
       oledMode: true,
