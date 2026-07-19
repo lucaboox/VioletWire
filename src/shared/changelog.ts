@@ -2,6 +2,7 @@ export interface ChangelogEntry {
   version: string;
   date?: string;
   additions: string[];
+  improvements: string[];
   fixes: string[];
 }
 
@@ -40,6 +41,7 @@ export function parseChangelog(markdown: string): ChangelogEntry[] {
       version: match[1],
       date: match[2],
       additions: parseList(sectionBody(body, "Additions")),
+      improvements: parseList(sectionBody(body, "Improvements")),
       fixes: parseList(sectionBody(body, "Fixes")),
     });
   });

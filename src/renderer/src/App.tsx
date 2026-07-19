@@ -3770,7 +3770,7 @@ export function App() {
                   <p>
                     {updateStatus.currentVersion
                       ? `You are running version ${updateStatus.currentVersion}.`
-                      : "Additions and fixes included with VioletWire."}
+                      : "Additions, improvements, and fixes included with VioletWire."}
                   </p>
                 </div>
                 <button
@@ -3813,6 +3813,16 @@ export function App() {
                         <ul>
                           {entry.additions.map((addition) => (
                             <li key={addition}>{addition}</li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                    {entry.improvements.length > 0 && (
+                      <section>
+                        <h4>Improvements</h4>
+                        <ul>
+                          {entry.improvements.map((improvement) => (
+                            <li key={improvement}>{improvement}</li>
                           ))}
                         </ul>
                       </section>

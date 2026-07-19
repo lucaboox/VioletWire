@@ -8,6 +8,7 @@ All notable changes to VioletWire are documented in this file.
 
 - Prevented automatic and manual update checks from opening duplicate restart
   prompts after the same installer has already downloaded.
+- Fixed the in-app changelog viewer omitting every entry under Improvements.
 
 ## [0.3.2-alpha.1] - 2026-07-19
 
