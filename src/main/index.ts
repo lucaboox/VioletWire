@@ -656,13 +656,15 @@ function setChatPresentation(presentation: ChatPresentation): void {
   }
 }
 
-function destroyPlayer(invalidatePendingOpen = true): void {
+function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false): void {
   if (invalidatePendingOpen) playerOpenGeneration += 1;
   if (channelActionWindow && !channelActionWindow.isDestroyed()) channelActionWindow.close();
   channelActionWindow = null;
   channelActionKind = null;
   nativePlayer.destroy();
-  textureNativePlayer.destroy();
+  // A native→native channel switch keeps the texture session so mpv can swap
+  // streams in place instead of rebuilding the whole graphics pipeline.
+  if (!keepTextureSession) textureNativePlayer.destroy();
   twitchChatService.disconnect();
   destroyNativeControlsWindow();
   activePlayerMode = null;
@@ -775,7 +777,12 @@ ipcMain.handle(
   const requestedQuality =
     requestedQualityInput === undefined ? "best" : nativeQualitySchema.parse(requestedQualityInput);
   const openGeneration = ++playerOpenGeneration;
-  destroyPlayer(false);
+  const keepTextureSession =
+    requestedMode === "native" &&
+    activePlayerMode === "native" &&
+    activeNativeBackend === "texture" &&
+    preferencesService.get().experimentalTexturePlayer;
+  destroyPlayer(false, keepTextureSession);
   activeChannelName = channel;
 
   let mode = requestedMode;
@@ -784,13 +791,20 @@ ipcMain.handle(
   if (requestedMode === "native") {
     const useTextureBackend = preferencesService.get().experimentalTexturePlayer;
     const textureResult = useTextureBackend
-      ? await textureNativePlayer.start(channel, requestedQuality)
+      ? await textureNativePlayer.start(channel, requestedQuality, {
+          kind: "channel",
+          detail: channel,
+        })
       : null;
     if (openGeneration !== playerOpenGeneration || activeChannelName !== channel) {
       // A newer player request intentionally cancelled this startup. Its
       // cancellation is not a texture failure and must not trigger fallback.
       return { channel, mode: requestedMode };
     }
+    // A failed texture attempt may leave a kept-alive session behind (for
+    // example a reused switch whose URL resolution failed); tear it down
+    // before handing playback to the window-hosted player.
+    if (textureResult && !textureResult.ok) textureNativePlayer.destroy();
     const result =
       textureResult?.ok
         ? textureResult
@@ -892,7 +906,10 @@ ipcMain.handle(
     const quality = nativeQualitySchema.parse(qualityInput);
     const result =
       activeNativeBackend === "texture"
-        ? await textureNativePlayer.start(channel, quality)
+        ? await textureNativePlayer.start(channel, quality, {
+            kind: "quality",
+            detail: quality,
+          })
         : nativePlayer.start(channel, quality);
     if (!result.ok) throw new Error(result.reason);
   },
@@ -903,6 +920,19 @@ ipcMain.on("native-player:control", (_event, input: unknown) => {
   if (!result.success || activePlayerMode !== "native") return;
   if (activeNativeBackend === "texture") textureNativePlayer.control(result.data);
   else nativePlayer.control(result.data);
+});
+
+ipcMain.on("player:preresolve", (_event, input: unknown) => {
+  const result = channelNameSchema.safeParse(input);
+  if (!result.success) return;
+  // Hovering a channel card speculatively resolves its stream URL so a click
+  // skips the Streamlink round trip. Only worthwhile for the texture backend,
+  // which starts from a pre-resolved URL.
+  const preferences = preferencesService.get();
+  if (preferences.preferredPlayerMode !== "native" || !preferences.experimentalTexturePlayer) {
+    return;
+  }
+  textureNativePlayer.preresolve(result.data);
 });
 
 ipcMain.on("native-controls:set-visible", (_event, input: unknown) => {

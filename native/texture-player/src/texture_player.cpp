@@ -55,6 +55,7 @@ struct MpvApi {
   decltype(&mpv_command_async) command_async = nullptr;
   decltype(&mpv_wait_event) wait_event = nullptr;
   decltype(&mpv_terminate_destroy) terminate_destroy = nullptr;
+  decltype(&mpv_error_string) error_string = nullptr;
   decltype(&mpv_render_context_create) render_context_create = nullptr;
   decltype(&mpv_render_context_set_update_callback) render_context_set_update_callback = nullptr;
   decltype(&mpv_render_context_update) render_context_update = nullptr;
@@ -181,6 +182,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       LoadFunction(module_, "mpv_command_async", api_.command_async) &&
       LoadFunction(module_, "mpv_wait_event", api_.wait_event) &&
       LoadFunction(module_, "mpv_terminate_destroy", api_.terminate_destroy) &&
+      LoadFunction(module_, "mpv_error_string", api_.error_string) &&
       LoadFunction(module_, "mpv_render_context_create", api_.render_context_create) &&
       LoadFunction(
         module_,
@@ -235,6 +237,10 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     api_.set_option_string(mpv_, "sws-fast", "yes");
     api_.set_option_string(mpv_, "sws-scaler", "bilinear");
     api_.set_option_string(mpv_, "keep-open", "no");
+    // Every input this bridge ever opens is a Twitch HLS playlist. Telling
+    // ffmpeg the container up front skips its format probing on each stream
+    // open and channel switch, trimming first-frame latency.
+    api_.set_option_string(mpv_, "demuxer-lavf-format", "hls");
     if (api_.initialize(mpv_) < 0) {
       Stop();
       throw Napi::Error::New(env, "libmpv could not initialize.");
@@ -257,9 +263,14 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     render_thread_ = std::thread(&TexturePlayer::RenderLoop, this);
     event_thread_ = std::thread(&TexturePlayer::EventLoop, this);
 
+    // An empty URL initializes the whole graphics/mpv pipeline without
+    // loading anything, so callers can overlap this startup with stream-URL
+    // resolution and send "loadfile" afterwards.
     const std::string url = info[0].As<Napi::String>().Utf8Value();
-    const char* command[] = {"loadfile", url.c_str(), "replace", nullptr};
-    api_.command_async(mpv_, 0, command);
+    if (!url.empty()) {
+      const char* command[] = {"loadfile", url.c_str(), "replace", nullptr};
+      api_.command_async(mpv_, 0, command);
+    }
     RequestRender();
     return env.Undefined();
   }
@@ -1139,9 +1150,25 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         case MPV_EVENT_PLAYBACK_RESTART:
           EmitEvent({"playing"});
           break;
-        case MPV_EVENT_END_FILE:
-          EmitEvent({"stopped"});
+        case MPV_EVENT_END_FILE: {
+          // Ending by error must be distinguishable from an intentional stop:
+          // the host suppresses "stopped" during in-place stream switches and
+          // would otherwise hide genuine open/playback failures.
+          const auto* end = static_cast<const mpv_event_end_file*>(event->data);
+          if (end && end->reason == MPV_END_FILE_REASON_ERROR) {
+            const char* description =
+              api_.error_string ? api_.error_string(end->error) : "playback error";
+            EmitEvent({
+              "error",
+              false,
+              0,
+              std::string("The stream ended unexpectedly: ") + description + ".",
+            });
+          } else {
+            EmitEvent({"stopped"});
+          }
           break;
+        }
         case MPV_EVENT_PROPERTY_CHANGE: {
           const auto* property = static_cast<mpv_event_property*>(event->data);
           if (!property || !property->data) break;

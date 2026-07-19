@@ -100,7 +100,7 @@ export interface NativeControlsContext {
   viewerLogin?: string;
 }
 
-function formatQualityLabel(quality: NativeQualityValue): string {
+export function formatQualityLabel(quality: NativeQualityValue): string {
   if (quality === "best") return "Auto";
   if (quality === "worst") return "Lowest";
   if (quality === "source") return "Source";
@@ -162,6 +162,13 @@ export interface NativePlayerAvailability {
   textureReason?: string;
 }
 
+// Why the player is currently in "starting": lets the loading surface say
+// "Loading <channel>" or "Switching to 1080p" instead of a generic label.
+export interface NativePlayerTransition {
+  kind: "channel" | "quality";
+  detail: string;
+}
+
 export interface NativePlayerState {
   status: "idle" | "starting" | "playing" | "stopped" | "error";
   paused: boolean;
@@ -171,6 +178,7 @@ export interface NativePlayerState {
   behindLive: boolean;
   quality: NativeQualityValue;
   error?: string;
+  transition?: NativePlayerTransition;
 }
 
 export interface DesktopApi {
@@ -191,6 +199,7 @@ export interface DesktopApi {
     }>;
     close(): Promise<void>;
     setBounds(bounds: PlayerBounds): void;
+    preresolveStream(channel: string): void;
     setChatBounds(bounds: PlayerBounds): void;
     setChatVisible(visible: boolean): void;
     setChatPresentation(presentation: ChatPresentation): void;

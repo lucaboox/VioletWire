@@ -6,6 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import type {
   NativePlayerCommand,
   NativePlayerState,
+  NativePlayerTransition,
   NativeQualityValue,
   PlayerBounds,
 } from "../shared/player";
@@ -104,6 +105,11 @@ function resolveNativePaths(): {
   };
 }
 
+// Usher playlist URLs stay valid well past this window; keep it short so a
+// cache hit never hands mpv an expired token.
+const RESOLVE_CACHE_LIFETIME = 60_000;
+const MAX_CONCURRENT_PRERESOLVES = 2;
+
 export class TextureNativePlayer {
   private session: TexturePlayerSession | null = null;
   private resolverProcess: ChildProcess | null = null;
@@ -112,6 +118,15 @@ export class TextureNativePlayer {
   private transferSequence = 0;
   private startGeneration = 0;
   private stopping = false;
+  // True between a live-session "loadfile replace" and the incoming stream's
+  // first "playing" event; the old stream's end-of-file must not surface as a
+  // "stopped" player state mid-switch.
+  private switchPending = false;
+  private readonly resolveCache = new Map<
+    string,
+    { expiresAt: number; url: Promise<string> }
+  >();
+  private readonly preresolveProcesses = new Set<ChildProcess>();
   private state: NativePlayerState = {
     status: "idle",
     paused: false,
@@ -156,7 +171,21 @@ export class TextureNativePlayer {
   async start(
     channel: string,
     quality: NativeQualityValue,
+    transition?: NativePlayerTransition,
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    // A healthy live session switches streams in place: mpv, the D3D/GL
+    // bridge, and the shared-texture slots all survive, so a channel or
+    // quality change only pays for URL resolution.
+    const liveSession = this.session;
+    if (
+      liveSession &&
+      liveSession.acceptingFrames &&
+      !this.stopping &&
+      this.state.status !== "error"
+    ) {
+      return this.switchStream(liveSession, channel, quality, transition);
+    }
+
     this.destroy();
     const generation = this.startGeneration;
     const availability = this.getAvailability();
@@ -178,13 +207,15 @@ export class TextureNativePlayer {
       behindLive: false,
       quality,
       error: undefined,
+      transition,
     });
 
     try {
-      const [streamUrl, gpuDevice] = await Promise.all([
-        this.resolveStreamUrl(channel, quality),
-        this.getChromiumGpuDevice(),
-      ]);
+      // Kick off URL resolution first, then build the mpv/graphics pipeline
+      // while Streamlink works — the two dominate startup and fully overlap.
+      const streamUrlPromise = this.resolveStreamUrlCached(channel, quality);
+      streamUrlPromise.catch(() => undefined);
+      const gpuDevice = await this.getChromiumGpuDevice();
       if (this.stopping || generation !== this.startGeneration) {
         return { ok: false, reason: "Texture playback was cancelled." };
       }
@@ -212,12 +243,17 @@ export class TextureNativePlayer {
       sessionHolder.current = session;
       this.session = session;
       addon.start(
-        streamUrl,
+        "",
         this.lastBounds.width,
         this.lastBounds.height,
         gpuDevice?.vendorId,
         gpuDevice?.deviceId,
       );
+      const streamUrl = await streamUrlPromise;
+      if (this.stopping || generation !== this.startGeneration || this.session !== session) {
+        return { ok: false, reason: "Texture playback was cancelled." };
+      }
+      session.addon.command(["loadfile", streamUrl, "replace"]);
       return { ok: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -226,6 +262,75 @@ export class TextureNativePlayer {
       if (generation === this.startGeneration) this.destroy();
       return { ok: false, reason };
     }
+  }
+
+  private async switchStream(
+    session: TexturePlayerSession,
+    channel: string,
+    quality: NativeQualityValue,
+    transition?: NativePlayerTransition,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const generation = this.startGeneration;
+    this.updateState({
+      status: "starting",
+      paused: false,
+      behindLive: false,
+      quality,
+      error: undefined,
+      transition,
+    });
+    this.switchPending = true;
+    // Silence the outgoing stream the instant the user picks a new one:
+    // otherwise its video and audio keep running through the whole URL
+    // resolution, which reads as the app lagging behind the click.
+    session.addon.command(["stop"]);
+    try {
+      const streamUrl = await this.resolveStreamUrlCached(channel, quality);
+      if (this.stopping || generation !== this.startGeneration || this.session !== session) {
+        return { ok: false, reason: "Texture playback was cancelled." };
+      }
+      session.addon.command(["loadfile", streamUrl, "replace"]);
+      session.addon.command(["set", "pause", "no"]);
+      return { ok: true };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (generation === this.startGeneration && this.session === session) {
+        this.switchPending = false;
+        this.updateState({ status: "error", error: reason, transition: undefined });
+      }
+      return { ok: false, reason };
+    }
+  }
+
+  preresolve(channel: string): void {
+    if (!this.getAvailability().available) return;
+    const key = `${channel.toLowerCase()}:best`;
+    const cached = this.resolveCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return;
+    if (this.preresolveProcesses.size >= MAX_CONCURRENT_PRERESOLVES) return;
+    const url = this.resolveStreamUrl(channel, "best", false);
+    this.storeResolvedUrl(key, url);
+    url.catch(() => undefined);
+  }
+
+  private resolveStreamUrlCached(
+    channel: string,
+    quality: NativeQualityValue,
+  ): Promise<string> {
+    const key = `${channel.toLowerCase()}:${quality}`;
+    const cached = this.resolveCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.url;
+    const url = this.resolveStreamUrl(channel, quality, true);
+    this.storeResolvedUrl(key, url);
+    return url;
+  }
+
+  private storeResolvedUrl(key: string, url: Promise<string>): void {
+    const entry = { expiresAt: Date.now() + RESOLVE_CACHE_LIFETIME, url };
+    this.resolveCache.set(key, entry);
+    url.catch(() => {
+      if (this.resolveCache.get(key) === entry) this.resolveCache.delete(key);
+    });
   }
 
   setBounds(bounds: PlayerBounds): void {
@@ -289,6 +394,7 @@ export class TextureNativePlayer {
   destroy(): void {
     this.startGeneration += 1;
     this.stopping = true;
+    this.switchPending = false;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeTimer = null;
     this.resolverProcess?.kill();
@@ -304,12 +410,16 @@ export class TextureNativePlayer {
       behindLive: false,
       quality: "best",
       error: undefined,
+      transition: undefined,
     });
   }
 
   private resolveStreamUrl(
     channel: string,
     quality: NativeQualityValue,
+    // Primary resolves belong to an active start and die with it; hover
+    // pre-resolves outlive destroy() so their cache entry stays useful.
+    trackAsPrimary: boolean,
   ): Promise<string> {
     const streamlinkPath = this.getStreamlinkPath();
     if (!streamlinkPath) return Promise.reject(new Error("Streamlink is unavailable."));
@@ -336,7 +446,8 @@ export class TextureNativePlayer {
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
-      this.resolverProcess = child;
+      if (trackAsPrimary) this.resolverProcess = child;
+      else this.preresolveProcesses.add(child);
       let output = "";
       let errorOutput = "";
       let settled = false;
@@ -345,6 +456,7 @@ export class TextureNativePlayer {
         settled = true;
         clearTimeout(timeout);
         if (this.resolverProcess === child) this.resolverProcess = null;
+        this.preresolveProcesses.delete(child);
         if (error) reject(error);
         else {
           const url = output
@@ -402,6 +514,14 @@ export class TextureNativePlayer {
       window.isDestroyed() ||
       window.webContents.isDestroyed()
     ) {
+      session.addon.releaseFrame(frame.slot);
+      return;
+    }
+
+    // Frames still in flight from the outgoing stream are stale the moment a
+    // switch begins; presenting them would repaint the old channel under the
+    // loading surface. The flag clears when the new stream starts playing.
+    if (this.switchPending) {
       session.addon.releaseFrame(frame.slot);
       return;
     }
@@ -471,10 +591,15 @@ export class TextureNativePlayer {
     session.consecutiveTransferFailures = 0;
     session.firstTransferFailureAt = undefined;
     session.graphicsRecoveryAttempts = 0;
+    // During an in-place stream switch, frames from the outgoing stream keep
+    // transferring until mpv swaps files. They must not present the player as
+    // already "playing" the incoming channel — the loading surface stays up
+    // until the new stream's first frame arrives.
+    if (this.switchPending) return;
     // "Playing" means Chromium has actually accepted a presentable frame,
     // rather than merely that mpv has decoded audio or opened the stream.
     if (this.state.status !== "playing") {
-      this.updateState({ status: "playing", error: undefined });
+      this.updateState({ status: "playing", error: undefined, transition: undefined });
     }
   }
 
@@ -502,7 +627,7 @@ export class TextureNativePlayer {
         );
         return;
       }
-      this.updateState({ status: "error", error: message });
+      this.updateState({ status: "error", error: message, transition: undefined });
       return;
     }
 
@@ -536,15 +661,24 @@ export class TextureNativePlayer {
   private handleEvent(session: TexturePlayerSession, event: TextureEvent): void {
     if (this.stopping || this.session !== session) return;
     if (event.type === "playing") {
+      this.switchPending = false;
       // Keep the loading surface visible until the first texture transfer
       // succeeds. mpv can report playback restart before Chromium has a frame.
       if (this.state.status === "stopped") {
         this.updateState({ status: "starting", error: undefined });
       }
     } else if (event.type === "stopped") {
-      this.updateState({ status: "stopped" });
+      if (this.switchPending) {
+        // The explicit "stop" and the old file's end both surface here while
+        // a switch is in flight; neither is a stop of the incoming stream.
+        // The pending flag only clears on the new stream's "playing" event
+        // or a real error, so stragglers can never leak a wrong state.
+        return;
+      }
+      this.updateState({ status: "stopped", transition: undefined });
     } else if (event.type === "error") {
-      this.updateState({ status: "error", error: event.message ?? "Texture playback failed." });
+      this.switchPending = false;
+      this.updateState({ status: "error", error: event.message ?? "Texture playback failed.", transition: undefined });
     } else if (event.type === "renderer") {
       console.info(`[texture-player] ${event.message ?? "Selected the texture renderer."}`);
     } else if (event.type === "diagnostic") {

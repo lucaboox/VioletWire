@@ -148,6 +148,7 @@ const api: DesktopApi = {
       ipcRenderer.invoke("player:open", channel, mode, quality),
     close: () => ipcRenderer.invoke("player:close"),
     setBounds: (bounds: PlayerBounds) => ipcRenderer.send("player:set-bounds", bounds),
+    preresolveStream: (channel: string) => ipcRenderer.send("player:preresolve", channel),
     setChatBounds: (bounds: PlayerBounds) => ipcRenderer.send("player:set-chat-bounds", bounds),
     setChatVisible: (visible) => ipcRenderer.send("player:set-chat-visible", visible),
     setChatPresentation: (presentation: ChatPresentation) =>
