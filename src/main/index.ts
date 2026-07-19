@@ -73,6 +73,7 @@ let channelActionWindow: BrowserWindow | null = null;
 let channelActionKind: ChannelAction | null = null;
 let nativeControlsVisible = true;
 let nativeControlsExpanded = false;
+let nativePlayerPaused = false;
 let nativeEmotePickerOpen = false;
 // Measured position of the detached emote picker inside the controls window,
 // reported by the renderer so the clickable window region hugs the visible
@@ -171,15 +172,27 @@ const twitchChatService = new TwitchChatService(
 const nativePlayer = new NativePlayer(
   () => mainWindow,
   (state) => {
+    nativePlayerPaused = state.paused;
     sendToWindow(mainWindow, "native-player:state", state);
     sendToWindow(nativeControlsWindow, "native-player:state", state);
     if (state.status === "playing" && chatOverlayWindow) {
       applyChatBounds();
       chatOverlayWindow.moveTop();
     }
-    if (state.status === "playing" && nativeControlsWindow && nativeControlsVisible) {
+    if (state.status === "playing" && nativeControlsWindow) {
       applyNativeControlsBounds();
-      nativeControlsWindow.moveTop();
+      if (
+        !nativeControlsVisible &&
+        !nativePlayerPaused &&
+        !nativeControlsExpanded &&
+        !nativeEmotePickerOpen &&
+        !(nativeControlsContext?.chatVisible &&
+          nativeControlsContext.chatPresentation === "overlay")
+      ) {
+        nativeControlsWindow.hide();
+      } else {
+        nativeControlsWindow.moveTop();
+      }
     }
   },
   () => playbackSessionService.getToken(),
@@ -289,6 +302,17 @@ function applyNativeControlsBounds(): void {
       height: Math.min(78, playerHeight),
     },
   ];
+  const centerPlaySize = Math.min(104, playerWidth, playerHeight);
+  const centerPlayShape = nativePlayerPaused
+    ? [
+        {
+          x: playerX + Math.max(0, Math.round((playerWidth - centerPlaySize) / 2)),
+          y: playerY + Math.max(0, Math.round((playerHeight - centerPlaySize) / 2)),
+          width: centerPlaySize,
+          height: centerPlaySize,
+        },
+      ]
+    : [];
   // Prefer the renderer-measured picker rectangle (plus a small margin for
   // the resize handle) so no invisible interactive band surrounds the picker
   // and swallows clicks meant for the chat behind it. The fixed rectangle is
@@ -321,9 +345,9 @@ function applyNativeControlsBounds(): void {
   nativeControlsWindow.setShape(
     nativeControlsExpanded || nativeChatOverlay
       ? [{ x: 0, y: 0, width, height }]
-      : [...normalControlShape, ...pickerShape],
+      : [...normalControlShape, ...centerPlayShape, ...pickerShape],
   );
-  if (nativeControlsVisible) {
+  if (nativeControlsVisible || nativePlayerPaused) {
     nativeControlsWindow.showInactive();
     nativeControlsWindow.moveTop();
   }
@@ -383,6 +407,7 @@ function destroyNativeControlsWindow(): void {
   nativeControlsWindow = null;
   nativeControlsVisible = true;
   nativeControlsExpanded = false;
+  nativePlayerPaused = false;
   nativeEmotePickerOpen = false;
   nativeEmotePickerBounds = null;
   nativeControlsContext = null;
@@ -890,6 +915,7 @@ ipcMain.on("native-controls:set-visible", (_event, input: unknown) => {
     nativeControlsWindow.moveTop();
   } else if (
     !nativeControlsExpanded &&
+    !nativePlayerPaused &&
     !nativeEmotePickerOpen &&
     !(nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay")
   ) {
@@ -1009,7 +1035,16 @@ ipcMain.handle("system:open-external", async (_event, input: unknown) => {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error("Only web links can be opened.");
   }
-  await shell.openExternal(url.toString());
+  // Opening a browser is a one-way action. Do not keep the renderer's IPC
+  // request pending while Windows waits for the default-browser shell command
+  // to finish, particularly while texture playback is keeping the main process
+  // busy with frame transfers.
+  void shell.openExternal(url.toString()).catch((reason: unknown) => {
+    console.error(
+      "[external-link] Unable to open URL:",
+      reason instanceof Error ? reason.message : String(reason),
+    );
+  });
 });
 
 ipcMain.handle("channel:open-action", async (_event, rawChannel: unknown, rawAction: unknown) => {

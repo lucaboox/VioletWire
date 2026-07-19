@@ -1,0 +1,109 @@
+.chat-toggle-switch {
+  position: relative;
+  display: inline-flex;
+  width: 34px;
+  height: 19px;
+  flex: 0 0 auto;
+}
+
+.chat-toggle-switch input {
+  position: absolute;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.chat-toggle-track {
+  position: absolute;
+  inset: 0;
+  border: 1px solid #555561;
+  border-radius: 999px;
+  background: #303037;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.chat-toggle-track::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #b7b7c0;
+  box-shadow: 0 1px 3px #0008;
+  content: "";
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.chat-toggle-switch input:checked + .chat-toggle-track {
+  border-color: #a970ff;
+  background: #7c3aed;
+}
+
+.chat-toggle-switch input:checked + .chat-toggle-track::after {
+  background: white;
+  transform: translateX(15px);
+}
+
+.chat-toggle-switch input:focus-visible + .chat-toggle-track {
+  outline: 2px solid #c4a1ff;
+  outline-offset: 2px;
+}
+
+.mention-sound-controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: end;
+  gap: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #34343b;
+}
+
+.mention-sound-controls + .chat-toggle-setting {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #34343b;
+}
+
+.mention-sound-preview {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid #59416e;
+  border-radius: 6px;
+  color: #eee8f5;
+  background: #2b2035;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.mention-sound-preview:hover {
+  border-color: #8b5cf6;
+  background: #3a2948;
+}
+
+.mention-sound-volume {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 5px !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.mention-sound-volume span {
+  color: #aaaab3;
+  font-size: 10px;
+}
+
+.mention-sound-volume input {
+  width: 100%;
+  margin: 0;
+  accent-color: #a970ff;
+}

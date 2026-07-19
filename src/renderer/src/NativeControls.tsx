@@ -69,6 +69,10 @@ import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
 import { ChatEmote } from "./ChatEmote";
+import {
+  ChatToggleSetting,
+  MentionSoundControls,
+} from "./ChatSettingsControls";
 import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
 import {
@@ -337,6 +341,7 @@ export function NativeControls({
   const [chatDeletedMessageStyle, setChatDeletedMessageStyle] =
     useState<AppPreferences["chatDeletedMessageStyle"]>("placeholder");
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
+  const [mentionSoundVolume, setMentionSoundVolume] = useState(70);
   const [revealedDeletedMessages, setRevealedDeletedMessages] = useState<Set<string>>(
     new Set(),
   );
@@ -357,6 +362,7 @@ export function NativeControls({
     chatDeletedMessageStyle,
     chatOverlayOpacity: chatOpacity,
     mentionSoundEnabled,
+    mentionSoundVolume,
     oledMode,
     audioCompression: audioCompressionPreference,
   });
@@ -504,6 +510,7 @@ export function NativeControls({
       setChatEmoteSize(preferences.chatEmoteSize);
       setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
+      setMentionSoundVolume(preferences.mentionSoundVolume);
       setOledMode(preferences.oledMode);
       setAudioCompressionPreference(preferences.audioCompression);
       setPreferencesReady(true);
@@ -528,18 +535,22 @@ export function NativeControls({
   useEffect(() => {
     if (!preferencesReady) return;
     window.desktop.chat.setHistoryLimit(chatHistoryLimit);
-    void window.desktop.preferences
-      .update({
-        chatOverlayOpacity: chatOpacity,
-        chatTimestamps,
-        chatHistoryLimit,
-        chatFontSize,
-        chatEmoteSize,
-        chatDeletedMessageStyle,
-        mentionSoundEnabled,
-        audioCompression: audioCompressionPreference,
-      })
-      .catch(() => undefined);
+    const persistTimer = window.setTimeout(() => {
+      void window.desktop.preferences
+        .update({
+          chatOverlayOpacity: chatOpacity,
+          chatTimestamps,
+          chatHistoryLimit,
+          chatFontSize,
+          chatEmoteSize,
+          chatDeletedMessageStyle,
+          mentionSoundEnabled,
+          mentionSoundVolume,
+          audioCompression: audioCompressionPreference,
+        })
+        .catch(() => undefined);
+    }, 180);
+    return () => window.clearTimeout(persistTimer);
   }, [
     audioCompressionPreference,
     chatHistoryLimit,
@@ -549,6 +560,7 @@ export function NativeControls({
     chatOpacity,
     chatTimestamps,
     mentionSoundEnabled,
+    mentionSoundVolume,
     preferencesReady,
   ]);
 
@@ -766,11 +778,15 @@ export function NativeControls({
   }
 
   function revealChatComposer() {
-    if (!chatAutoScroll) return;
-    window.requestAnimationFrame(() => {
+    if (!chatAutoScrollRef.current) return;
+    const startedAt = window.performance.now();
+    const keepPinned = (now: number) => {
+      if (!chatAutoScrollRef.current) return;
       const host = chatMessagesHost.current;
       if (host) host.scrollTop = host.scrollHeight;
-    });
+      if (now - startedAt < 200) window.requestAnimationFrame(keepPinned);
+    };
+    window.requestAnimationFrame(keepPinned);
   }
 
   async function sendChatMessage(event: FormEvent) {
@@ -849,10 +865,12 @@ export function NativeControls({
     }
   }
 
-  function goLive() {
-    if (!channel || !state.behindLive) return;
+  function togglePlayback() {
+    if (!channel) return;
     closeMenu();
-    window.desktop.player.controlNative({ command: "go-live" });
+    window.desktop.player.controlNative({
+      command: state.paused ? "go-live" : "toggle-pause",
+    });
   }
 
   function selectChatLayout(action: "hide-chat" | "side-chat" | "overlay-chat") {
@@ -888,7 +906,9 @@ export function NativeControls({
         window.desktop.player.sendNativeControlAction("toggle-fullscreen");
       } else if (event.code === "Space") {
         event.preventDefault();
-        window.desktop.player.controlNative({ command: "toggle-pause" });
+        window.desktop.player.controlNative({
+          command: state.paused ? "go-live" : "toggle-pause",
+        });
       } else if (key === "m") {
         window.desktop.player.controlNative({ command: "toggle-mute" });
       } else if (event.key === "Escape" && context.fullscreen) {
@@ -909,6 +929,7 @@ export function NativeControls({
     emotePickerOpen,
     inline,
     openMenu,
+    state.paused,
   ]);
 
   if (!context) return null;
@@ -1017,34 +1038,29 @@ export function NativeControls({
                     value={chatOpacity}
                   />
                 </label>
-                <label className="native-chat-toggle-setting">
-                  <span>Show timestamps</span>
-                  <input
-                    checked={chatTimestamps}
-                    onChange={(event) => setChatTimestamps(event.target.checked)}
-                    type="checkbox"
-                  />
-                </label>
-                <label className="native-chat-toggle-setting">
-                  <span>Mention sound</span>
-                  <input
-                    checked={mentionSoundEnabled}
-                    onChange={(event) => setMentionSoundEnabled(event.target.checked)}
-                    type="checkbox"
-                  />
-                </label>
-                <label className="native-chat-toggle-setting">
-                  <span>Dim deleted messages</span>
-                  <input
-                    checked={chatDeletedMessageStyle === "dimmed"}
-                    onChange={(event) =>
-                      setChatDeletedMessageStyle(
-                        event.target.checked ? "dimmed" : "placeholder",
-                      )
-                    }
-                    type="checkbox"
-                  />
-                </label>
+                <ChatToggleSetting
+                  checked={chatTimestamps}
+                  label="Show timestamps"
+                  onChange={setChatTimestamps}
+                />
+                <ChatToggleSetting
+                  checked={mentionSoundEnabled}
+                  label="Mention sound"
+                  onChange={setMentionSoundEnabled}
+                />
+                <MentionSoundControls
+                  onVolumeChange={setMentionSoundVolume}
+                  volume={mentionSoundVolume}
+                />
+                <ChatToggleSetting
+                  checked={chatDeletedMessageStyle === "dimmed"}
+                  label="Dim deleted messages"
+                  onChange={(checked) =>
+                    setChatDeletedMessageStyle(
+                      checked ? "dimmed" : "placeholder",
+                    )
+                  }
+                />
                 <label>
                   <span>Font size: {chatFontSize}px</span>
                   <input
@@ -1438,11 +1454,24 @@ export function NativeControls({
           </div>
         </div>
       )}
+      {state.paused && (
+        <button
+          aria-label="Play and return to live"
+          className="native-center-play"
+          onClick={togglePlayback}
+          title="Play and return to live"
+          type="button"
+        >
+          <Play aria-hidden="true" fill="currentColor" size={42} />
+        </button>
+      )}
       <div className="controls-bar" aria-label="Native player controls">
         <button
           aria-label={state.paused ? "Play" : "Pause"}
-          data-tooltip={state.paused ? "Play (Space)" : "Pause (Space)"}
-          onClick={() => window.desktop.player.controlNative({ command: "toggle-pause" })}
+          data-tooltip={
+            state.paused ? "Play and return to live (Space)" : "Pause (Space)"
+          }
+          onClick={togglePlayback}
           type="button"
         >
           {state.paused ? <Play size={19} /> : <Pause size={19} />}
@@ -1488,15 +1517,27 @@ export function NativeControls({
           <AudioLines size={18} />
         </button>
         <span className="control-spacer" />
-        <button
-          aria-label={state.behindLive ? "Go to live edge" : "At live edge"}
-          className={`live-state ${state.status}${state.behindLive ? " behind-live" : ""}`}
-          data-tooltip={state.behindLive ? "Go live" : undefined}
-          onClick={goLive}
-          type="button"
+        <div
+          aria-label={
+            state.paused
+              ? "Playback paused"
+              : state.behindLive
+                ? "Playback behind live"
+                : "Playback at live edge"
+          }
+          className={`live-state ${state.status}${
+            state.paused || state.behindLive ? " behind-live" : ""
+          }`}
+          role="status"
         >
-          {state.behindLive ? "Go live" : state.status === "playing" ? "Live" : state.status}
-        </button>
+          {state.paused
+            ? "Paused"
+            : state.behindLive
+              ? "Behind live"
+              : state.status === "playing"
+                ? "Live"
+                : state.status}
+        </div>
         <button
           aria-label={`Stream quality: ${qualityLabel}`}
           aria-expanded={openMenu === "quality"}

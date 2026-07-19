@@ -438,7 +438,9 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-panel:has(.vw-emote-picker) .chat-host,
 .chat-panel:has(.vw-emote-picker) .native-chat { overflow: visible; }
 .chat-panel:has(.vw-emote-picker) .native-chat-input { z-index: 91; }
-.chat-overlay-mode .chat-panel.overlay { position: absolute; z-index: 8; top: 18px; right: 18px; bottom: 70px; width: min(370px, 32vw); overflow: visible; border: 1px solid #3a3a42; border-radius: 11px; background: #18181be8; box-shadow: 0 18px 55px #000b; }
+.chat-overlay-mode .chat-panel.overlay { --overlay-scroll-track: #17171b; position: absolute; z-index: 8; top: 18px; right: 18px; bottom: 70px; width: min(370px, 32vw); overflow: visible; border: 1px solid transparent; border-radius: 11px; background: #18181be8; box-shadow: 0 18px 55px #000b; transition: border-color 120ms ease; }
+.oled-mode .chat-overlay-mode .chat-panel.overlay { --overlay-scroll-track: #000; }
+.chat-overlay-mode .chat-panel.overlay:hover, .chat-overlay-mode .chat-panel.overlay:focus-within { border-color: #3a3a42; }
 .chat-panel.overlay { grid-template-rows: minmax(0, 1fr); }
 .chat-panel.overlay .chat-panel-header { display: none; }
 .chat-panel-header { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 1px solid #29292f; background: #151519; }
@@ -448,8 +450,16 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-host { min-width: 300px; min-height: 0; background: #18181b; }
 .native-chat { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: #18181b; }
 .chat-panel.overlay .native-chat { border-radius: 11px; background: transparent; }
-.chat-panel.overlay .chat-messages { padding-top: 38px; padding-bottom: 14px; }
-.chat-panel.overlay:hover .chat-messages, .chat-panel.overlay:focus-within .chat-messages { padding-bottom: var(--chat-composer-space, 68px); }
+.chat-panel.overlay .chat-messages { margin-bottom: 0; padding-top: 38px; padding-bottom: 14px; scrollbar-color: transparent transparent; scrollbar-gutter: auto; scrollbar-width: none; transition: margin-bottom 180ms ease; }
+.chat-panel.overlay .chat-messages::-webkit-scrollbar { width: 0; }
+.chat-panel.overlay .chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-panel.overlay .chat-messages::-webkit-scrollbar-thumb { border-color: transparent; background: transparent; }
+.chat-panel.overlay .chat-messages:hover { scrollbar-color: #55515f var(--overlay-scroll-track); scrollbar-width: thin; }
+.chat-panel.overlay .chat-messages:hover::-webkit-scrollbar { width: 10px; }
+.chat-panel.overlay .chat-messages:hover::-webkit-scrollbar-track { background: var(--overlay-scroll-track); }
+.chat-panel.overlay .chat-messages:hover::-webkit-scrollbar-thumb { border-color: var(--overlay-scroll-track); background: #55515f; }
+.chat-panel.overlay .chat-messages:hover::-webkit-scrollbar-thumb:hover { background: #716b7c; }
+.chat-panel.overlay:hover .chat-messages, .chat-panel.overlay:focus-within .chat-messages { margin-bottom: var(--chat-composer-space, 68px); }
 .chat-messages { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 10px 9px 14px; scrollbar-gutter: stable; transition: padding-bottom 140ms ease; }
 .chat-messages.scroll-paused { overflow-anchor: none; transition: none; }
 .chat-empty-state { display: grid; min-height: 100%; place-content: center; padding: 24px; color: #777781; font-size: 12px; line-height: 1.5; text-align: center; }
@@ -536,7 +546,8 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-panel.overlay .native-chat-input { position: absolute; z-index: 7; right: 0; bottom: 0; left: 0; border-radius: 0 0 11px 11px; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity 140ms ease, transform 140ms ease; }
 .chat-panel.overlay:hover .native-chat-input, .chat-panel.overlay:focus-within .native-chat-input { opacity: 1; pointer-events: auto; transform: translateY(0); }
 .scroll-to-current { position: absolute; z-index: 8; right: 50%; bottom: var(--chat-composer-space, 98px); display: flex; align-items: center; gap: 5px; padding: 7px 12px; border: 1px solid #59416e; border-radius: 999px; color: #eee8f5; background: #2b2035f2; box-shadow: 0 7px 22px #0009; cursor: pointer; font-size: 10px; font-weight: 700; transform: translateX(50%); transition: bottom 140ms ease; }
-.chat-panel.overlay .scroll-to-current { bottom: var(--chat-composer-space, 58px); }
+.chat-panel.overlay .scroll-to-current { bottom: 12px; }
+.chat-panel.overlay:hover .scroll-to-current, .chat-panel.overlay:focus-within .scroll-to-current { bottom: var(--chat-composer-space, 58px); }
 .scroll-to-current:hover { background: #3a2948; }
 .chat-overlay-tools { position: absolute; z-index: 25; top: 8px; right: 8px; display: flex; gap: 4px; opacity: 0; transition: opacity 120ms ease; }
 .chat-panel.overlay:hover .chat-overlay-tools, .chat-panel.overlay:focus-within .chat-overlay-tools { opacity: 1; }
@@ -548,7 +559,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-overlay-settings label + label { margin-top: 10px; padding-top: 9px; border-top: 1px solid #34343b; }
 .chat-overlay-settings input { width: 100%; accent-color: #a78bfa; }
 .chat-overlay-settings .chat-toggle-setting { grid-template-columns: minmax(0, 1fr) auto; font-size: 10px; }
-.chat-overlay-settings .chat-toggle-setting input { width: 15px; height: 15px; margin: 0; }
+.chat-overlay-settings .chat-toggle-switch input { position: absolute; width: 100%; height: 100%; margin: 0; opacity: 0; }
 .chat-header-actions { position: relative; display: flex; align-items: center; justify-self: end; gap: 2px; }
 .chat-collapse-button { justify-self: start; }
 .chat-edge-restore { position: absolute; z-index: 16; top: 12px; right: 0; display: grid; width: 34px; height: 36px; padding: 0; place-items: center; border: 1px solid #3a3a42; border-right: 0; border-radius: 8px 0 0 8px; color: #d4d4d8; background: #18181bf2; box-shadow: 0 8px 24px #0009; cursor: pointer; }

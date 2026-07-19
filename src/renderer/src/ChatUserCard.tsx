@@ -16,6 +16,30 @@ interface ChatUserCardProps {
   selected: ChatMessage;
 }
 
+interface CardPosition {
+  left: number;
+  top: number;
+}
+
+function clampCardPosition(
+  position: CardPosition,
+  width: number,
+  height: number,
+): CardPosition {
+  const margin = 8;
+  const left = Math.max(
+    margin,
+    Math.min(Math.max(margin, window.innerWidth - width - margin), position.left),
+  );
+  const top = Math.max(
+    margin,
+    Math.min(Math.max(margin, window.innerHeight - height - margin), position.top),
+  );
+  return left === position.left && top === position.top
+    ? position
+    : { left, top };
+}
+
 function formatDate(value: string | undefined): string {
   if (!value) return "Unknown";
   const date = new Date(value);
@@ -46,7 +70,7 @@ function tierLabel(tier: string | undefined): string {
 export function ChatUserCard({ anchor, badges, channel, messages, onClose, renderText, selected }: ChatUserCardProps) {
   const [profile, setProfile] = useState<ChatUserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const [position, setPosition] = useState<CardPosition | null>(null);
   const cardRef = useRef<HTMLElement>(null);
   const dragOffset = useRef<{ x: number; y: number } | null>(null);
   const userMessages = useMemo(
@@ -100,6 +124,35 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
     setPosition({ left, top });
   }, [anchor, selected.login]);
 
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    setPosition((current) =>
+      current
+        ? clampCardPosition(current, card.offsetWidth, card.offsetHeight)
+        : current,
+    );
+  }, [error, profile]);
+
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    const keepCardOnScreen = () => {
+      setPosition((current) =>
+        current
+          ? clampCardPosition(current, card.offsetWidth, card.offsetHeight)
+          : current,
+      );
+    };
+    const observer = new ResizeObserver(keepCardOnScreen);
+    observer.observe(card);
+    window.addEventListener("resize", keepCardOnScreen);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", keepCardOnScreen);
+    };
+  }, []);
+
   useEffect(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
       if (event.target instanceof Node && !cardRef.current?.contains(event.target)) onClose();
@@ -110,10 +163,13 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
       if (!offset || !card) return;
       const width = card.offsetWidth;
       const height = card.offsetHeight;
-      setPosition({
-        left: Math.max(8, Math.min(window.innerWidth - width - 8, event.clientX - offset.x)),
-        top: Math.max(8, Math.min(window.innerHeight - height - 8, event.clientY - offset.y)),
-      });
+      setPosition(
+        clampCardPosition(
+          { left: event.clientX - offset.x, top: event.clientY - offset.y },
+          width,
+          height,
+        ),
+      );
     };
     const stopDrag = () => {
       dragOffset.current = null;

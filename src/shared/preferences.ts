@@ -13,6 +13,7 @@ export const appPreferencesSchema = z.object({
   chatOnLeft: z.boolean(),
   chatOverlayOpacity: z.number().int().min(25).max(100),
   mentionSoundEnabled: z.boolean(),
+  mentionSoundVolume: z.number().int().min(0).max(100),
   oledMode: z.boolean(),
   audioCompression: z.boolean(),
   // These live here rather than in localStorage: the packaged renderer is
@@ -40,6 +41,7 @@ export const defaultAppPreferences: AppPreferences = {
   chatOnLeft: false,
   chatOverlayOpacity: 88,
   mentionSoundEnabled: false,
+  mentionSoundVolume: 70,
   oledMode: false,
   audioCompression: false,
   lastSeenChangelogVersion: "",

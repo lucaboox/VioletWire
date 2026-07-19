@@ -62,6 +62,7 @@ input {
 
 .controls-surface.inline-controls .controls-bar,
 .controls-surface.inline-controls .control-popover,
+.controls-surface.inline-controls .native-center-play,
 .controls-surface.inline-controls .native-video-chat,
 .controls-surface.inline-controls .native-chat-edge-restore,
 .controls-surface.inline-controls .native-detached-emote-picker {
@@ -123,6 +124,7 @@ input {
 }
 
 .native-video-chat {
+  --overlay-scroll-track: #17171b;
   position: absolute;
   z-index: 2;
   top: 16px;
@@ -133,19 +135,67 @@ input {
   width: min(370px, 32vw);
   min-width: 280px;
   overflow: visible;
-  border: 1px solid rgb(255 255 255 / 15%);
+  border: 1px solid transparent;
   border-radius: 11px;
   color: #e4e4e7;
   box-shadow: 0 18px 55px rgb(0 0 0 / 68%);
+  transition: border-color 120ms ease;
+}
+
+.controls-surface.oled-mode .native-video-chat {
+  --overlay-scroll-track: #000;
+}
+
+.native-video-chat:hover,
+.native-video-chat:focus-within {
+  border-color: rgb(255 255 255 / 15%);
 }
 
 .native-video-chat-messages {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  margin-bottom: 0;
   padding: 38px 10px 14px;
   overscroll-behavior: contain;
-  transition: padding-bottom 140ms ease;
+  scrollbar-color: transparent transparent;
+  scrollbar-width: none;
+  transition: margin-bottom 180ms ease;
+}
+
+.native-video-chat-messages::-webkit-scrollbar {
+  width: 0;
+}
+
+.native-video-chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.native-video-chat-messages::-webkit-scrollbar-thumb {
+  border-color: transparent;
+  background: transparent;
+}
+
+.native-video-chat-messages:hover {
+  scrollbar-color: #55515f var(--overlay-scroll-track);
+  scrollbar-width: thin;
+}
+
+.native-video-chat-messages:hover::-webkit-scrollbar {
+  width: 10px;
+}
+
+.native-video-chat-messages:hover::-webkit-scrollbar-track {
+  background: var(--overlay-scroll-track);
+}
+
+.native-video-chat-messages:hover::-webkit-scrollbar-thumb {
+  border-color: var(--overlay-scroll-track);
+  background: #55515f;
+}
+
+.native-video-chat-messages:hover::-webkit-scrollbar-thumb:hover {
+  background: #716b7c;
 }
 
 .native-video-chat-messages.scroll-paused {
@@ -155,7 +205,7 @@ input {
 
 .native-video-chat:hover .native-video-chat-messages,
 .native-video-chat:focus-within .native-video-chat-messages {
-  padding-bottom: var(--chat-composer-space, 68px);
+  margin-bottom: var(--chat-composer-space, 68px);
 }
 
 .native-video-chat-message {
@@ -379,6 +429,36 @@ input {
 
 .native-chat-notice:hover {
   background: linear-gradient(135deg, rgb(45 23 59 / 94%), rgb(25 24 30 / 94%));
+}
+
+.native-center-play {
+  position: absolute;
+  z-index: 24;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 82px;
+  height: 82px;
+  padding: 0 0 0 5px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 50%;
+  color: white;
+  background: rgb(12 12 15 / 76%);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 58%);
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.native-center-play:hover {
+  border-color: rgb(255 255 255 / 48%);
+  background: rgb(35 25 45 / 92%);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.native-center-play:active {
+  transform: translate(-50%, -50%) scale(0.98);
 }
 
 .controls-surface.oled-mode .native-video-chat-message.native-chat-notice:hover {
@@ -1025,13 +1105,18 @@ input {
   position: absolute;
   z-index: 5;
   right: 50%;
-  bottom: var(--chat-composer-space, 57px);
+  bottom: 12px;
   padding: 7px 12px;
   border-radius: 999px;
   background: #2b2035f2;
   box-shadow: 0 7px 22px rgb(0 0 0 / 65%);
   transform: translateX(50%);
   transition: bottom 140ms ease;
+}
+
+.native-video-chat:hover .native-scroll-current,
+.native-video-chat:focus-within .native-scroll-current {
+  bottom: var(--chat-composer-space, 57px);
 }
 
 .native-video-chat-tools {
@@ -1087,7 +1172,7 @@ input {
   cursor: pointer;
 }
 
-.controls-surface.chat-hidden .controls-bar button.live-state {
+.controls-surface.chat-hidden .live-state {
   right: 60px;
 }
 
@@ -1134,15 +1219,17 @@ input {
   accent-color: #a78bfa;
 }
 
-.native-video-chat-settings .native-chat-toggle-setting {
+.native-video-chat-settings .chat-toggle-setting {
   grid-template-columns: minmax(0, 1fr) auto;
   font-size: 10px;
 }
 
-.native-video-chat-settings .native-chat-toggle-setting input {
-  width: 15px;
-  height: 15px;
+.native-video-chat-settings .chat-toggle-switch input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
   margin: 0;
+  opacity: 0;
 }
 
 .control-popover {
@@ -1370,16 +1457,16 @@ input {
   font-size: 10px;
   font-weight: 750;
   text-transform: capitalize;
-  cursor: pointer;
+  pointer-events: none;
 }
 
-.live-state.playing {
+.live-state.playing:not(.behind-live) {
   border-color: #ef444466;
   color: white;
   background: #dc2626e8;
 }
 
-.live-state.playing::before {
+.live-state.playing:not(.behind-live)::before {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -1388,7 +1475,7 @@ input {
   content: "";
 }
 
-.controls-bar button.live-state {
+.controls-bar .live-state {
   position: fixed;
   top: 12px;
   right: 12px;
@@ -1402,34 +1489,10 @@ input {
   border-radius: 5px;
 }
 
-.controls-bar button.live-state.playing:hover {
-  border-color: #ef444466;
-  color: white;
-  background: #dc2626e8;
-}
-
-.controls-bar button.live-state[data-tooltip]::after {
-  top: calc(100% + 7px);
-  right: 0;
-  bottom: auto;
-  left: auto;
-  transform: translate(0, -3px);
-}
-
-.controls-bar button.live-state[data-tooltip]:hover::after {
-  transform: translate(0, 0);
-}
-
-.controls-bar button.live-state.behind-live {
+.controls-bar .live-state.behind-live {
   border-color: rgb(255 255 255 / 17%);
   color: #d4d4d8;
   background: rgb(63 63 70 / 92%);
-}
-
-.controls-bar button.live-state.behind-live:hover {
-  border-color: rgb(255 255 255 / 25%);
-  color: white;
-  background: rgb(73 73 80 / 96%);
 }
 
 .controls-bar button.quality-button {

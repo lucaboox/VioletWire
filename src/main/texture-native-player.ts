@@ -270,9 +270,13 @@ export class TextureNativePlayer {
         }
         break;
       case "go-live":
-        addon.command(["set", "pause", "no"]);
-        addon.command(["seek", "100", "absolute-percent", "exact"]);
+        // Streamlink's live input does not consistently expose a seekable
+        // percentage range. Discard its delayed cache while playback is still
+        // paused, then resume only after mpv has moved back to fresh packets.
+        // This keeps the necessary live-edge catch-up from dropping frames
+        // that are already being presented.
         addon.command(["drop-buffers"]);
+        addon.command(["set", "pause", "no"]);
         this.updateState({ paused: false, behindLive: false });
         break;
     }

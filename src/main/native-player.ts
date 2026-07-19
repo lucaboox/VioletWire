@@ -444,9 +444,11 @@ export class NativePlayer {
         this.applyCompressor(command.enabled);
         break;
       case "go-live":
-        this.sendMpvCommand(["set_property", "pause", false]);
-        this.sendMpvCommand(["seek", 100, "absolute-percent", "exact"]);
+        // Streamlink's rolling live input has no consistently seekable end.
+        // Flush delayed packets while paused, then resume after the cache has
+        // been discarded so the disruption is not visible as frame skipping.
         this.sendMpvCommand(["drop-buffers"]);
+        this.sendMpvCommand(["set_property", "pause", false]);
         this.updateState({ paused: false, behindLive: false });
         break;
     }

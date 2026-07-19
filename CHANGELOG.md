@@ -4,6 +4,34 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Added a persistent mention-sound volume control with an in-settings preview
+  button, and replaced chat-setting checkboxes with clearer toggle switches.
+- Added a large centered play control whenever Native playback is paused.
+
+### Improvements
+
+- Made reply threads compact and content-sized above the chat composer instead
+  of occupying a tall fixed panel.
+- Refined overlay chat so its border, composer, tools, and scrollbar stay out
+  of the way until needed, while the paused-chat indicator remains available.
+- Made overlay chat resize smoothly above its revealed composer and keep live
+  messages pinned to the newest entry without moving readers who scrolled up.
+- Kept profile cards inside the visible application area as asynchronous
+  profile data changes their size or the window is resized.
+
+### Fixes
+
+- Fixed overlay-opacity changes racing between synchronized renderer state and
+  rapidly cycling through stale percentages.
+- Fixed overlay scrollbars remaining visible while inactive and extending
+  behind the chat composer.
+- Fixed resuming Native playback from a paused stream causing frame skips or
+  failing to return to the live edge.
+- Reduced delays when opening chat-user profiles and other external links in
+  the system browser.
+
 ## [0.3.1-alpha.1] - 2026-07-19
 
 ### Additions

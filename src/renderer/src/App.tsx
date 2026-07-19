@@ -96,7 +96,12 @@ import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
 import { NativeControls } from "./NativeControls";
+import {
+  ChatToggleSetting,
+  MentionSoundControls,
+} from "./ChatSettingsControls";
 import { withoutRedundantReplyMention } from "./chat-display";
+import { playMentionPing } from "./mention-sound";
 import { renderProviderText } from "./ProviderEmoteText";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
@@ -220,34 +225,6 @@ function renderChatMessageText(
     );
   }
   return output;
-}
-
-let mentionAudioContext: AudioContext | null = null;
-
-function playMentionPing(): void {
-  const AudioContextConstructor =
-    window.AudioContext ??
-    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
-  if (!AudioContextConstructor) return;
-  mentionAudioContext ??= new AudioContextConstructor();
-  const context = mentionAudioContext;
-  void context.resume().then(() => {
-    const now = context.currentTime;
-    const gain = context.createGain();
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.13, now + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
-    gain.connect(context.destination);
-    for (const [frequency, offset] of [[740, 0], [980, 0.09]] as const) {
-      const oscillator = context.createOscillator();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(frequency, now + offset);
-      oscillator.connect(gain);
-      oscillator.start(now + offset);
-      oscillator.stop(now + offset + 0.2);
-    }
-  }).catch(() => undefined);
 }
 
 interface ChatMessageRowProps {
@@ -510,6 +487,7 @@ export function App() {
     return Number.isFinite(stored) && stored >= 25 && stored <= 100 ? stored : 88;
   });
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
+  const [mentionSoundVolume, setMentionSoundVolume] = useState(70);
   const [chatAutoScroll, setChatAutoScroll] = useState(true);
   const [pausedChatNewMessages, setPausedChatNewMessages] = useState(0);
   const [oledMode, setOledMode] = useState(
@@ -533,6 +511,7 @@ export function App() {
     chatOnLeft,
     chatOverlayOpacity: chatOpacity,
     mentionSoundEnabled,
+    mentionSoundVolume,
     oledMode,
     audioCompression:
       window.localStorage.getItem("glint.playback.audioCompression") === "true",
@@ -574,7 +553,7 @@ export function App() {
   const chatBatchTimer = useRef<number | null>(null);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
-  const mentionSettings = useRef({ enabled: false, login: "" });
+  const mentionSettings = useRef({ enabled: false, login: "", volume: 70 });
   const browseCategoryLoadSentinel = useRef<HTMLDivElement>(null);
   const categoryStreamLoadSentinel = useRef<HTMLDivElement>(null);
   const browseCategoryLoadPending = useRef(false);
@@ -791,6 +770,7 @@ export function App() {
       setChatOnLeft(preferences.chatOnLeft);
       setChatOpacity(preferences.chatOverlayOpacity);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
+      setMentionSoundVolume(preferences.mentionSoundVolume);
       setOledMode(preferences.oledMode);
       setLastSeenChangelogVersion(preferences.lastSeenChangelogVersion);
       setPreferencesReady(true);
@@ -809,21 +789,25 @@ export function App() {
 
   useEffect(() => {
     if (!preferencesReady) return;
-    void window.desktop.preferences
-      .update({
-        preferredPlayerMode: preferredMode,
-        experimentalTexturePlayer,
-        chatTimestamps,
-        chatHistoryLimit,
-        chatFontSize,
-        chatEmoteSize,
-        chatDeletedMessageStyle,
-        chatOnLeft,
-        chatOverlayOpacity: chatOpacity,
-        mentionSoundEnabled,
-        oledMode,
-      })
-      .catch(() => undefined);
+    const persistTimer = window.setTimeout(() => {
+      void window.desktop.preferences
+        .update({
+          preferredPlayerMode: preferredMode,
+          experimentalTexturePlayer,
+          chatTimestamps,
+          chatHistoryLimit,
+          chatFontSize,
+          chatEmoteSize,
+          chatDeletedMessageStyle,
+          chatOnLeft,
+          chatOverlayOpacity: chatOpacity,
+          mentionSoundEnabled,
+          mentionSoundVolume,
+          oledMode,
+        })
+        .catch(() => undefined);
+    }, 180);
+    return () => window.clearTimeout(persistTimer);
   }, [
     chatHistoryLimit,
     chatFontSize,
@@ -833,6 +817,7 @@ export function App() {
     chatOpacity,
     chatTimestamps,
     mentionSoundEnabled,
+    mentionSoundVolume,
     oledMode,
     preferredMode,
     experimentalTexturePlayer,
@@ -851,8 +836,9 @@ export function App() {
     mentionSettings.current = {
       enabled: mentionSoundEnabled,
       login: viewerLogin,
+      volume: mentionSoundVolume,
     };
-  }, [mentionSoundEnabled, viewerLogin]);
+  }, [mentionSoundEnabled, mentionSoundVolume, viewerLogin]);
 
   const flushChatBatch = useCallback(() => {
     if (chatBatchTimer.current !== null) {
@@ -900,7 +886,7 @@ export function App() {
         !message.historical &&
         messageMentionsLogin(message, mention.login)
       ) {
-        playMentionPing();
+        playMentionPing(mention.volume);
       }
       chatBatch.current.push(message);
       chatBatchTimer.current ??= window.setTimeout(flushChatBatch, CHAT_BATCH_INTERVAL);
@@ -1141,11 +1127,15 @@ export function App() {
   }
 
   function revealChatComposer() {
-    if (!chatAutoScroll) return;
-    window.requestAnimationFrame(() => {
+    if (!chatAutoScrollRef.current) return;
+    const startedAt = window.performance.now();
+    const keepPinned = (now: number) => {
+      if (!chatAutoScrollRef.current) return;
       const host = chatMessagesHost.current;
       if (host) host.scrollTop = host.scrollHeight;
-    });
+      if (now - startedAt < 200) window.requestAnimationFrame(keepPinned);
+    };
+    window.requestAnimationFrame(keepPinned);
   }
 
   useEffect(() => {
@@ -1395,7 +1385,9 @@ export function App() {
         void setFullscreenMode(!fullscreen);
       } else if (event.code === "Space" && activeMode === "native") {
         event.preventDefault();
-        window.desktop.player.controlNative({ command: "toggle-pause" });
+        window.desktop.player.controlNative({
+          command: nativeState.paused ? "go-live" : "toggle-pause",
+        });
       } else if (event.key.toLowerCase() === "m" && activeMode === "native") {
         window.desktop.player.controlNative({ command: "toggle-mute" });
       } else if (event.key === "Escape" && fullscreen) {
@@ -1412,6 +1404,7 @@ export function App() {
     activeMode,
     chatVisible,
     fullscreen,
+    nativeState.paused,
     revealNativeControls,
     theaterMode,
   ]);
@@ -2550,34 +2543,29 @@ export function App() {
                               value={chatOpacity}
                             />
                           </label>
-                          <label className="chat-toggle-setting">
-                            <span>Show timestamps</span>
-                            <input
-                              checked={chatTimestamps}
-                              onChange={(event) => setChatTimestamps(event.target.checked)}
-                              type="checkbox"
-                            />
-                          </label>
-                          <label className="chat-toggle-setting">
-                            <span>Mention sound</span>
-                            <input
-                              checked={mentionSoundEnabled}
-                              onChange={(event) => setMentionSoundEnabled(event.target.checked)}
-                              type="checkbox"
-                            />
-                          </label>
-                          <label className="chat-toggle-setting">
-                            <span>Dim deleted messages</span>
-                            <input
-                              checked={chatDeletedMessageStyle === "dimmed"}
-                              onChange={(event) =>
-                                setChatDeletedMessageStyle(
-                                  event.target.checked ? "dimmed" : "placeholder",
-                                )
-                              }
-                              type="checkbox"
-                            />
-                          </label>
+                          <ChatToggleSetting
+                            checked={chatTimestamps}
+                            label="Show timestamps"
+                            onChange={setChatTimestamps}
+                          />
+                          <ChatToggleSetting
+                            checked={mentionSoundEnabled}
+                            label="Mention sound"
+                            onChange={setMentionSoundEnabled}
+                          />
+                          <MentionSoundControls
+                            onVolumeChange={setMentionSoundVolume}
+                            volume={mentionSoundVolume}
+                          />
+                          <ChatToggleSetting
+                            checked={chatDeletedMessageStyle === "dimmed"}
+                            label="Dim deleted messages"
+                            onChange={(checked) =>
+                              setChatDeletedMessageStyle(
+                                checked ? "dimmed" : "placeholder",
+                              )
+                            }
+                          />
                           <label>
                             <span>Font size: {chatFontSize}px</span>
                             <input
@@ -2600,14 +2588,11 @@ export function App() {
                               value={chatEmoteSize}
                             />
                           </label>
-                          <label className="chat-toggle-setting">
-                            <span>Chat on left</span>
-                            <input
-                              checked={chatOnLeft}
-                              onChange={(event) => setChatOnLeft(event.target.checked)}
-                              type="checkbox"
-                            />
-                          </label>
+                          <ChatToggleSetting
+                            checked={chatOnLeft}
+                            label="Chat on left"
+                            onChange={setChatOnLeft}
+                          />
                           <label>
                             <span>History: {chatHistoryLimit}</span>
                             <input
@@ -2655,34 +2640,29 @@ export function App() {
                       {chatSettingsOpen && (
                         <div className="chat-overlay-settings chat-header-settings">
                           <strong>Chat settings</strong>
-                          <label className="chat-toggle-setting">
-                            <span>Show timestamps</span>
-                            <input
-                              checked={chatTimestamps}
-                              onChange={(event) => setChatTimestamps(event.target.checked)}
-                              type="checkbox"
-                            />
-                          </label>
-                          <label className="chat-toggle-setting">
-                            <span>Mention sound</span>
-                            <input
-                              checked={mentionSoundEnabled}
-                              onChange={(event) => setMentionSoundEnabled(event.target.checked)}
-                              type="checkbox"
-                            />
-                          </label>
-                          <label className="chat-toggle-setting">
-                            <span>Dim deleted messages</span>
-                            <input
-                              checked={chatDeletedMessageStyle === "dimmed"}
-                              onChange={(event) =>
-                                setChatDeletedMessageStyle(
-                                  event.target.checked ? "dimmed" : "placeholder",
-                                )
-                              }
-                              type="checkbox"
-                            />
-                          </label>
+                          <ChatToggleSetting
+                            checked={chatTimestamps}
+                            label="Show timestamps"
+                            onChange={setChatTimestamps}
+                          />
+                          <ChatToggleSetting
+                            checked={mentionSoundEnabled}
+                            label="Mention sound"
+                            onChange={setMentionSoundEnabled}
+                          />
+                          <MentionSoundControls
+                            onVolumeChange={setMentionSoundVolume}
+                            volume={mentionSoundVolume}
+                          />
+                          <ChatToggleSetting
+                            checked={chatDeletedMessageStyle === "dimmed"}
+                            label="Dim deleted messages"
+                            onChange={(checked) =>
+                              setChatDeletedMessageStyle(
+                                checked ? "dimmed" : "placeholder",
+                              )
+                            }
+                          />
                           <label>
                             <span>Font size: {chatFontSize}px</span>
                             <input
@@ -2705,14 +2685,11 @@ export function App() {
                               value={chatEmoteSize}
                             />
                           </label>
-                          <label className="chat-toggle-setting">
-                            <span>Chat on left</span>
-                            <input
-                              checked={chatOnLeft}
-                              onChange={(event) => setChatOnLeft(event.target.checked)}
-                              type="checkbox"
-                            />
-                          </label>
+                          <ChatToggleSetting
+                            checked={chatOnLeft}
+                            label="Chat on left"
+                            onChange={setChatOnLeft}
+                          />
                           <label>
                             <span>History: {chatHistoryLimit}</span>
                             <input
