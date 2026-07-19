@@ -4,19 +4,34 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1-alpha.1] - 2026-07-19
+
 ### Additions
 
 - Added clickable chat usernames with an in-app profile card showing Twitch
   profile details, badges, available follow and subscription status, and the
   user's retained messages from the current chat.
+- Added a live paused-chat indicator with its pending message count and a
+  one-click return to the newest message.
+- Rendered embedded Native controls directly in the main app window so player
+  menus, chat overlays, and profile cards share the video canvas's compositor
+  without a second Electron renderer. The separate controls window remains
+  available only for the legacy window-hosted fallback.
 
 ### Fixes
 
 - Hid Twitch's redundant leading `@username` in reply messages while preserving
   the official reply relationship and original message contents.
+- Batched fast-moving chat updates and preserved the reader's position while
+  paused, including when old messages must eventually be trimmed.
 - Fixed rapid stream switching so a cancelled older startup cannot clear the
   selected embedded backend, trigger the window-hosted fallback, or tear down
   the newer stream.
+- Fixed embedded video turning black after moving Native controls into the main
+  window by isolating the video canvas and controls into explicit compositor
+  layers.
+- Kept the legacy Native fallback working when an embedded texture session
+  fails after startup by switching its backend and controls together.
 - Kept Twitch event cards purple when hovered in OLED mode and limited the
   hover feedback to the row behind the card.
 
