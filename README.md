@@ -13,6 +13,9 @@
   <a href="https://github.com/lucaboox/VioletWire/actions/workflows/release.yml"><img alt="Release build" src="https://github.com/lucaboox/VioletWire/actions/workflows/release.yml/badge.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-2563eb" />
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-a855f7" />
+</p>
+
+<p align="center">
   <a href="https://ko-fi.com/W7W3D7V7U"><img alt="Support VioletWire on Ko-fi" src="https://ko-fi.com/img/githubbutton_sm.svg" /></a>
 </p>
 
