@@ -72,6 +72,7 @@ export class UpdateService {
       });
     });
     this.updater.on("update-downloaded", (info: UpdateInfo) => {
+      const shouldOfferRestart = !this.downloaded;
       this.downloaded = true;
       this.setStatus({
         state: "downloaded",
@@ -79,7 +80,7 @@ export class UpdateService {
         progress: 100,
         message: "Update ready. Restart VioletWire to install it.",
       });
-      void this.offerRestart(info.version);
+      if (shouldOfferRestart) void this.offerRestart(info.version);
     });
     this.updater.on("error", (error: Error) => {
       this.setStatus({
@@ -99,7 +100,12 @@ export class UpdateService {
   }
 
   async check(): Promise<AppUpdateStatus> {
-    if (!this.configured || this.status.state === "checking" || this.status.state === "downloading") {
+    if (
+      !this.configured ||
+      this.downloaded ||
+      this.status.state === "checking" ||
+      this.status.state === "downloading"
+    ) {
       return this.getStatus();
     }
     try {

@@ -4,6 +4,11 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Prevented automatic and manual update checks from opening duplicate restart
+  prompts after the same installer has already downloaded.
+
 ## [0.3.2-alpha.1] - 2026-07-19
 
 ### Additions
@@ -11,9 +16,33 @@ All notable changes to VioletWire are documented in this file.
 - Added a persistent mention-sound volume control with an in-settings preview
   button, and replaced chat-setting checkboxes with clearer toggle switches.
 - Added a large centered play control whenever Native playback is paused.
+- Added a Twitch-style floating mini player while browsing, with draggable and
+  resizable bounds, pause, mute, close, and click-to-restore controls.
+- Added hover-intent stream pre-resolution so followed and browse cards can
+  begin preparing Native playback before the channel is clicked.
 
 ### Improvements
 
+- Reworked embedded Native channel and quality switching to reuse the healthy
+  mpv process, D3D/OpenGL bridge, and shared-texture pool through mpv's
+  `loadfile replace` path instead of starting an entirely new player.
+- Made stream switches stop outgoing playback immediately, discard stale
+  in-flight frames, suppress intentional end-of-file events, and report
+  whether the active transition is changing channel or quality.
+- Overlapped fresh mpv/addon initialization with Streamlink URL resolution,
+  cached resolved URLs for 60 seconds with in-flight deduplication and bounded
+  concurrency, and skipped unnecessary FFmpeg container probing for HLS.
+- Unified side chat and Native overlay chat behind one feed engine for message
+  batching, scroll pause/resume, bottom anchoring, history trimming, and
+  deleted-message reveal state.
+- Rendered the embedded player at the mini player's actual pixel dimensions
+  and preserved a seamless video transition when moving between full and
+  floating layouts.
+- Cached chat-user profile lookups for 60 seconds with in-flight deduplication,
+  bounded third-party subscription-age requests to five seconds, and memoized
+  retained user-card messages.
+- Debounced preference persistence so rapidly adjusted chat and overlay
+  controls no longer issue a settings write for every intermediate value.
 - Hardened Electron's trust boundaries by isolating the official Twitch player
   cross-origin, locking privileged renderer navigation, validating every IPC
   sender, and narrowing the legacy controls window's preload capabilities.
@@ -37,6 +66,17 @@ All notable changes to VioletWire are documented in this file.
 
 ### Fixes
 
+- Fixed rapid Native stream switches allowing a cancelled older startup or
+  stale end-of-file event to clear the new stream, reset its state, or trigger
+  the legacy window-player fallback.
+- Fixed reselecting the channel already playing from rebuilding its metadata,
+  chat, and player; it now simply restores the existing player surface.
+- Fixed closing playback briefly flashing a loading state by unmounting the
+  player page before tearing down its main-process session.
+- Fixed paused or history-trimmed chat drifting while new messages arrive by
+  sharing the same anchored feed logic between side and overlay layouts.
+- Fixed profile-card data loading or application resizing moving the card
+  partly outside the visible window.
 - Fixed overlay-opacity changes racing between synchronized renderer state and
   rapidly cycling through stale percentages.
 - Fixed overlay scrollbars remaining visible while inactive and extending
