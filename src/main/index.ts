@@ -22,6 +22,7 @@ import {
   nativePlayerCommandSchema,
   playerBoundsSchema,
   playerModeSchema,
+  isNativeStreamUnavailable,
   type ChatPresentation,
   type ChannelAction,
   type ChannelActionWindowState,
@@ -900,14 +901,22 @@ handleTrusted(
     // example a reused switch whose URL resolution failed); tear it down
     // before handing playback to the window-hosted player.
     if (textureResult && !textureResult.ok) textureNativePlayer.destroy();
-    const result =
-      textureResult?.ok
-        ? textureResult
+    // An offline channel is not a texture failure. The official player has a
+    // clean, interactive offline state; using the old HWND player here leaves
+    // its separate controls above that state and produces a misleading
+    // "embedded unavailable" notice.
+    const textureFoundOffline =
+      textureResult && !textureResult.ok && isNativeStreamUnavailable(textureResult.reason);
+    const result = textureResult?.ok
+      ? textureResult
+      : textureFoundOffline
+        ? { ok: false as const, reason: textureResult.reason }
         : nativePlayer.start(channel, requestedQuality);
     if (!result.ok) {
       mode = "official";
-      fallbackReason =
-        textureResult && !textureResult.ok
+      fallbackReason = textureFoundOffline
+        ? undefined
+        : textureResult && !textureResult.ok
           ? `${textureResult.reason} Window-hosted Native also failed: ${result.reason}`
           : result.reason;
     } else {

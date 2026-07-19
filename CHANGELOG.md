@@ -22,6 +22,8 @@ All notable changes to VioletWire are documented in this file.
   notes instead of briefly displaying a stale cached changelog.
 - Ensure an explicit fresh changelog request cannot be satisfied by an
   in-flight cached request from app startup.
+- Keep offline channels on the standard offline surface instead of falling
+  back to the legacy Native player and leaving Native controls above it.
 
 ## [0.3.2-alpha.3] - 2026-07-19
 

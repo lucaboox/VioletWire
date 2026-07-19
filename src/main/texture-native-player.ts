@@ -448,7 +448,10 @@ export class TextureNativePlayer {
         [
           "--no-config",
           "--loglevel",
-          "none",
+          // Keep only error-level output. A silent resolver reduces the
+          // generic exit-code error to an unhelpful fallback decision when a
+          // channel is simply offline.
+          "error",
           "--stream-url",
           "--twitch-low-latency",
           "--twitch-supported-codecs",

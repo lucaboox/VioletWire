@@ -150,8 +150,13 @@ export function parseStreamlinkQualityOutput(output: string): NativeQuality[] {
 }
 
 export function presentNativePlaybackError(message: string): string {
-  if (/no playable streams found/i.test(message)) return "Stream is offline.";
+  if (isNativeStreamUnavailable(message)) return "Stream is offline.";
   return message;
+}
+
+/** A normal channel state, not a failure of either Native render backend. */
+export function isNativeStreamUnavailable(message: string): boolean {
+  return /no playable streams found|stream is offline/i.test(message);
 }
 
 export interface NativePlayerAvailability {
