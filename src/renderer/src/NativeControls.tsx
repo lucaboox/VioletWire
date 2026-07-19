@@ -6,7 +6,6 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -54,12 +53,6 @@ import type {
   ProviderEmote,
 } from "../../shared/emotes";
 import type { AppPreferences } from "../../shared/preferences";
-import {
-  applyChatMessageBatch,
-  CHAT_MESSAGE_LIMIT,
-  CHAT_PAUSED_HARD_LIMIT,
-  CHAT_PAUSED_TRIM_TO,
-} from "../../shared/chat-messages";
 import { getChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
@@ -75,14 +68,7 @@ import {
 } from "./ChatSettingsControls";
 import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
-import {
-  captureChatScrollAnchor,
-  restoreChatScrollAnchor,
-  type ChatScrollAnchor,
-} from "./chat-scroll";
-
-// Chat renders in batches: one commit per interval instead of per message.
-const CHAT_BATCH_INTERVAL = 100;
+import { useChatFeed } from "./chat-feed";
 
 const initialState: NativePlayerState = {
   status: "idle",
@@ -312,7 +298,6 @@ export function NativeControls({
     { value: "best", label: "Auto" },
   ]);
   const [openMenu, setOpenMenu] = useState<"quality" | "chat" | null>(null);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -342,11 +327,6 @@ export function NativeControls({
     useState<AppPreferences["chatDeletedMessageStyle"]>("placeholder");
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
   const [mentionSoundVolume, setMentionSoundVolume] = useState(70);
-  const [revealedDeletedMessages, setRevealedDeletedMessages] = useState<Set<string>>(
-    new Set(),
-  );
-  const [chatAutoScroll, setChatAutoScroll] = useState(true);
-  const [pausedChatNewMessages, setPausedChatNewMessages] = useState(0);
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
@@ -377,14 +357,18 @@ export function NativeControls({
   const [controlsVisible, setControlsVisible] = useState(true);
   const activityTimer = useRef<number | null>(null);
   const lastPointerPosition = useRef<{ x: number; y: number } | null>(null);
-  const chatMessagesHost = useRef<HTMLDivElement>(null);
-  const chatScrollAnchor = useRef<ChatScrollAnchor | null>(null);
-  const chatAutoScrollRef = useRef(true);
-  const lastChatScrollTop = useRef(0);
-  // Messages accumulate here and apply on a short interval: one React commit
-  // per batch instead of one per message keeps heavy chats cheap.
-  const chatBatch = useRef<ChatMessage[]>([]);
-  const chatBatchTimer = useRef<number | null>(null);
+  const {
+    messages: chatMessages,
+    autoScroll: chatAutoScroll,
+    pausedNewCount: pausedChatNewMessages,
+    revealedDeleted: revealedDeletedMessages,
+    messagesHostRef: chatMessagesHost,
+    autoScrollRef: chatAutoScrollRef,
+    handleScroll: handleChatScroll,
+    scrollToCurrent: scrollChatToCurrent,
+    revealDeleted: revealDeletedMessage,
+    reset: resetChatFeed,
+  } = useChatFeed();
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
   const detachedPickerHost = useRef<HTMLDivElement>(null);
@@ -433,19 +417,11 @@ export function NativeControls({
   const applyControlsContext = useCallback((nextContext: NativeControlsContext) => {
     if (currentChannel.current !== nextContext.channel) {
       currentChannel.current = nextContext.channel;
-      setChatMessages([]);
-      setRevealedDeletedMessages(new Set());
-      chatAutoScrollRef.current = true;
-      chatScrollAnchor.current = null;
-      chatBatch.current = [];
-      if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
-      chatBatchTimer.current = null;
-      setChatAutoScroll(true);
-      setPausedChatNewMessages(0);
+      resetChatFeed();
       setReplyingTo(null);
     }
     setWindowContext(nextContext);
-  }, []);
+  }, [resetChatFeed]);
 
   // Report the detached picker's real rectangle so the main process can make
   // exactly that area of this transparent window clickable, instead of a
@@ -564,68 +540,6 @@ export function NativeControls({
     preferencesReady,
   ]);
 
-  const flushChatBatch = useCallback(() => {
-    if (chatBatchTimer.current !== null) {
-      window.clearTimeout(chatBatchTimer.current);
-      chatBatchTimer.current = null;
-    }
-    const batch = chatBatch.current;
-    if (batch.length === 0) return;
-    chatBatch.current = [];
-    const paused = !chatAutoScrollRef.current;
-    if (paused) {
-      const newMessageCount = batch.filter((message) => !message.historical && !message.deleted).length;
-      if (newMessageCount > 0) {
-        setPausedChatNewMessages((current) => Math.min(999, current + newMessageCount));
-      }
-    }
-    if (paused && chatMessagesHost.current) {
-      // Appends below the reader never move their view; the anchor only
-      // matters for the rare hard-limit trim and deletion height changes.
-      chatScrollAnchor.current = captureChatScrollAnchor(chatMessagesHost.current);
-    }
-    setChatMessages((current) => {
-      let next = applyChatMessageBatch(current, batch, Number.POSITIVE_INFINITY);
-      if (paused) {
-        if (next.length > CHAT_PAUSED_HARD_LIMIT) next = next.slice(-CHAT_PAUSED_TRIM_TO);
-      } else if (next.length > CHAT_MESSAGE_LIMIT) {
-        next = next.slice(-CHAT_MESSAGE_LIMIT);
-      }
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    const removeMessageListener = window.desktop.chat.onMessage((message) => {
-      if (message.deleted) {
-        setRevealedDeletedMessages((revealed) => {
-          const next = new Set(revealed);
-          next.delete(message.id);
-          return next;
-        });
-      }
-      chatBatch.current.push(message);
-      chatBatchTimer.current ??= window.setTimeout(flushChatBatch, CHAT_BATCH_INTERVAL);
-    });
-    return () => {
-      removeMessageListener();
-      if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
-      chatBatchTimer.current = null;
-      chatBatch.current = [];
-    };
-  }, [flushChatBatch]);
-
-  useLayoutEffect(() => {
-    const host = chatMessagesHost.current;
-    if (!host) return;
-    if (chatAutoScroll) {
-      host.scrollTop = host.scrollHeight;
-    } else if (chatScrollAnchor.current) {
-      restoreChatScrollAnchor(host, chatScrollAnchor.current);
-      chatScrollAnchor.current = null;
-    }
-  }, [chatAutoScroll, chatMessages]);
-
   useEffect(() => {
     const input = chatInputHost.current;
     if (!input) return;
@@ -717,14 +631,6 @@ export function NativeControls({
     return () => observer.disconnect();
   }, [nativeChatOverlay]);
 
-  const revealDeletedMessage = useCallback((id: string) => {
-    setRevealedDeletedMessages((revealed) => {
-      const next = new Set(revealed);
-      next.add(id);
-      return next;
-    });
-  }, []);
-
   const beginReply = useCallback((message: ChatMessage) => {
     setReplyingTo(message);
     window.requestAnimationFrame(() => chatInputHost.current?.focus());
@@ -734,48 +640,6 @@ export function NativeControls({
     setSelectedChatUser(message);
     setSelectedChatUserAnchor(anchor);
   }, []);
-
-  function resumeLiveChat() {
-    // Apply anything still buffered, then cut the paused overflow back to
-    // the live cap; the reader is jumping to the bottom anyway.
-    flushChatBatch();
-    setChatMessages((current) =>
-      current.length > CHAT_MESSAGE_LIMIT ? current.slice(-CHAT_MESSAGE_LIMIT) : current,
-    );
-    setPausedChatNewMessages(0);
-  }
-
-  function handleChatScroll() {
-    const host = chatMessagesHost.current;
-    if (!host) return;
-    const previousTop = lastChatScrollTop.current;
-    lastChatScrollTop.current = host.scrollTop;
-    if (host.scrollHeight - host.scrollTop - host.clientHeight < 36) {
-      chatAutoScrollRef.current = true;
-      setChatAutoScroll(true);
-      resumeLiveChat();
-      return;
-    }
-    // Only an upward movement is a user pausing the chat. Scroll events the
-    // app itself causes — forced jumps to the bottom, the composer padding
-    // transition, image loads shifting anchors, smooth scrolling — never
-    // move upward, so they can no longer disable auto-scroll by racing the
-    // bottom measurement. (The 1px slack absorbs fractional DPI rounding.)
-    if (host.scrollTop < previousTop - 1) {
-      chatAutoScrollRef.current = false;
-      setChatAutoScroll(false);
-    }
-  }
-
-  function scrollChatToCurrent() {
-    const host = chatMessagesHost.current;
-    if (!host) return;
-    chatAutoScrollRef.current = true;
-    setChatAutoScroll(true);
-    setPausedChatNewMessages(0);
-    resumeLiveChat();
-    host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
-  }
 
   function revealChatComposer() {
     if (!chatAutoScrollRef.current) return;

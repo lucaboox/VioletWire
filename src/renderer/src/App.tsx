@@ -6,7 +6,6 @@ import {
   type CSSProperties,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -27,6 +26,7 @@ import {
   LogIn,
   Maximize,
   Minimize,
+  MoveDiagonal2,
   Play,
   Pause,
   RotateCcw,
@@ -40,15 +40,19 @@ import {
   Tv,
   Users,
   Unlink,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
-import type {
-  ChatPresentation,
-  ChannelActionWindowState,
-  NativePlayerAvailability,
-  NativeRenderBackend,
-  NativePlayerState,
-  PlayerMode,
+import {
+  formatQualityLabel,
+  type ChatPresentation,
+  type ChannelActionWindowState,
+  type NativePlayerAvailability,
+  type NativeRenderBackend,
+  type NativePlayerState,
+  type NativeQualityValue,
+  type PlayerMode,
 } from "../../shared/player";
 import type {
   BrowseCategory,
@@ -74,21 +78,11 @@ import {
   formatModerationAction,
   messageMentionsLogin,
 } from "../../shared/chat";
-import {
-  applyChatMessageBatch,
-  CHAT_MESSAGE_LIMIT,
-  CHAT_PAUSED_HARD_LIMIT,
-  CHAT_PAUSED_TRIM_TO,
-} from "../../shared/chat-messages";
 import { getChatMentionCandidates } from "../../shared/chat-content";
 import { parseChangelog } from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
-import {
-  captureChatScrollAnchor,
-  restoreChatScrollAnchor,
-  type ChatScrollAnchor,
-} from "./chat-scroll";
+import { useChatFeed } from "./chat-feed";
 import { EmotePicker } from "./EmotePicker";
 import { ReactTooltipLayer } from "./ReactTooltipLayer";
 import { ChatEmote } from "./ChatEmote";
@@ -109,8 +103,6 @@ import changelogSource from "../../../CHANGELOG.md?raw";
 import "./controls.css";
 
 const NATIVE_CONTROLS_HIDE_DELAY = 5_000;
-// Chat renders in batches: one commit per interval instead of per message.
-const CHAT_BATCH_INTERVAL = 100;
 
 type AppSection = "home" | "browse" | "settings";
 type ChatLayout = "hidden" | ChatPresentation;
@@ -443,7 +435,6 @@ export function App() {
   const [playbackSessionBusy, setPlaybackSessionBusy] = useState(false);
   const [sevenTvStatus, setSevenTvStatus] = useState<EmoteSetResult | null>(null);
   const [sevenTvBusy, setSevenTvBusy] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatConnectionState, setChatConnectionState] =
     useState<ChatConnectionState>("disconnected");
   const [chatInput, setChatInput] = useState("");
@@ -479,17 +470,12 @@ export function App() {
   const [chatOnLeft, setChatOnLeft] = useState(
     () => window.localStorage.getItem("glint.chat.onLeft") === "true",
   );
-  const [revealedDeletedMessages, setRevealedDeletedMessages] = useState<Set<string>>(
-    new Set(),
-  );
   const [chatOpacity, setChatOpacity] = useState(() => {
     const stored = Number(window.localStorage.getItem("glint.chat.overlayOpacity"));
     return Number.isFinite(stored) && stored >= 25 && stored <= 100 ? stored : 88;
   });
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
   const [mentionSoundVolume, setMentionSoundVolume] = useState(70);
-  const [chatAutoScroll, setChatAutoScroll] = useState(true);
-  const [pausedChatNewMessages, setPausedChatNewMessages] = useState(0);
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
@@ -519,6 +505,15 @@ export function App() {
   const [activeMode, setActiveMode] = useState<PlayerMode | null>(null);
   const [activeNativeBackend, setActiveNativeBackend] =
     useState<NativeRenderBackend | null>(null);
+  // Twitch-style floating mini player: the texture session keeps playing in a
+  // small draggable corner canvas while the user browses other sections.
+  const [miniPlayerActive, setMiniPlayerActive] = useState(false);
+  const [miniPlayerPosition, setMiniPlayerPosition] = useState<
+    { left: number; top: number } | null
+  >(null);
+  const [miniPlayerWidth, setMiniPlayerWidth] = useState(320);
+  const miniPlayerDragOffset = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const miniPlayerRef = useRef<HTMLDivElement>(null);
   const [nativeAvailability, setNativeAvailability] =
     useState<NativePlayerAvailability | null>(null);
   const [nativeState, setNativeState] = useState<NativePlayerState>({
@@ -541,19 +536,43 @@ export function App() {
     }
     return combined;
   }, [providerEmoteMaps]);
+  // Stable so the reply thread and user card can memoize their message rows;
+  // an inline arrow would change identity every chat batch and defeat it.
+  const renderCardText = useCallback(
+    (message: ChatMessage) => renderChatMessageText(message, chatProviderEmotes),
+    [chatProviderEmotes],
+  );
   const playerHost = useRef<HTMLDivElement>(null);
   const chatHost = useRef<HTMLDivElement>(null);
-  const chatMessagesHost = useRef<HTMLDivElement>(null);
-  const chatScrollAnchor = useRef<ChatScrollAnchor | null>(null);
-  const chatAutoScrollRef = useRef(true);
-  const lastChatScrollTop = useRef(0);
-  // Messages accumulate here and apply on a short interval: one React commit
-  // per batch instead of one per message keeps heavy chats cheap.
-  const chatBatch = useRef<ChatMessage[]>([]);
-  const chatBatchTimer = useRef<number | null>(null);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
   const mentionSettings = useRef({ enabled: false, login: "", volume: 70 });
+
+  // Fires for every arriving message before batching; used only for the
+  // mention alert. The feed engine (batching, scroll/pause, trimming) is
+  // shared with the native overlay chat via this hook.
+  const handleIncomingChatMessage = useCallback((message: ChatMessage) => {
+    const mention = mentionSettings.current;
+    if (
+      mention.enabled &&
+      !message.historical &&
+      messageMentionsLogin(message, mention.login)
+    ) {
+      playMentionPing(mention.volume);
+    }
+  }, []);
+  const {
+    messages: chatMessages,
+    autoScroll: chatAutoScroll,
+    pausedNewCount: pausedChatNewMessages,
+    revealedDeleted: revealedDeletedMessages,
+    messagesHostRef: chatMessagesHost,
+    autoScrollRef: chatAutoScrollRef,
+    handleScroll: handleChatScroll,
+    scrollToCurrent: scrollChatToCurrent,
+    revealDeleted: revealDeletedMessage,
+    reset: resetChatFeed,
+  } = useChatFeed(handleIncomingChatMessage);
   const browseCategoryLoadSentinel = useRef<HTMLDivElement>(null);
   const categoryStreamLoadSentinel = useRef<HTMLDivElement>(null);
   const browseCategoryLoadPending = useRef(false);
@@ -737,6 +756,9 @@ export function App() {
     chatPresentation,
     chatVisible,
     fullscreen,
+    // The player page unmounts while the mini player floats; rebinding on
+    // restore reattaches the observers to the freshly mounted hosts.
+    miniPlayerActive,
     theaterMode,
   ]);
 
@@ -840,66 +862,7 @@ export function App() {
     };
   }, [mentionSoundEnabled, mentionSoundVolume, viewerLogin]);
 
-  const flushChatBatch = useCallback(() => {
-    if (chatBatchTimer.current !== null) {
-      window.clearTimeout(chatBatchTimer.current);
-      chatBatchTimer.current = null;
-    }
-    const batch = chatBatch.current;
-    if (batch.length === 0) return;
-    chatBatch.current = [];
-    const paused = !chatAutoScrollRef.current;
-    if (paused) {
-      const newMessageCount = batch.filter((message) => !message.historical && !message.deleted).length;
-      if (newMessageCount > 0) {
-        setPausedChatNewMessages((current) => Math.min(999, current + newMessageCount));
-      }
-    }
-    if (paused && chatMessagesHost.current) {
-      // Appends below the reader never move their view; the anchor only
-      // matters for the rare hard-limit trim and deletion height changes.
-      chatScrollAnchor.current = captureChatScrollAnchor(chatMessagesHost.current);
-    }
-    setChatMessages((current) => {
-      let next = applyChatMessageBatch(current, batch, Number.POSITIVE_INFINITY);
-      if (paused) {
-        if (next.length > CHAT_PAUSED_HARD_LIMIT) next = next.slice(-CHAT_PAUSED_TRIM_TO);
-      } else if (next.length > CHAT_MESSAGE_LIMIT) {
-        next = next.slice(-CHAT_MESSAGE_LIMIT);
-      }
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    const removeMessageListener = window.desktop.chat.onMessage((message) => {
-      if (message.deleted) {
-        setRevealedDeletedMessages((revealed) => {
-          const next = new Set(revealed);
-          next.delete(message.id);
-          return next;
-        });
-      }
-      const mention = mentionSettings.current;
-      if (
-        mention.enabled &&
-        !message.historical &&
-        messageMentionsLogin(message, mention.login)
-      ) {
-        playMentionPing(mention.volume);
-      }
-      chatBatch.current.push(message);
-      chatBatchTimer.current ??= window.setTimeout(flushChatBatch, CHAT_BATCH_INTERVAL);
-    });
-    const removeStateListener = window.desktop.chat.onState(setChatConnectionState);
-    return () => {
-      removeMessageListener();
-      removeStateListener();
-      if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
-      chatBatchTimer.current = null;
-      chatBatch.current = [];
-    };
-  }, [flushChatBatch]);
+  useEffect(() => window.desktop.chat.onState(setChatConnectionState), []);
 
   useEffect(() => {
     const removePickerListener = window.desktop.player.onNativeEmotePicker(
@@ -999,17 +962,6 @@ export function App() {
     [chatMessages],
   );
 
-  useLayoutEffect(() => {
-    const host = chatMessagesHost.current;
-    if (!host) return;
-    if (chatAutoScroll) {
-      host.scrollTop = host.scrollHeight;
-    } else if (chatScrollAnchor.current) {
-      restoreChatScrollAnchor(host, chatScrollAnchor.current);
-      chatScrollAnchor.current = null;
-    }
-  }, [chatAutoScroll, chatMessages]);
-
   useEffect(() => {
     const input = chatInputHost.current;
     if (!input) return;
@@ -1035,17 +987,52 @@ export function App() {
     return () => observer.disconnect();
   }, [activeChannel, chatPresentation, chatVisible]);
 
-  const revealDeletedMessage = useCallback((id: string) => {
-    setRevealedDeletedMessages((revealed) => {
-      const next = new Set(revealed);
-      next.add(id);
-      return next;
-    });
-  }, []);
-
   const beginReply = useCallback((message: ChatMessage) => {
     setReplyingTo(message);
     window.requestAnimationFrame(() => chatInputHost.current?.focus());
+  }, []);
+
+  // While minimized, have the addon render at the mini box's actual pixel
+  // size: the full-page buffer has a different aspect ratio, which baked
+  // letterbox bars into the frames and left the box partly unfilled.
+  useEffect(() => {
+    if (!miniPlayerActive || activeNativeBackend !== "texture") return;
+    const host = miniPlayerRef.current;
+    if (!host) return;
+    const syncMiniBounds = () => {
+      const rect = host.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
+      const scale = window.devicePixelRatio || 1;
+      window.desktop.player.setBounds({
+        x: 0,
+        y: 0,
+        width: Math.round(rect.width * scale),
+        height: Math.round(rect.height * scale),
+      });
+    };
+    const observer = new ResizeObserver(syncMiniBounds);
+    observer.observe(host);
+    syncMiniBounds();
+    return () => observer.disconnect();
+  }, [activeNativeBackend, miniPlayerActive]);
+
+  // Hover-intent stream pre-resolution: after 150ms on a channel card, ask
+  // the main process to resolve its stream URL so a click skips the
+  // Streamlink round trip. The main process dedups and caps concurrency, so
+  // stray hovers are cheap.
+  const preresolveTimer = useRef<number | null>(null);
+  const schedulePreresolve = useCallback((login: string) => {
+    if (preresolveTimer.current !== null) window.clearTimeout(preresolveTimer.current);
+    preresolveTimer.current = window.setTimeout(() => {
+      preresolveTimer.current = null;
+      window.desktop.player.preresolveStream(login);
+    }, 150);
+  }, []);
+  const cancelPreresolve = useCallback(() => {
+    if (preresolveTimer.current !== null) {
+      window.clearTimeout(preresolveTimer.current);
+      preresolveTimer.current = null;
+    }
   }, []);
 
   const openChatUserCard = useCallback((message: ChatMessage, anchor: DOMRect) => {
@@ -1059,49 +1046,6 @@ export function App() {
       setNativeControlsVisible(false);
     }
   }, [activeMode, activeNativeBackend]);
-
-  function resumeLiveChat() {
-    // Apply anything still buffered, then cut the paused overflow back to
-    // the live cap; the reader is jumping to the bottom anyway.
-    flushChatBatch();
-    setChatMessages((current) =>
-      current.length > CHAT_MESSAGE_LIMIT ? current.slice(-CHAT_MESSAGE_LIMIT) : current,
-    );
-    setPausedChatNewMessages(0);
-  }
-
-  function handleChatScroll() {
-    const host = chatMessagesHost.current;
-    if (!host) return;
-    const previousTop = lastChatScrollTop.current;
-    lastChatScrollTop.current = host.scrollTop;
-    const distanceFromBottom = host.scrollHeight - host.scrollTop - host.clientHeight;
-    if (distanceFromBottom < 36) {
-      chatAutoScrollRef.current = true;
-      setChatAutoScroll(true);
-      resumeLiveChat();
-      return;
-    }
-    // Only an upward movement is a user pausing the chat. Scroll events the
-    // app itself causes — forced jumps to the bottom, the composer padding
-    // transition, image loads shifting anchors, smooth scrolling — never
-    // move upward, so they can no longer disable auto-scroll by racing the
-    // bottom measurement. (The 1px slack absorbs fractional DPI rounding.)
-    if (host.scrollTop < previousTop - 1) {
-      chatAutoScrollRef.current = false;
-      setChatAutoScroll(false);
-    }
-  }
-
-  function scrollChatToCurrent() {
-    const host = chatMessagesHost.current;
-    if (!host) return;
-    chatAutoScrollRef.current = true;
-    setChatAutoScroll(true);
-    setPausedChatNewMessages(0);
-    resumeLiveChat();
-    host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
-  }
 
   function toggleOledMode(): void {
     setOledMode((current) => !current);
@@ -1362,7 +1306,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!activeChannel) return;
+    // Player shortcuts must not fire while the player is minimized to the
+    // floating mini view and the user is browsing.
+    if (!activeChannel || miniPlayerActive) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -1404,6 +1350,7 @@ export function App() {
     activeMode,
     chatVisible,
     fullscreen,
+    miniPlayerActive,
     nativeState.paused,
     revealNativeControls,
     theaterMode,
@@ -1702,6 +1649,13 @@ export function App() {
   }
 
   async function watchChannel(channel: string) {
+    // Re-clicking the channel that is already playing must not restart or
+    // reset anything (metadata, chat, player) — just surface the full player.
+    if (activeChannel && activeChannel === channel.trim().toLowerCase()) {
+      setSettingsOpen(false);
+      restoreMiniPlayer();
+      return;
+    }
     const generation = ++watchChannelGeneration.current;
     const returnSection = activeChannel ? playerReturnSection : activeSection;
     const optimisticMode = preferredMode;
@@ -1714,18 +1668,10 @@ export function App() {
     setSettingsOpen(false);
     setError(null);
     setStreamMetadata(null);
-    setChatMessages([]);
+    resetChatFeed();
     setReplyingTo(null);
     setEmotePickerOpen(false);
-    setRevealedDeletedMessages(new Set());
-    chatAutoScrollRef.current = true;
-    setChatAutoScroll(true);
-    setPausedChatNewMessages(0);
-    chatScrollAnchor.current = null;
-    chatBatch.current = [];
-    if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
-    chatBatchTimer.current = null;
-    setChatAutoScroll(true);
+    setMiniPlayerActive(false);
     setChannelInput(channel);
     // Mount the player shell immediately so clicking a card feels instant and
     // the texture receiver has a canvas before Streamlink finishes resolving.
@@ -1779,11 +1725,13 @@ export function App() {
     }
   }
 
-  async function closePlayer() {
+  async function closePlayer(returnToSection = true) {
     watchChannelGeneration.current += 1;
     if (activeMode === "native") window.desktop.player.setNativeEmotePicker(false);
-    if (fullscreen) await window.desktop.player.setFullscreen(false);
-    await window.desktop.player.close();
+    const exitFullscreen = fullscreen;
+    // Unmount the player page before the IPC teardown: the main process
+    // pushes intermediate "idle" states while retiring the session, and
+    // awaiting first repaints the loading surface for the round-trip time.
     setFullscreen(false);
     setTheaterMode(false);
     setActiveChannel(null);
@@ -1791,7 +1739,16 @@ export function App() {
     setActiveNativeBackend(null);
     setReplyingTo(null);
     setEmotePickerOpen(false);
-    setActiveSection(playerReturnSection);
+    setMiniPlayerActive(false);
+    setMiniPlayerPosition(null);
+    if (returnToSection) setActiveSection(playerReturnSection);
+    if (exitFullscreen) await window.desktop.player.setFullscreen(false);
+    await window.desktop.player.close();
+  }
+
+  function restoreMiniPlayer() {
+    setMiniPlayerActive(false);
+    setActiveSection("home");
   }
 
   async function navigateTo(section: AppSection) {
@@ -1800,7 +1757,21 @@ export function App() {
       return;
     }
     setSettingsOpen(false);
-    if (activeChannel) await closePlayer();
+    if (activeChannel && !miniPlayerActive) {
+      // The embedded texture player keeps running as a floating mini player
+      // while browsing, exactly because its video is an in-page canvas. The
+      // window-hosted and official players cannot follow the page, so they
+      // still close on navigation.
+      if (activeMode === "native" && activeNativeBackend === "texture") {
+        setMiniPlayerActive(true);
+        if (fullscreen) await window.desktop.player.setFullscreen(false);
+        setFullscreen(false);
+        setTheaterMode(false);
+        setEmotePickerOpen(false);
+      } else {
+        await closePlayer(false);
+      }
+    }
     if (section === "browse" && activeSection === "browse") {
       setSelectedBrowseCategory(null);
       setCategoryStreams([]);
@@ -1930,6 +1901,8 @@ export function App() {
         className="followed-channel"
         key={channel.id}
         onClick={() => void watchChannel(channel.login)}
+        onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
+        onMouseLeave={cancelPreresolve}
         title={channel.displayName}
         type="button"
       >
@@ -2099,6 +2072,8 @@ export function App() {
                             key={`channel-${channel.id}`}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => chooseSearchChannel(channel.login)}
+                            onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
+                            onMouseLeave={cancelPreresolve}
                             type="button"
                           >
                             {channel.profileImageUrl ? (
@@ -2212,7 +2187,7 @@ export function App() {
           </div>
         </header>
 
-        {activeChannel ? (
+        {activeChannel && !miniPlayerActive ? (
           <section
             className="player-page"
             onMouseMove={(event) => {
@@ -2242,7 +2217,7 @@ export function App() {
               <button
                 aria-label="Back to browsing"
                 className="back-button"
-                onClick={closePlayer}
+                onClick={() => void closePlayer()}
                 title="Back"
                 type="button"
               >
@@ -2483,11 +2458,17 @@ export function App() {
                           ? "Stream offline"
                           : nativeState.status === "error"
                             ? "Native player could not start"
-                          : "Starting native player"}
+                            : nativeState.transition?.kind === "quality"
+                              ? `Switching to ${formatQualityLabel(nativeState.transition.detail as NativeQualityValue)}`
+                              : nativeState.transition?.kind === "channel"
+                                ? `Loading ${streamMetadata?.displayName ?? activeChannel}`
+                                : "Starting native player"}
                       </strong>
                       <p>
                         {nativeState.error ??
-                          "Streamlink is resolving the Twitch stream and connecting it to mpv."}
+                          (nativeState.transition?.kind === "quality"
+                            ? "Reconnecting the stream at the new quality."
+                            : "Streamlink is resolving the Twitch stream and connecting it to mpv.")}
                       </p>
                       {nativeState.status === "error" && (
                         <button onClick={() => void retryNativePlayer()} type="button">
@@ -2754,8 +2735,7 @@ export function App() {
                         onClose={() => setOpenReplyThread(null)}
                         onOpenUser={openChatUserCard}
                         onReply={beginReply}
-                        renderText={(message) =>
-                          renderChatMessageText(message, chatProviderEmotes)}
+                        renderText={renderCardText}
                         selected={openReplyThread}
                       />
                     )}
@@ -2772,8 +2752,7 @@ export function App() {
                           window.desktop.player.setNativeControlsVisible(true);
                           setNativeControlsVisible(true);
                         }}
-                        renderText={(message) =>
-                          renderChatMessageText(message, chatProviderEmotes)}
+                        renderText={renderCardText}
                         selected={selectedChatUser}
                       />
                     )}
@@ -3070,6 +3049,8 @@ export function App() {
                         className="stream-card"
                         key={stream.id}
                         onClick={() => void watchChannel(stream.login)}
+                        onMouseEnter={() => schedulePreresolve(stream.login)}
+                        onMouseLeave={cancelPreresolve}
                         title={`Watch ${stream.displayName}`}
                         type="button"
                       >
@@ -3488,6 +3469,8 @@ export function App() {
                     className="stream-card"
                     key={channel.id}
                     onClick={() => void watchChannel(channel.login)}
+                    onMouseEnter={() => schedulePreresolve(channel.login)}
+                    onMouseLeave={cancelPreresolve}
                     title={`Watch ${channel.displayName}`}
                     type="button"
                   >
@@ -3847,6 +3830,145 @@ export function App() {
                 ))}
               </div>
             </section>
+          </div>
+        )}
+        {activeChannel && miniPlayerActive && activeNativeBackend === "texture" && (
+          <div
+            aria-label={`Mini player: ${streamMetadata?.displayName ?? activeChannel}`}
+            className="mini-player"
+            ref={miniPlayerRef}
+            role="region"
+            style={{ ...(miniPlayerPosition ?? {}), width: miniPlayerWidth }}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              if (event.target instanceof Element && event.target.closest("button")) return;
+              const host = miniPlayerRef.current;
+              if (!host) return;
+              const rect = host.getBoundingClientRect();
+              miniPlayerDragOffset.current = {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top,
+                moved: false,
+              };
+              setMiniPlayerPosition({ left: rect.left, top: rect.top });
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              const offset = miniPlayerDragOffset.current;
+              const host = miniPlayerRef.current;
+              if (!offset || !host) return;
+              const left = event.clientX - offset.x;
+              const top = event.clientY - offset.y;
+              const current = miniPlayerPosition;
+              if (
+                !offset.moved &&
+                current &&
+                Math.abs(left - current.left) < 4 &&
+                Math.abs(top - current.top) < 4
+              ) {
+                return;
+              }
+              offset.moved = true;
+              const margin = 8;
+              setMiniPlayerPosition({
+                left: Math.max(
+                  margin,
+                  Math.min(window.innerWidth - host.offsetWidth - margin, left),
+                ),
+                top: Math.max(
+                  margin,
+                  Math.min(window.innerHeight - host.offsetHeight - margin, top),
+                ),
+              });
+            }}
+            onPointerUp={() => {
+              const offset = miniPlayerDragOffset.current;
+              miniPlayerDragOffset.current = null;
+              // A press without a drag is a click: bring the player back.
+              if (offset && !offset.moved) restoreMiniPlayer();
+            }}
+          >
+            <canvas className="native-texture-canvas mini-player-canvas" data-native-texture-canvas />
+            <button
+              aria-label="Close the stream"
+              className="mini-player-close"
+              onClick={() => void closePlayer(false)}
+              title="Close the stream"
+              type="button"
+            >
+              <X size={15} />
+            </button>
+            <button
+              aria-label="Resize mini player"
+              className="mini-player-resize"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const host = miniPlayerRef.current;
+                if (!host) return;
+                const startWidth = miniPlayerWidth;
+                const startX = event.clientX;
+                const rect = host.getBoundingClientRect();
+                // Grow from the top-left handle while the bottom-right corner
+                // stays planted, matching the default anchor.
+                const anchorRight = rect.right;
+                const anchorBottom = rect.bottom;
+                const move = (moveEvent: PointerEvent) => {
+                  const next = Math.min(
+                    560,
+                    Math.max(240, startWidth + (startX - moveEvent.clientX)),
+                  );
+                  setMiniPlayerWidth(next);
+                  setMiniPlayerPosition({
+                    left: Math.max(8, anchorRight - next),
+                    top: Math.max(8, anchorBottom - (next * 9) / 16),
+                  });
+                };
+                const stop = () => {
+                  window.removeEventListener("pointermove", move);
+                  window.removeEventListener("pointerup", stop);
+                };
+                window.addEventListener("pointermove", move);
+                window.addEventListener("pointerup", stop, { once: true });
+              }}
+              title="Drag to resize"
+              type="button"
+            >
+              <MoveDiagonal2 size={13} />
+            </button>
+            <div className="mini-player-controls">
+              <button
+                aria-label={nativeState.paused ? "Play" : "Pause"}
+                onClick={() =>
+                  window.desktop.player.controlNative({ command: "toggle-pause" })
+                }
+                title={nativeState.paused ? "Play" : "Pause"}
+                type="button"
+              >
+                {nativeState.paused ? <Play size={15} /> : <Pause size={15} />}
+              </button>
+              <button
+                aria-label={nativeState.muted ? "Unmute" : "Mute"}
+                onClick={() =>
+                  window.desktop.player.controlNative({ command: "toggle-mute" })
+                }
+                title={nativeState.muted ? "Unmute" : "Mute"}
+                type="button"
+              >
+                {nativeState.muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              </button>
+              <span className="mini-player-title">
+                {streamMetadata?.displayName ?? activeChannel}
+              </span>
+              <button
+                aria-label="Return to the player"
+                onClick={restoreMiniPlayer}
+                title="Return to the player"
+                type="button"
+              >
+                <Maximize size={14} />
+              </button>
+            </div>
           </div>
         )}
         {deviceAuthorization && (
