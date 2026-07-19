@@ -79,7 +79,10 @@ import {
   messageMentionsLogin,
 } from "../../shared/chat";
 import { getChatMentionCandidates } from "../../shared/chat-content";
-import { parseChangelog } from "../../shared/changelog";
+import {
+  mergeChangelogEntries,
+  parseChangelog,
+} from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
 import { useChatFeed } from "./chat-feed";
@@ -111,7 +114,7 @@ const signedOutState: TwitchAuthState = { status: "signed-out", account: null };
 const anonymousPlaybackState: PlaybackSessionState = { linked: false };
 const emptySearchResults: TwitchSearchResults = { channels: [], categories: [] };
 const emoteProviders: EmoteProvider[] = ["7tv", "ffz", "bttv"];
-const changelogEntries = parseChangelog(changelogSource);
+const bundledChangelogEntries = parseChangelog(changelogSource);
 const languageNames: Record<string, string> = {
   de: "german",
   en: "english",
@@ -389,6 +392,9 @@ export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
+  const [changelogEntries, setChangelogEntries] = useState(
+    bundledChangelogEntries,
+  );
   const [changelogReturnsToSettings, setChangelogReturnsToSettings] = useState(false);
   const [playerReturnSection, setPlayerReturnSection] = useState<AppSection>("home");
   const [channelInput, setChannelInput] = useState("");
@@ -1034,6 +1040,19 @@ export function App() {
       preresolveTimer.current = null;
     }
   }, []);
+  const refreshChangelogEntries = useCallback((forceRefresh = false) => {
+    return window.desktop.updates
+      .getReleaseNotes(forceRefresh)
+      .then((markdown) => {
+        if (!markdown) return;
+        const remoteEntries = parseChangelog(markdown);
+        if (remoteEntries.length === 0) return;
+        setChangelogEntries(
+          mergeChangelogEntries(remoteEntries, bundledChangelogEntries),
+        );
+      })
+      .catch(() => undefined);
+  }, []);
 
   const openChatUserCard = useCallback((message: ChatMessage, anchor: DOMRect) => {
     setSelectedChatUser(message);
@@ -1052,6 +1071,7 @@ export function App() {
   }
 
   function openChangelog(returnToSettings = false): void {
+    void refreshChangelogEntries(true);
     setChangelogReturnsToSettings(returnToSettings);
     setSettingsOpen(false);
     setChangelogOpen(true);
@@ -1086,8 +1106,9 @@ export function App() {
     void loadAuthState();
     void window.desktop.twitch.getPlaybackSessionState().then(setPlaybackSession);
     void window.desktop.updates.getStatus().then(setUpdateStatus);
+    void refreshChangelogEntries();
     return window.desktop.updates.onStatus(setUpdateStatus);
-  }, []);
+  }, [refreshChangelogEntries]);
 
   // Auto-open the changelog once per release. The seen-version lives in the
   // main-process preferences file because the packaged renderer's localStorage

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseChangelog } from "./changelog";
+import { mergeChangelogEntries, parseChangelog } from "./changelog";
 
 describe("parseChangelog", () => {
   it("parses dated and unreleased additions, improvements, and fixes with wrapped lines", () => {
@@ -43,6 +43,46 @@ describe("parseChangelog", () => {
         improvements: [],
         fixes: [],
       },
+    ]);
+  });
+
+  it("prefers remote versioned notes while retaining bundled unreleased and missing releases", () => {
+    const bundled = parseChangelog(`
+## [Unreleased]
+
+### Fixes
+
+- Pending fix.
+
+## [1.0.0]
+
+### Additions
+
+- Bundled old notes.
+
+## [0.9.0]
+
+### Fixes
+
+- Offline-only notes.
+`);
+    const remote = parseChangelog(`
+## [1.0.0]
+
+### Improvements
+
+- Corrected GitHub notes.
+`);
+
+    expect(
+      mergeChangelogEntries(remote, bundled).map((entry) => ({
+        version: entry.version,
+        improvements: entry.improvements,
+      })),
+    ).toEqual([
+      { version: "Unreleased", improvements: [] },
+      { version: "1.0.0", improvements: ["Corrected GitHub notes."] },
+      { version: "0.9.0", improvements: [] },
     ]);
   });
 });

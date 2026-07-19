@@ -18,6 +18,7 @@ export interface AppUpdateStatus {
 
 export interface UpdateApi {
   getStatus(): Promise<AppUpdateStatus>;
+  getReleaseNotes(forceRefresh?: boolean): Promise<string | null>;
   check(): Promise<AppUpdateStatus>;
   install(): void;
   onStatus(listener: (status: AppUpdateStatus) => void): () => void;

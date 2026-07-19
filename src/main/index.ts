@@ -37,6 +37,7 @@ import { SevenTvService } from "./seven-tv-service";
 import { ThirdPartyEmoteService } from "./third-party-emote-service";
 import { TwitchChatService } from "./twitch-chat-service";
 import { UpdateService } from "./update-service";
+import { GitHubReleaseNotesService } from "./github-release-notes";
 import { startRendererServer, type RendererServer } from "./renderer-server";
 import {
   chatHistoryLimitSchema,
@@ -119,6 +120,7 @@ const updateService = new UpdateService(
   () => mainWindow,
   (status) => sendToWindow(mainWindow, "updates:status", status),
 );
+const githubReleaseNotesService = new GitHubReleaseNotesService();
 
 function isTrustedRendererUrl(rawUrl: string, kind: "main" | "controls"): boolean {
   if (!trustedRendererOrigin) return false;
@@ -1265,6 +1267,12 @@ onTrusted("chat:set-history-limit", (_event, rawLimit: unknown) => {
   if (result.success) twitchChatService.setHistoryLimit(result.data);
 });
 handleTrusted("updates:get-status", () => updateService.getStatus());
+handleTrusted("updates:get-release-notes", (_event, forceRefresh: unknown) => {
+  if (forceRefresh !== undefined && typeof forceRefresh !== "boolean") {
+    throw new Error("Invalid release-notes refresh request.");
+  }
+  return githubReleaseNotesService.getMarkdown(forceRefresh === true);
+});
 handleTrusted("updates:check", () => updateService.check());
 onTrusted("updates:install", () => updateService.install());
 handleTrusted("preferences:get-or-migrate", (_event, legacyPreferences: unknown) =>

@@ -47,3 +47,21 @@ export function parseChangelog(markdown: string): ChangelogEntry[] {
   });
   return releases;
 }
+
+export function mergeChangelogEntries(
+  primary: ChangelogEntry[],
+  fallback: ChangelogEntry[],
+): ChangelogEntry[] {
+  const unreleased = fallback.find(
+    (entry) => entry.version.toLowerCase() === "unreleased",
+  );
+  const remoteReleases = primary.filter(
+    (entry) => entry.version.toLowerCase() !== "unreleased",
+  );
+  const seen = new Set(remoteReleases.map((entry) => entry.version.toLowerCase()));
+  const fallbackReleases = fallback.filter((entry) => {
+    const version = entry.version.toLowerCase();
+    return version !== "unreleased" && !seen.has(version);
+  });
+  return [...(unreleased ? [unreleased] : []), ...remoteReleases, ...fallbackReleases];
+}

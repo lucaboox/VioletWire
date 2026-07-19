@@ -123,6 +123,8 @@ const api: DesktopApi = {
   } satisfies ChatApi,
   updates: {
     getStatus: () => ipcRenderer.invoke("updates:get-status"),
+    getReleaseNotes: (forceRefresh?: boolean) =>
+      ipcRenderer.invoke("updates:get-release-notes", forceRefresh),
     check: () => ipcRenderer.invoke("updates:check"),
     install: () => ipcRenderer.send("updates:install"),
     onStatus: (listener: (status: AppUpdateStatus) => void) => {

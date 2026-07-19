@@ -4,6 +4,12 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Added versioned GitHub Release notes as the changelog viewer's primary
+  source, with validated responses, a bounded local cache, and the bundled
+  changelog retained as an offline fallback.
+
 ### Fixes
 
 - Prevented automatic and manual update checks from opening duplicate restart
