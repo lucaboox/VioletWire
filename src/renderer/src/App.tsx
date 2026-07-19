@@ -3311,8 +3311,8 @@ export function App() {
                   <strong>Twitch website session</strong>
                   <span>
                     {playbackSession.linked
-                      ? `Linked${playbackSession.login ? ` as ${playbackSession.login}` : ""}. The Standard player shares this website session; Streamlink receives its token only for Twitch playback requests.`
-                      : "Optional. Sign in once if you want the Standard player to recognize your Twitch website account. This remains separate from VioletWire's official API sign-in."}
+                      ? `Linked${playbackSession.login ? ` as ${playbackSession.login}` : ""}. Used for higher Twitch playback qualities when available (such as Source or 1440p); Streamlink receives its token only for Twitch playback requests.`
+                      : "Optional. Link a Twitch website session for higher playback qualities when available (such as Source or 1440p). This remains separate from VioletWire's official API sign-in."}
                   </span>
                 </div>
                 {playbackSession.linked ? (
@@ -3670,8 +3670,8 @@ export function App() {
                       <strong>Twitch website session</strong>
                       <span>
                         {playbackSession.linked
-                          ? `Linked${playbackSession.login ? ` as ${playbackSession.login}` : ""}`
-                          : "Optional session used by Standard playback."}
+                          ? `Linked${playbackSession.login ? ` as ${playbackSession.login}` : ""}. Used for higher Twitch playback qualities when available (such as Source or 1440p).`
+                          : "Optional session used for higher Twitch playback qualities when available (such as Source or 1440p)."}
                       </span>
                     </div>
                     <button
