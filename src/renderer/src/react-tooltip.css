@@ -1,6 +1,9 @@
 .violetwire-react-tooltip {
   position: fixed;
   z-index: 2147483647;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
   max-width: min(320px, calc(100vw - 20px));
   padding: 7px 9px;
   border: 1px solid rgb(255 255 255 / 14%);
@@ -16,6 +19,23 @@
   pointer-events: none;
   text-align: center;
   animation: violetwire-tooltip-in 110ms ease-out;
+}
+
+.violetwire-tooltip-image {
+  display: block;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+/* Link image previews: "fairly large", capped to stay on screen. */
+.violetwire-react-tooltip.has-preview {
+  max-width: min(360px, calc(100vw - 20px));
+  padding: 8px;
+}
+
+.violetwire-react-tooltip.has-preview .violetwire-tooltip-image {
+  max-height: min(300px, 42vh);
+  border-radius: 4px;
 }
 
 @keyframes violetwire-tooltip-in {

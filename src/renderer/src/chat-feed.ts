@@ -21,6 +21,15 @@ const CHAT_BATCH_INTERVAL = 100;
 const SCROLL_PAUSE_SLACK = 1;
 // Treat "within this many px of the bottom" as live.
 const LIVE_EDGE_THRESHOLD = 36;
+// Pausing additionally requires user input this recent. Direction alone is
+// not proof of intent: lazy emote images can push content below the fold
+// without any scroll event, after which a reflow above the viewport
+// legitimately moves scrollTop DOWN — upward-looking, ≥36px from the bottom,
+// and entirely browser-generated. Machine speed decides whether the
+// text-to-image gap is wide enough to hit, which is why it only reproduced
+// on some machines. A wheel tick or a pointer press cannot be forged by
+// layout, so requiring one makes phantom pauses structurally impossible.
+const USER_SCROLL_INTENT_WINDOW = 600;
 
 export interface ChatFeed {
   messages: ChatMessage[];
@@ -32,6 +41,10 @@ export interface ChatFeed {
   /** Mirrors `autoScroll` synchronously for scroll-time reads outside render. */
   autoScrollRef: MutableRefObject<boolean>;
   handleScroll: () => void;
+  /** Attach to the scroller's onWheel: records upward-scroll intent. */
+  handleWheel: (event: { deltaY: number }) => void;
+  /** Attach to the scroller's onPointerDown: covers scrollbar grabs/touch. */
+  handlePointerDown: () => void;
   scrollToCurrent: () => void;
   revealDeleted: (id: string) => void;
   reset: () => void;
@@ -58,6 +71,7 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
   const autoScrollRef = useRef(true);
   const scrollAnchor = useRef<ChatScrollAnchor | null>(null);
   const lastScrollTop = useRef(0);
+  const lastUserScrollIntentAt = useRef(0);
   const batch = useRef<ChatMessage[]>([]);
   const batchTimer = useRef<number | null>(null);
   const onIncomingRef = useRef(onIncoming);
@@ -141,6 +155,14 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
     setPausedNewCount(0);
   }, [flushBatch]);
 
+  const handleWheel = useCallback((event: { deltaY: number }) => {
+    if (event.deltaY < 0) lastUserScrollIntentAt.current = Date.now();
+  }, []);
+
+  const handlePointerDown = useCallback(() => {
+    lastUserScrollIntentAt.current = Date.now();
+  }, []);
+
   const handleScroll = useCallback(() => {
     const host = messagesHostRef.current;
     if (!host) return;
@@ -153,7 +175,14 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
       resumeLive();
       return;
     }
-    if (host.scrollTop < previousTop - SCROLL_PAUSE_SLACK) {
+    // Pausing requires BOTH an upward movement and recent real user input
+    // (wheel-up or a pointer press on the scroller). Browser layout can
+    // legitimately move scrollTop down without any input — see the intent
+    // window comment above — so direction alone is not proof of a scroll.
+    if (
+      host.scrollTop < previousTop - SCROLL_PAUSE_SLACK &&
+      Date.now() - lastUserScrollIntentAt.current < USER_SCROLL_INTENT_WINDOW
+    ) {
       autoScrollRef.current = false;
       setAutoScroll(false);
     }
@@ -182,6 +211,7 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
     batch.current = [];
     scrollAnchor.current = null;
     lastScrollTop.current = 0;
+    lastUserScrollIntentAt.current = 0;
     autoScrollRef.current = true;
     setMessages([]);
     setRevealedDeleted(new Set());
@@ -197,6 +227,8 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
     messagesHostRef,
     autoScrollRef,
     handleScroll,
+    handleWheel,
+    handlePointerDown,
     scrollToCurrent,
     revealDeleted,
     reset,

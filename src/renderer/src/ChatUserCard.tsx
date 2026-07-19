@@ -104,6 +104,10 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
   const [position, setPosition] = useState<CardPosition | null>(null);
   const cardRef = useRef<HTMLElement>(null);
   const dragOffset = useRef<{ x: number; y: number } | null>(null);
+  const messagesHost = useRef<HTMLDivElement>(null);
+  // Newest messages sit at the bottom; open there and stay pinned while the
+  // reader hasn't scrolled up into the history.
+  const stickToNewest = useRef(true);
   const userMessages = useMemo(
     () => messages.filter((message) => message.login.toLowerCase() === selected.login.toLowerCase()).slice(-40),
     [messages, selected.login],
@@ -130,6 +134,11 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
       cancelled = true;
     };
   }, [channel, selected.login]);
+
+  useLayoutEffect(() => {
+    const host = messagesHost.current;
+    if (host && stickToNewest.current) host.scrollTop = host.scrollHeight;
+  }, [userMessages]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -322,7 +331,16 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
           </span>
           <small>{userMessages.length}</small>
         </div>
-        <div className="chat-user-messages">
+        <div
+          className="chat-user-messages"
+          onScroll={() => {
+            const host = messagesHost.current;
+            if (!host) return;
+            stickToNewest.current =
+              host.scrollHeight - host.scrollTop - host.clientHeight < 24;
+          }}
+          ref={messagesHost}
+        >
           {userMessages.length === 0 ? (
             <p>No retained messages.</p>
           ) : (

@@ -43,6 +43,33 @@ afterEach(() => {
   FakeWebSocket.instances = [];
 });
 
+describe("TwitchChatService action messages", () => {
+  it("unwraps CTCP ACTION and marks the message as an action", () => {
+    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const internals = service as unknown as TwitchChatServiceInternals;
+    const message = internals.parseMessageLine(
+      "@color=#8A2BE2;display-name=NightBot;id=51d6bd60-6c94-4f43-b78f-1c125fb51694;tmi-sent-ts=1720000000000 :nightbot!nightbot@nightbot.tmi.twitch.tv PRIVMSG #channel :\u0001ACTION Song request opened!\u0001",
+    );
+
+    expect(message).toMatchObject({
+      text: "Song request opened!",
+      action: true,
+      color: "#8A2BE2",
+    });
+  });
+
+  it("leaves ordinary messages unmarked", () => {
+    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const internals = service as unknown as TwitchChatServiceInternals;
+    const message = internals.parseMessageLine(
+      "@color=#8A2BE2;display-name=Someone;id=61d6bd60-6c94-4f43-b78f-1c125fb51694 :someone!someone@someone.tmi.twitch.tv PRIVMSG #channel :hello",
+    );
+
+    expect(message?.action).toBeUndefined();
+    expect(message?.text).toBe("hello");
+  });
+});
+
 describe("TwitchChatService connection watchdog", () => {
   function createConnectedService() {
     vi.useFakeTimers();

@@ -57,6 +57,36 @@ export function tokenizeChatLinks(text: string): ChatContentToken[] {
   return tokens.length > 0 ? tokens : [{ kind: "text", text }];
 }
 
+const imageExtensionPattern = /\.(png|jpe?g|gif|webp)$/i;
+
+/**
+ * Maps a chat link to a directly loadable image URL for hover previews, or
+ * null when the link is not a known image. Only https URLs qualify, and host
+ * rewrites are limited to services with stable direct-image forms.
+ */
+export function getLinkImagePreviewUrl(rawUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  if (imageExtensionPattern.test(url.pathname)) return url.toString();
+
+  const host = url.hostname.toLowerCase();
+  if (host === "imgur.com" || host === "www.imgur.com") {
+    // Single-image pages only; albums and galleries have no stable mapping.
+    const match = /^\/([A-Za-z0-9]{5,10})$/.exec(url.pathname);
+    return match ? `https://i.imgur.com/${match[1]}.jpg` : null;
+  }
+  if (host === "gyazo.com" || host === "www.gyazo.com") {
+    const match = /^\/([a-f0-9]{32})$/i.exec(url.pathname);
+    return match ? `https://i.gyazo.com/${match[1]}.jpg` : null;
+  }
+  return null;
+}
+
 export function getChatMentionCandidates(
   messages: ChatMessage[],
   query: string,

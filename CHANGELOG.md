@@ -4,6 +4,31 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Added Twitch-style rendering for chat `/me` action messages, including
+  correct removal of IRC control bytes and colored action text.
+- Added enlarged hover previews for chat badges and supported image links,
+  including direct HTTPS images plus compatible Imgur and Gyazo image pages.
+
+### Improvements
+
+- Refresh the signed-in followed-channel list in the background and whenever
+  VioletWire returns to the foreground, without surfacing transient refresh
+  failures as disruptive notices.
+- Improved emote hover cards so wide emotes stay contained and previews scale
+  appropriately with the user's configured chat emote size.
+- Keep chat-user-card message history pinned to the newest message unless the
+  viewer deliberately scrolls upward.
+- Improved the embedded Native player's Go Live behavior by reloading the
+  current channel at the live edge instead of starving playback after a buffer
+  drop.
+
+### Fixes
+
+- Prevented chat from pausing itself when late-loading emotes or layout reflow
+  changes the scroll position; pausing now requires recent user scroll intent.
+
 ## [0.3.2-alpha.2] - 2026-07-19
 
 ### Additions

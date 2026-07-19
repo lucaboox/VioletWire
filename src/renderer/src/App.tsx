@@ -349,8 +349,20 @@ const ChatMessageRow = memo(function ChatMessageRow({
       >
         {message.displayName}
       </button>
-      <span className="chat-colon">:</span>{" "}
-      <span className="native-chat-text">
+      {message.action ? " " : <><span className="chat-colon">:</span>{" "}</>}
+      <span
+        className="native-chat-text"
+        style={
+          message.action
+            ? {
+                color: readableUsernameColor(
+                  message.color,
+                  oledMode ? "#000000" : "#18181b",
+                ),
+              }
+            : undefined
+        }
+      >
         {message.deleted && deletedMessageStyle === "placeholder" && !deletedRevealed ? (
           <button
             className="deleted-message-toggle"
@@ -575,6 +587,8 @@ export function App() {
     messagesHostRef: chatMessagesHost,
     autoScrollRef: chatAutoScrollRef,
     handleScroll: handleChatScroll,
+    handleWheel: handleChatWheel,
+    handlePointerDown: handleChatPointerDown,
     scrollToCurrent: scrollChatToCurrent,
     revealDeleted: revealDeletedMessage,
     reset: resetChatFeed,
@@ -1142,7 +1156,25 @@ export function App() {
   );
 
   useEffect(() => {
-    if (authState.status === "signed-in") void loadFollowedChannels();
+    if (authState.status !== "signed-in") return;
+    void loadFollowedChannels();
+    // Keep the followed sidebar and home grid current: channels go live and
+    // offline all the time. Background failures stay silent — a transient
+    // refresh error must not surface a notice every minute.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void loadFollowedChannels({ silent: true });
+    }, 60_000);
+    const refreshOnReturn = () => {
+      if (document.visibilityState === "visible") {
+        void loadFollowedChannels({ silent: true });
+      }
+    };
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+    };
   }, [authState.status]);
 
   useEffect(() => {
@@ -1464,10 +1496,11 @@ export function App() {
     }
   }
 
-  async function loadFollowedChannels() {
+  async function loadFollowedChannels(options?: { silent?: boolean }) {
     try {
       setFollowedChannels(await window.desktop.twitch.getFollowedChannels());
     } catch (reason) {
+      if (options?.silent) return;
       setNotice(reason instanceof Error ? reason.message : "Unable to load followed channels.");
     }
   }
@@ -2717,6 +2750,8 @@ export function App() {
                       ref={chatMessagesHost}
                       aria-live="polite"
                       onScroll={handleChatScroll}
+                      onWheel={handleChatWheel}
+                      onPointerDown={handleChatPointerDown}
                     >
                       {chatMessages.length === 0 && (
                         <div className="chat-empty-state">

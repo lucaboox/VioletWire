@@ -277,13 +277,23 @@ export class TwitchChatService {
     if (!match) return null;
     const tags = this.parseTags(match[1] ?? "");
     const login = match[2];
+    // "/me" messages arrive CTCP-wrapped as "\u0001ACTION <text>\u0001".
+    // Twitch renders them in the sender's color; the wrapper bytes must never
+    // reach the UI. Emote index tags already refer to the inner text.
+    let text = match[4];
+    let action = false;
+    if (text.startsWith("\u0001ACTION ") && text.endsWith("\u0001")) {
+      action = true;
+      text = text.slice("\u0001ACTION ".length, -1);
+    }
     return {
       id: tags.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       channel: match[3],
       login,
       displayName: tags["display-name"] || login,
       color: /^#[0-9a-f]{6}$/i.test(tags.color ?? "") ? tags.color : "#a1a1aa",
-      text: match[4],
+      text,
+      ...(action ? { action: true } : {}),
       badges: (tags.badges ?? "").split(",").filter(Boolean),
       sentAt: Number(tags["tmi-sent-ts"]) || Date.now(),
       twitchEmotes: this.parseEmotes(tags.emotes ?? ""),

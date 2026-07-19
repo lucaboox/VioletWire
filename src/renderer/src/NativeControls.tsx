@@ -249,7 +249,7 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
       >
         {message.displayName}
       </button>
-      <span>: </span>
+      {message.action ? <span> </span> : <span>: </span>}
       {message.deleted && deletedMessageStyle === "placeholder" && !deletedRevealed ? (
         <button
           className="deleted-message-toggle"
@@ -261,7 +261,19 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
         </button>
       ) : (
         <>
-          <span className={message.deleted ? "deleted-original-content" : undefined}>
+          <span
+            className={message.deleted ? "deleted-original-content" : undefined}
+            style={
+              message.action
+                ? {
+                    color: readableUsernameColor(
+                      message.color,
+                      oledMode ? "#000000" : "#18181b",
+                    ),
+                  }
+                : undefined
+            }
+          >
             {renderOverlayText(message, providerEmotes)}
           </span>
           {message.deleted && deletedMessageStyle === "dimmed" && (
@@ -365,6 +377,8 @@ export function NativeControls({
     messagesHostRef: chatMessagesHost,
     autoScrollRef: chatAutoScrollRef,
     handleScroll: handleChatScroll,
+    handleWheel: handleChatWheel,
+    handlePointerDown: handleChatPointerDown,
     scrollToCurrent: scrollChatToCurrent,
     revealDeleted: revealDeletedMessage,
     reset: resetChatFeed,
@@ -967,6 +981,8 @@ export function NativeControls({
               chatAutoScroll ? "" : " scroll-paused"
             }`}
             onScroll={handleChatScroll}
+            onWheel={handleChatWheel}
+            onPointerDown={handleChatPointerDown}
             ref={chatMessagesHost}
           >
             {chatMessages.map((message, index) => (

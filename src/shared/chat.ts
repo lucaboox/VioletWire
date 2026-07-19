@@ -52,6 +52,8 @@ export interface ChatMessage {
     durationSeconds?: number;
   };
   historical?: boolean;
+  /** IRC "/me" message: rendered in the sender's color, Twitch-style. */
+  action?: boolean;
 }
 
 export function formatChatTimestamp(sentAt: number): string {

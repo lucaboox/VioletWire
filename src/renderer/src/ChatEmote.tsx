@@ -30,16 +30,22 @@ export function ChatEmote({
     above: boolean;
     left: number;
     top: number;
+    imageHeight: number;
   } | null>(null);
 
   function showTooltip() {
     const bounds = host.current?.getBoundingClientRect();
     if (!bounds) return;
     const above = bounds.top >= 155;
+    // Preview the emote at ~2.2x its rendered size so details are readable;
+    // measured live because the chat emote size is user-configurable.
+    const renderedHeight =
+      host.current?.querySelector("img")?.getBoundingClientRect().height ?? 27;
     setTooltip({
       above,
       left: Math.min(Math.max(bounds.left + bounds.width / 2, 82), window.innerWidth - 82),
       top: above ? bounds.top - 8 : bounds.bottom + 8,
+      imageHeight: Math.min(150, Math.round(renderedHeight * 2.2)),
     });
   }
 
@@ -77,7 +83,12 @@ export function ChatEmote({
             role="tooltip"
             style={{ left: tooltip.left, top: tooltip.top }}
           >
-            <img alt="" decoding="async" src={imageUrl} />
+            <img
+              alt=""
+              decoding="async"
+              src={imageUrl}
+              style={{ height: tooltip.imageHeight }}
+            />
             <strong>{name}</strong>
             <span>
               <ProviderLogo name={provider as ProviderLogoName} />

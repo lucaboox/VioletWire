@@ -126,6 +126,9 @@ export class TextureNativePlayer {
   // first "playing" event; the old stream's end-of-file must not surface as a
   // "stopped" player state mid-switch.
   private switchPending = false;
+  // The channel the live session is currently tuned to; go-live catch-up
+  // reloads it through the in-place switch path.
+  private currentChannel: string | null = null;
   private readonly resolveCache = new Map<
     string,
     { expiresAt: number; url: Promise<string> }
@@ -258,6 +261,7 @@ export class TextureNativePlayer {
         return { ok: false, reason: "Texture playback was cancelled." };
       }
       session.addon.command(["loadfile", streamUrl, "replace"]);
+      this.currentChannel = channel;
       return { ok: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -295,6 +299,7 @@ export class TextureNativePlayer {
       }
       session.addon.command(["loadfile", streamUrl, "replace"]);
       session.addon.command(["set", "pause", "no"]);
+      this.currentChannel = channel;
       return { ok: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -379,14 +384,12 @@ export class TextureNativePlayer {
         }
         break;
       case "go-live":
-        // Streamlink's live input does not consistently expose a seekable
-        // percentage range. Discard its delayed cache while playback is still
-        // paused, then resume only after mpv has moved back to fresh packets.
-        // This keeps the necessary live-edge catch-up from dropping frames
-        // that are already being presented.
-        addon.command(["drop-buffers"]);
-        addon.command(["set", "pause", "no"]);
-        this.updateState({ paused: false, behindLive: false });
+        // Discarding mpv's demuxer cache left playback at the starvation
+        // edge under the low-latency profile: it caught up to live but then
+        // stuttered on every network wobble. Reloading the stream through
+        // the same in-place switch used for channel changes lands on the
+        // playlist head with a normal buffer ramp instead.
+        void this.reloadAtLiveEdge();
         break;
     }
   }
@@ -395,10 +398,21 @@ export class TextureNativePlayer {
     this.session?.addon.recoverGraphics(cycleAdapter);
   }
 
+  private async reloadAtLiveEdge(): Promise<void> {
+    const session = this.session;
+    const channel = this.currentChannel;
+    if (!session || !session.acceptingFrames || !channel) return;
+    await this.switchStream(session, channel, this.state.quality, {
+      kind: "channel",
+      detail: channel,
+    });
+  }
+
   destroy(): void {
     this.startGeneration += 1;
     this.stopping = true;
     this.switchPending = false;
+    this.currentChannel = null;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeTimer = null;
     this.resolverProcess?.kill();

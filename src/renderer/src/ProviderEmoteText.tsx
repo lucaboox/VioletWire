@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import type { ProviderEmote } from "../../shared/emotes";
-import { tokenizeChatLinks } from "../../shared/chat-content";
+import {
+  getLinkImagePreviewUrl,
+  tokenizeChatLinks,
+} from "../../shared/chat-content";
 import { ChatEmote } from "./ChatEmote";
 import {
   getEmoteEffectClasses,
@@ -104,6 +107,7 @@ export function renderProviderText(
 ): ReactNode[] {
   return tokenizeChatLinks(text).flatMap((content, contentIndex) => {
     if (content.kind === "link") {
+      const previewUrl = getLinkImagePreviewUrl(content.url);
       return (
         <a
           className="chat-link"
@@ -115,6 +119,12 @@ export function renderProviderText(
           }}
           rel="noreferrer"
           title={content.url}
+          {...(previewUrl
+            ? {
+                "data-violetwire-tooltip-image": previewUrl,
+                "data-violetwire-tooltip-large": "",
+              }
+            : {})}
         >
           {content.text}
         </a>
