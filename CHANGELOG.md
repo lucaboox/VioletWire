@@ -9,6 +9,8 @@ All notable changes to VioletWire are documented in this file.
 - Treat a GitHub release that is temporarily missing `latest.yml` while its
   assets are still uploading as a non-error update state instead of displaying
   an alarming updater failure.
+- Ensure the automatic post-update changelog waits for fresh GitHub Release
+  notes instead of briefly displaying a stale cached changelog.
 
 ## [0.3.2-alpha.3] - 2026-07-19
 

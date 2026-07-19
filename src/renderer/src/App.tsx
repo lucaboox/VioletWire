@@ -1054,8 +1054,8 @@ export function App() {
       preresolveTimer.current = null;
     }
   }, []);
-  const refreshChangelogEntries = useCallback((forceRefresh = false) => {
-    return window.desktop.updates
+  const refreshChangelogEntries = useCallback(async (forceRefresh = false) => {
+    await window.desktop.updates
       .getReleaseNotes(forceRefresh)
       .then((markdown) => {
         if (!markdown) return;
@@ -1133,16 +1133,29 @@ export function App() {
     if (updateStatus.state === "disabled" || !currentVersion) return;
     changelogAutoShown.current = true;
     if (lastSeenChangelogVersion === currentVersion) return;
-    void window.desktop.preferences
-      .update({ lastSeenChangelogVersion: currentVersion })
-      .catch(() => undefined)
-      .finally(() => {
+    let cancelled = false;
+    void (async () => {
+      // A cached GitHub response can be one release behind immediately after
+      // an install. Resolve a fresh set of release notes before opening the
+      // automatic modal so it never flashes stale notes and then changes only
+      // when the user opens it manually.
+      await refreshChangelogEntries(true);
+      if (cancelled) return;
+      await window.desktop.preferences
+        .update({ lastSeenChangelogVersion: currentVersion })
+        .catch(() => undefined);
+      if (!cancelled) {
         setChangelogReturnsToSettings(false);
         setChangelogOpen(true);
-      });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [
     lastSeenChangelogVersion,
     preferencesReady,
+    refreshChangelogEntries,
     updateStatus.currentVersion,
     updateStatus.state,
   ]);
