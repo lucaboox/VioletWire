@@ -1,10 +1,41 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, MessageSquare, X } from "lucide-react";
 import type { ChatBadgeAsset, ChatMessage } from "../../shared/chat";
 import type { ChatUserProfile } from "../../shared/twitch";
 import { ChatBadge } from "./ChatBadge";
 import "./chat-user-card.css";
+
+// Memoized so an open card doesn't re-tokenize every retained message each
+// time the parent re-renders (the chat batch fires ~10x/second). A row's
+// content is immutable once shown, so identity-stable props never re-render it.
+const UserCardMessage = memo(function UserCardMessage({
+  message,
+  renderText,
+}: {
+  message: ChatMessage;
+  renderText: (message: ChatMessage) => ReactNode;
+}) {
+  return (
+    <article>
+      <time>
+        {new Date(message.sentAt).toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        })}
+      </time>
+      <div>{renderText(message)}</div>
+    </article>
+  );
+});
 
 interface ChatUserCardProps {
   anchor?: DOMRect;
@@ -296,15 +327,7 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
             <p>No retained messages.</p>
           ) : (
             userMessages.map((message) => (
-              <article key={message.id}>
-                <time>
-                  {new Date(message.sentAt).toLocaleTimeString([], {
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </time>
-                <div>{renderText(message)}</div>
-              </article>
+              <UserCardMessage key={message.id} message={message} renderText={renderText} />
             ))
           )}
         </div>

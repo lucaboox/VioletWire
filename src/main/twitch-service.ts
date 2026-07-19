@@ -221,6 +221,8 @@ class TwitchRequestError extends Error {
 // the app inside that window without a network round trip per Helix request.
 export const VALIDATION_LIFETIME = 55 * 60_000;
 const CHAT_ASSETS_LIFETIME = 10 * 60_000;
+const USER_PROFILE_LIFETIME = 60_000;
+const IVR_SUBAGE_TIMEOUT = 5_000;
 const SESSION_CHANGED_MESSAGE =
   "The Twitch session changed; the stale result was discarded.";
 
@@ -252,6 +254,10 @@ export class TwitchService {
   private readonly chatAssetsCache = new Map<
     string,
     { expiresAt: number; result: Promise<TwitchChatAssets> }
+  >();
+  private readonly userProfileCache = new Map<
+    string,
+    { expiresAt: number; result: Promise<ChatUserProfile> }
   >();
 
   private get tokenPath(): string {
@@ -363,6 +369,8 @@ export class TwitchService {
         // user:read:emotes. Do not serve chat assets produced under the old
         // authorization after the new token is installed.
         this.chatAssetsCache.clear();
+        // Relationship fields depend on the authenticated account identity.
+        this.userProfileCache.clear();
         await this.writeToken(this.token);
         this.account = await this.fetchAccount();
         this.scheduleValidation();
@@ -573,7 +581,21 @@ export class TwitchService {
     return metadata;
   }
 
-  async getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile> {
+  getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile> {
+    const key = `${channel.toLowerCase()}:${login.toLowerCase()}`;
+    const cached = this.userProfileCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+    const result = this.fetchChatUserProfile(channel, login);
+    this.userProfileCache.set(key, { expiresAt: Date.now() + USER_PROFILE_LIFETIME, result });
+    // A failed lookup must stay retryable rather than caching the rejection.
+    result.catch(() => {
+      const entry = this.userProfileCache.get(key);
+      if (entry?.result === result) this.userProfileCache.delete(key);
+    });
+    return result;
+  }
+
+  private async fetchChatUserProfile(channel: string, login: string): Promise<ChatUserProfile> {
     // Chatterino uses IVR's public subage endpoint for public user-card
     // relationship data. Twitch Helix deliberately limits those fields to the
     // authenticated user, so keep IVR's best-effort response clearly separate.
@@ -636,10 +658,14 @@ export class TwitchService {
     login: string,
     channel: string,
   ): Promise<ChatUserProfile["subage"] | undefined> {
+    // A hung IVR must not keep the user card on "Loading" forever while the
+    // Twitch data is already available; cap it like other best-effort fetches.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), IVR_SUBAGE_TIMEOUT);
     try {
       const response = await fetch(
         `https://api.ivr.fi/v2/twitch/subage/${encodeURIComponent(login)}/${encodeURIComponent(channel)}`,
-        { headers: { Accept: "application/json" } },
+        { headers: { Accept: "application/json" }, signal: controller.signal },
       );
       if (!response.ok) return undefined;
       const payload = ivrSubageResponseSchema.parse(await this.readJson(response));
@@ -657,6 +683,8 @@ export class TwitchService {
       // The card remains useful with Twitch's public profile data if IVR is
       // temporarily unavailable. Never surface or log a third-party failure.
       return undefined;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -1131,6 +1159,7 @@ export class TwitchService {
     this.account = null;
     this.validatedAt = 0;
     this.chatAssetsCache.clear();
+    this.userProfileCache.clear();
     // Let detached in-flight work settle (the generation bump discards its
     // result) so a delayed refresh cannot recreate the file removed below.
     await Promise.allSettled([pendingRefresh, pendingCheck]);
