@@ -38,6 +38,7 @@ import { ThirdPartyEmoteService } from "./third-party-emote-service";
 import { TwitchChatService } from "./twitch-chat-service";
 import { UpdateService } from "./update-service";
 import { GitHubReleaseNotesService } from "./github-release-notes";
+import { LinkPreviewService } from "./link-preview-service";
 import { startRendererServer, type RendererServer } from "./renderer-server";
 import {
   chatHistoryLimitSchema,
@@ -304,6 +305,7 @@ const textureNativePlayer = new TextureNativePlayer(
   () => playbackSessionService.getToken(),
 );
 const twitchService = new TwitchService();
+const linkPreviewService = new LinkPreviewService(twitchService);
 const preferencesService = new PreferencesService();
 function isAllowedTwitchNavigation(rawUrl: string): boolean {
   try {
@@ -1272,6 +1274,11 @@ handleTrusted("updates:get-release-notes", (_event, forceRefresh: unknown) => {
     throw new Error("Invalid release-notes refresh request.");
   }
   return githubReleaseNotesService.getMarkdown(forceRefresh === true);
+});
+
+handleTrusted("system:get-link-preview", (_event, input: unknown) => {
+  if (typeof input !== "string" || input.length > 2_048) return null;
+  return linkPreviewService.getPreview(input);
 });
 handleTrusted("updates:check", () => updateService.check());
 onTrusted("updates:install", () => updateService.install());

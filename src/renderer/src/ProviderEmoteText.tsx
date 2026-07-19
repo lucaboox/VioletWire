@@ -125,6 +125,7 @@ export function renderProviderText(
                 "data-violetwire-tooltip-large": "",
               }
             : {})}
+          data-violetwire-link-preview={content.url}
         >
           {content.text}
         </a>

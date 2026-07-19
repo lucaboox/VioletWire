@@ -4,6 +4,15 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Added rich hover cards for Twitch Clip links using Twitch's official clip
+  metadata, including the thumbnail, title, broadcaster, duration, publish
+  date, and view count.
+- Added keyless YouTube hover cards with the video thumbnail, title, and
+  channel name. Full YouTube statistics intentionally remain out of scope
+  because they require a separate YouTube Data API key.
+
 ### Fixes
 
 - Treat a GitHub release that is temporarily missing `latest.yml` while its

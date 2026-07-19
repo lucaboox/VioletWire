@@ -4,6 +4,7 @@ import type { ChatApi } from "./chat";
 import type { TwitchApi } from "./twitch";
 import type { UpdateApi } from "./updates";
 import type { PreferencesApi } from "./preferences";
+import type { LinkPreview } from "./link-preview";
 
 function normalizeChannelInput(input: string): string {
   const value = input.trim().toLowerCase();
@@ -184,6 +185,7 @@ export interface NativePlayerState {
 export interface DesktopApi {
   system: {
     openExternal(url: string): Promise<void>;
+    getLinkPreview(url: string): Promise<LinkPreview | null>;
   };
   twitch: TwitchApi;
   emotes: EmoteApi;

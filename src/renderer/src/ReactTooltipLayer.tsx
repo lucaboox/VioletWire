@@ -6,6 +6,7 @@ import {
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
+import type { LinkPreview } from "../../shared/link-preview";
 import "./react-tooltip.css";
 
 const TOOLTIP_ATTRIBUTE = "data-violetwire-tooltip";
@@ -14,6 +15,7 @@ const TOOLTIP_ATTRIBUTE = "data-violetwire-tooltip";
 const TOOLTIP_IMAGE_ATTRIBUTE = "data-violetwire-tooltip-image";
 const TOOLTIP_IMAGE_HEIGHT_ATTRIBUTE = "data-violetwire-tooltip-image-height";
 const TOOLTIP_LARGE_ATTRIBUTE = "data-violetwire-tooltip-large";
+const LINK_PREVIEW_ATTRIBUTE = "data-violetwire-link-preview";
 const TOOLTIP_DELAY = 320;
 const VIEWPORT_MARGIN = 10;
 const TOOLTIP_GAP = 8;
@@ -23,6 +25,7 @@ interface TooltipState {
   imageUrl?: string;
   imageHeight?: number;
   large?: boolean;
+  linkPreview?: LinkPreview;
   target: HTMLElement;
   trigger: "focus" | "pointer";
 }
@@ -55,7 +58,9 @@ function tooltipTarget(eventTarget: EventTarget | null): HTMLElement | null {
 
 function positionTooltip(tooltip: TooltipState): CSSProperties {
   const targetBounds = tooltip.target.getBoundingClientRect();
-  const estimatedWidth = tooltip.imageUrl
+  const estimatedWidth = tooltip.linkPreview
+    ? 340
+    : tooltip.imageUrl
     ? tooltip.large
       ? 340
       : 120
@@ -65,7 +70,7 @@ function positionTooltip(tooltip: TooltipState): CSSProperties {
     Math.max(VIEWPORT_MARGIN + estimatedWidth / 2, targetBounds.left + targetBounds.width / 2),
   );
   // Image tooltips are taller; flip below sooner so they stay on screen.
-  const flipThreshold = tooltip.large ? 340 : tooltip.imageUrl ? 110 : 52;
+  const flipThreshold = tooltip.linkPreview || tooltip.large ? 340 : tooltip.imageUrl ? 110 : 52;
   const showBelow = targetBounds.top < flipThreshold;
   return {
     left,
@@ -92,6 +97,15 @@ export function ReactTooltipLayer() {
     setTooltip(null);
   }, [cancelPending]);
 
+  const loadLinkPreview = useCallback((target: HTMLElement, rawUrl: string) => {
+    void window.desktop.system.getLinkPreview(rawUrl).then((linkPreview) => {
+      if (!linkPreview || !target.isConnected) return;
+      setTooltip((current) =>
+        current?.target === target ? { ...current, linkPreview } : current,
+      );
+    }).catch(() => undefined);
+  }, []);
+
   const schedule = useCallback(
     (target: HTMLElement, trigger: TooltipState["trigger"], immediate = false) => {
       cancelPending();
@@ -102,15 +116,17 @@ export function ReactTooltipLayer() {
       const imageHeight =
         Number.isFinite(rawHeight) && rawHeight > 0 ? Math.min(320, rawHeight) : undefined;
       const large = target.hasAttribute(TOOLTIP_LARGE_ATTRIBUTE);
+      const linkPreviewUrl = target.getAttribute(LINK_PREVIEW_ATTRIBUTE);
       const reveal = () => {
         showTimer.current = null;
         if (!target.isConnected) return;
         setTooltip({ target, text, imageUrl, imageHeight, large, trigger });
+        if (linkPreviewUrl) loadLinkPreview(target, linkPreviewUrl);
       };
       if (immediate) reveal();
       else showTimer.current = window.setTimeout(reveal, TOOLTIP_DELAY);
     },
-    [cancelPending],
+    [cancelPending, loadLinkPreview],
   );
 
   const refreshPosition = useCallback(() => {
@@ -211,14 +227,25 @@ export function ReactTooltipLayer() {
     ? createPortal(
         <div
           className={
-            tooltip.large
+            tooltip.linkPreview || tooltip.large
               ? "violetwire-react-tooltip has-preview"
               : "violetwire-react-tooltip"
           }
           role="tooltip"
           style={positionTooltip(tooltip)}
         >
-          {tooltip.imageUrl && (
+          {tooltip.linkPreview ? (
+            <div className="violetwire-link-preview-card">
+              <img alt="" className="violetwire-tooltip-image" src={tooltip.linkPreview.thumbnailUrl} />
+              <strong>{tooltip.linkPreview.title}</strong>
+              <span>{tooltip.linkPreview.author}</span>
+              {tooltip.linkPreview.kind === "twitch-clip" && (
+                <small>
+                  {formatDuration(tooltip.linkPreview.durationSeconds)} · {formatCount(tooltip.linkPreview.viewCount)} views · {formatDate(tooltip.linkPreview.createdAt)}
+                </small>
+              )}
+            </div>
+          ) : tooltip.imageUrl && (
             <img
               alt=""
               className="violetwire-tooltip-image"
@@ -237,4 +264,21 @@ export function ReactTooltipLayer() {
         document.body,
       )
     : null;
+}
+
+function formatDuration(value?: number): string {
+  if (!value || value < 0) return "Clip";
+  const seconds = Math.round(value);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function formatCount(value?: number): string {
+  if (typeof value !== "number") return "0";
+  return new Intl.NumberFormat().format(value);
+}
+
+function formatDate(value?: string): string {
+  if (!value) return "Unknown date";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "Unknown date" : date.toLocaleDateString();
 }

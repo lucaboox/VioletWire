@@ -16,6 +16,7 @@ import {
   type StreamMetadata,
   type TwitchAccount,
   type TwitchAuthState,
+  type TwitchClipPreview,
   type TwitchDeviceAuthorization,
   type TwitchSearchResults,
 } from "../shared/twitch";
@@ -124,6 +125,17 @@ const ivrSubageResponseSchema = z.object({
 });
 const clipResponseSchema = z.object({
   data: z.array(z.object({ id: z.string(), edit_url: z.string().url() })).min(1),
+});
+const clipPreviewResponseSchema = z.object({
+  data: z.array(z.object({
+    url: z.string().url(),
+    broadcaster_name: z.string(),
+    title: z.string(),
+    view_count: z.number().int().nonnegative(),
+    created_at: z.string(),
+    thumbnail_url: z.string().url(),
+    duration: z.number().nonnegative(),
+  })).max(1),
 });
 const sendChatResponseSchema = z.object({
   data: z.array(
@@ -700,6 +712,24 @@ export class TwitchService {
     const clip = { id: result.data[0].id, editUrl: result.data[0].edit_url };
     await shell.openExternal(clip.editUrl);
     return clip;
+  }
+
+  async getClipPreview(clipId: string): Promise<TwitchClipPreview | null> {
+    const result = await this.helix(
+      `/clips?id=${encodeURIComponent(clipId)}`,
+      clipPreviewResponseSchema,
+    );
+    const clip = result.data[0];
+    if (!clip) return null;
+    return {
+      url: clip.url,
+      broadcasterName: clip.broadcaster_name,
+      title: clip.title,
+      viewCount: clip.view_count,
+      createdAt: clip.created_at,
+      thumbnailUrl: clip.thumbnail_url,
+      durationSeconds: clip.duration,
+    };
   }
 
   async sendChatMessage(

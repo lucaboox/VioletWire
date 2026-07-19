@@ -178,6 +178,16 @@ export interface PlaybackSessionState {
   message?: string;
 }
 
+export interface TwitchClipPreview {
+  url: string;
+  broadcasterName: string;
+  title: string;
+  viewCount: number;
+  createdAt: string;
+  thumbnailUrl: string;
+  durationSeconds: number;
+}
+
 export interface TwitchApi {
   getAuthState(): Promise<TwitchAuthState>;
   beginSignIn(): Promise<TwitchDeviceAuthorization>;
