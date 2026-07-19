@@ -3,6 +3,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { PlaybackSessionState } from "../shared/twitch";
+import {
+  APP_UI_PARTITION,
+  TWITCH_WEBSITE_PARTITION,
+} from "./session-partitions";
 
 const storedPlaybackSessionSchema = z.object({
   token: z.string().min(20),
@@ -25,7 +29,11 @@ export class PlaybackSessionService {
   }
 
   private get twitchSession(): Session {
-    return session.fromPartition("persist:glint-twitch-playback");
+    return session.fromPartition(TWITCH_WEBSITE_PARTITION);
+  }
+
+  private get appUiSession(): Session {
+    return session.fromPartition(APP_UI_PARTITION);
   }
 
   async initialize(): Promise<void> {
@@ -37,6 +45,7 @@ export class PlaybackSessionService {
       );
       this.token = stored.token;
       this.login = stored.login;
+      await this.syncAppUiCookie(stored.token);
     } catch {
       this.token = null;
       this.login = undefined;
@@ -85,7 +94,7 @@ export class PlaybackSessionService {
       autoHideMenuBar: true,
       backgroundColor: "#0e0e10",
       webPreferences: {
-        partition: "persist:glint-twitch-playback",
+        partition: TWITCH_WEBSITE_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -93,11 +102,14 @@ export class PlaybackSessionService {
     });
     this.loginWindow = loginWindow;
     loginWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (this.isSafeHttps(url)) void loginWindow.loadURL(url);
+      if (this.isAllowedLoginNavigation(url)) void loginWindow.loadURL(url);
       return { action: "deny" };
     });
     loginWindow.webContents.on("will-navigate", (event, url) => {
-      if (!this.isSafeHttps(url)) event.preventDefault();
+      if (!this.isAllowedLoginNavigation(url)) event.preventDefault();
+    });
+    loginWindow.webContents.on("will-redirect", (event, url) => {
+      if (!this.isAllowedLoginNavigation(url)) event.preventDefault();
     });
 
     return new Promise<PlaybackSessionState>((resolve, reject) => {
@@ -115,7 +127,13 @@ export class PlaybackSessionService {
         reject(error);
       };
       const acceptCookie = (cookie: Electron.Cookie) => {
-        if (cookie.name !== "auth-token" || !cookie.value) return;
+        if (
+          cookie.name !== "auth-token" ||
+          !cookie.value ||
+          !this.isTwitchHostname(cookie.domain ?? "")
+        ) {
+          return;
+        }
         void this.acceptToken(cookie.value)
           .then((state) => {
             finish(state);
@@ -163,6 +181,7 @@ export class PlaybackSessionService {
     await this.twitchSession.clearStorageData({
       storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
     });
+    await this.appUiSession.cookies.remove("https://www.twitch.tv", "auth-token");
     return this.getState();
   }
 
@@ -184,6 +203,7 @@ export class PlaybackSessionService {
     }
     this.token = token;
     this.login = login;
+    await this.syncAppUiCookie(token);
     await fs.mkdir(path.dirname(this.storagePath), { recursive: true });
     await fs.writeFile(
       this.storagePath,
@@ -193,9 +213,36 @@ export class PlaybackSessionService {
     return this.getState();
   }
 
-  private isSafeHttps(rawUrl: string): boolean {
+  private async syncAppUiCookie(token: string): Promise<void> {
+    await this.appUiSession.cookies.set({
+      url: "https://www.twitch.tv",
+      name: "auth-token",
+      value: token,
+      domain: ".twitch.tv",
+      path: "/",
+      secure: true,
+      httpOnly: false,
+      sameSite: "no_restriction",
+    });
+  }
+
+  private isTwitchHostname(rawHostname: string): boolean {
+    const hostname = rawHostname.toLowerCase().replace(/^\./, "");
+    return hostname === "twitch.tv" || hostname.endsWith(".twitch.tv");
+  }
+
+  private isAllowedLoginNavigation(rawUrl: string): boolean {
     try {
-      return new URL(rawUrl).protocol === "https:";
+      const url = new URL(rawUrl);
+      if (url.protocol !== "https:") return false;
+      const hostname = url.hostname.toLowerCase();
+      return (
+        this.isTwitchHostname(hostname) ||
+        hostname === "accounts.google.com" ||
+        hostname === "appleid.apple.com" ||
+        hostname === "amazon.com" ||
+        hostname.endsWith(".amazon.com")
+      );
     } catch {
       return false;
     }

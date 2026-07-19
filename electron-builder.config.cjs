@@ -1,6 +1,7 @@
 const repositorySlug = process.env.GITHUB_REPOSITORY ?? "";
 const [repositoryOwner, repositoryName] = repositorySlug.split("/");
 const hasGitHubRepository = Boolean(repositoryOwner && repositoryName);
+const windowsPublisherName = process.env.WINDOWS_PUBLISHER_NAME?.trim();
 
 module.exports = {
   appId: "app.violetwire.viewer",
@@ -26,10 +27,16 @@ module.exports = {
       from: "native/texture-player/build/Release/violetwire_texture_player.node",
       to: "native/texture-player/violetwire_texture_player.node",
     },
+    {
+      from: "native/streamlink-launcher.py",
+      to: "native/streamlink-launcher.py",
+    },
   ],
   win: {
     icon: "build/icon.png",
     executableName: "VioletWire",
+    verifyUpdateCodeSignature: true,
+    ...(windowsPublisherName ? { publisherName: windowsPublisherName } : {}),
     target: [{ target: "nsis", arch: ["x64"] }],
     publish: hasGitHubRepository
       ? [

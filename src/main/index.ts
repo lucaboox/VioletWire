@@ -6,6 +6,8 @@ import {
   powerMonitor,
   shell,
   WebContentsView,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
   type Rectangle,
 } from "electron";
 import path from "node:path";
@@ -42,6 +44,11 @@ import {
   outgoingChatMessageSchema,
 } from "../shared/chat";
 import { PreferencesService } from "./preferences-service";
+import {
+  APP_UI_PARTITION,
+  CONTROLS_PARTITION,
+  TWITCH_WEBSITE_PARTITION,
+} from "./session-partitions";
 
 // Electron's development console can outlive the shell that launched it. A
 // later Chromium diagnostic would otherwise turn a harmless closed stdout or
@@ -90,6 +97,7 @@ let activeChannelName: string | null = null;
 let textureFallbackInProgress = false;
 let playerOpenGeneration = 0;
 let rendererServer: RendererServer | null = null;
+let trustedRendererOrigin: string | null = null;
 const playbackSessionService = new PlaybackSessionService(
   () => mainWindow,
   applicationIcon,
@@ -111,6 +119,69 @@ const updateService = new UpdateService(
   () => mainWindow,
   (status) => sendToWindow(mainWindow, "updates:status", status),
 );
+
+function isTrustedRendererUrl(rawUrl: string, kind: "main" | "controls"): boolean {
+  if (!trustedRendererOrigin) return false;
+  try {
+    const url = new URL(rawUrl);
+    if (url.origin !== trustedRendererOrigin) return false;
+    return kind === "main"
+      ? url.pathname === "/" || url.pathname === "/index.html"
+      : url.pathname === "/controls.html";
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const frame = event.senderFrame;
+  if (!frame || frame !== event.sender.mainFrame) return false;
+  if (mainWindow && event.sender === mainWindow.webContents) {
+    return isTrustedRendererUrl(frame.url, "main");
+  }
+  if (nativeControlsWindow && event.sender === nativeControlsWindow.webContents) {
+    return isTrustedRendererUrl(frame.url, "controls");
+  }
+  return false;
+}
+
+function assertTrustedIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): void {
+  if (!isTrustedIpcSender(event)) {
+    throw new Error("Blocked IPC request from an untrusted renderer.");
+  }
+}
+
+function handleTrusted<Arguments extends unknown[], Result>(
+  channel: string,
+  listener: (event: IpcMainInvokeEvent, ...args: Arguments) => Result,
+): void {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedIpcSender(event);
+    return listener(event, ...(args as Arguments));
+  });
+}
+
+function onTrusted<Arguments extends unknown[]>(
+  channel: string,
+  listener: (event: IpcMainEvent, ...args: Arguments) => void,
+): void {
+  ipcMain.on(channel, (event, ...args) => {
+    if (!isTrustedIpcSender(event)) return;
+    listener(event, ...(args as Arguments));
+  });
+}
+
+function lockLocalRendererNavigation(
+  window: BrowserWindow,
+  kind: "main" | "controls",
+): void {
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  const blockUnexpectedNavigation = (event: Electron.Event, url: string) => {
+    if (!isTrustedRendererUrl(url, kind)) event.preventDefault();
+  };
+  window.webContents.on("will-navigate", blockUnexpectedNavigation);
+  window.webContents.on("will-redirect", blockUnexpectedNavigation);
+}
 
 function suspendDetachedNativeSurfaces(): void {
   if (activePlayerMode !== "native") return;
@@ -373,15 +444,20 @@ async function createNativeControlsWindow(): Promise<void> {
     thickFrame: false,
     webPreferences: {
       preload: path.join(currentDirectory, "../preload/index.cjs"),
-      partition: "persist:glint-twitch-playback",
+      partition: CONTROLS_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
   nativeControlsWindow.setMenu(null);
-  nativeControlsWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  nativeControlsWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+  lockLocalRendererNavigation(nativeControlsWindow, "controls");
+  nativeControlsWindow.webContents.session.setPermissionRequestHandler(
+    (_contents, _permission, callback) => callback(false),
+  );
+  nativeControlsWindow.webContents.session.on("will-download", (event) =>
+    event.preventDefault(),
+  );
   nativeControlsWindow.on("closed", () => {
     nativeControlsWindow = null;
   });
@@ -389,9 +465,10 @@ async function createNativeControlsWindow(): Promise<void> {
   if (rendererUrl) {
     await nativeControlsWindow.loadURL(new URL("controls.html", rendererUrl).toString());
   } else {
-    await nativeControlsWindow.loadFile(
-      path.join(currentDirectory, "../../dist/renderer/controls.html"),
-    );
+    if (!rendererServer) {
+      throw new Error("The local renderer server is unavailable.");
+    }
+    await nativeControlsWindow.loadURL(`${rendererServer.origin}/controls.html`);
   }
   if (nativeControlsContext) {
     sendToWindow(nativeControlsWindow, "native-controls:context", nativeControlsContext);
@@ -448,7 +525,7 @@ async function openChannelActionWindow(
     roundedCorners: true,
     thickFrame: !subscriptionDrawer,
     webPreferences: {
-      partition: "persist:glint-twitch-playback",
+      partition: TWITCH_WEBSITE_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -470,6 +547,9 @@ async function openChannelActionWindow(
     return { action: "deny" };
   });
   actionWindow.webContents.on("will-navigate", (event, url) => {
+    if (!isAllowedTwitchNavigation(url)) event.preventDefault();
+  });
+  actionWindow.webContents.on("will-redirect", (event, url) => {
     if (!isAllowedTwitchNavigation(url)) event.preventDefault();
   });
   actionWindow.webContents.session.setPermissionRequestHandler(
@@ -699,7 +779,7 @@ async function createWindow(): Promise<void> {
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(currentDirectory, "../preload/index.cjs"),
-      partition: "persist:glint-twitch-playback",
+      partition: APP_UI_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -710,6 +790,12 @@ async function createWindow(): Promise<void> {
     },
   });
   const createdWindow = mainWindow;
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (_contents, _permission, callback) => callback(false),
+  );
+  mainWindow.webContents.session.on("will-download", (event) =>
+    event.preventDefault(),
+  );
   let htmlFullscreen = false;
   mainWindow.webContents.on("enter-html-full-screen", () => {
     htmlFullscreen = true;
@@ -760,16 +846,21 @@ async function createWindow(): Promise<void> {
   });
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
-  if (rendererUrl) await mainWindow.loadURL(rendererUrl);
-  else {
+  if (rendererUrl) {
+    trustedRendererOrigin = new URL(rendererUrl).origin;
+    lockLocalRendererNavigation(mainWindow, "main");
+    await mainWindow.loadURL(rendererUrl);
+  } else {
     rendererServer ??= await startRendererServer(
       path.join(currentDirectory, "../../dist/renderer"),
     );
+    trustedRendererOrigin = rendererServer.origin;
+    lockLocalRendererNavigation(mainWindow, "main");
     await mainWindow.loadURL(`${rendererServer.origin}/index.html`);
   }
 }
 
-ipcMain.handle(
+handleTrusted(
   "player:open",
   async (_event, input: unknown, requestedModeInput: unknown, requestedQualityInput: unknown) => {
   const channel = channelNameSchema.parse(input);
@@ -838,9 +929,9 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("player:close", () => destroyPlayer());
+handleTrusted("player:close", () => destroyPlayer());
 
-ipcMain.on("player:set-bounds", (_event, input: unknown) => {
+onTrusted("player:set-bounds", (_event, input: unknown) => {
   const result = playerBoundsSchema.safeParse(input);
   if (!result.success) return;
   lastPlayerBounds = result.data;
@@ -854,7 +945,7 @@ ipcMain.on("player:set-bounds", (_event, input: unknown) => {
   applySubscriptionDrawerBounds();
 });
 
-ipcMain.on("player:set-chat-bounds", (_event, input: unknown) => {
+onTrusted("player:set-chat-bounds", (_event, input: unknown) => {
   const result = playerBoundsSchema.safeParse(input);
   if (!result.success) return;
   lastChatBounds = result.data;
@@ -862,7 +953,7 @@ ipcMain.on("player:set-chat-bounds", (_event, input: unknown) => {
   if (nativeEmotePickerOpen) applyNativeControlsBounds();
 });
 
-ipcMain.on("player:set-chat-visible", (_event, visible: unknown) => {
+onTrusted("player:set-chat-visible", (_event, visible: unknown) => {
   if (!chatView || typeof visible !== "boolean") return;
   chatVisible = visible;
   if (chatPresentation === "overlay") {
@@ -878,12 +969,12 @@ ipcMain.on("player:set-chat-visible", (_event, visible: unknown) => {
   }
 });
 
-ipcMain.on("player:set-chat-presentation", (_event, input: unknown) => {
+onTrusted("player:set-chat-presentation", (_event, input: unknown) => {
   const result = chatPresentationSchema.safeParse(input);
   if (result.success) setChatPresentation(result.data);
 });
 
-ipcMain.handle("native-player:get-availability", () => {
+handleTrusted("native-player:get-availability", () => {
   const availability = nativePlayer.getAvailability();
   const textureAvailability = textureNativePlayer.getAvailability();
   return {
@@ -893,12 +984,12 @@ ipcMain.handle("native-player:get-availability", () => {
   };
 });
 
-ipcMain.handle("native-player:get-qualities", (_event, input: unknown) => {
+handleTrusted("native-player:get-qualities", (_event, input: unknown) => {
   const channel = channelNameSchema.parse(input);
   return nativePlayer.getQualities(channel);
 });
 
-ipcMain.handle(
+handleTrusted(
   "native-player:set-quality",
   async (_event, channelInput: unknown, qualityInput: unknown) => {
     if (activePlayerMode !== "native") return;
@@ -915,14 +1006,14 @@ ipcMain.handle(
   },
 );
 
-ipcMain.on("native-player:control", (_event, input: unknown) => {
+onTrusted("native-player:control", (_event, input: unknown) => {
   const result = nativePlayerCommandSchema.safeParse(input);
   if (!result.success || activePlayerMode !== "native") return;
   if (activeNativeBackend === "texture") textureNativePlayer.control(result.data);
   else nativePlayer.control(result.data);
 });
 
-ipcMain.on("player:preresolve", (_event, input: unknown) => {
+onTrusted("player:preresolve", (_event, input: unknown) => {
   const result = channelNameSchema.safeParse(input);
   if (!result.success) return;
   // Hovering a channel card speculatively resolves its stream URL so a click
@@ -935,7 +1026,7 @@ ipcMain.on("player:preresolve", (_event, input: unknown) => {
   textureNativePlayer.preresolve(result.data);
 });
 
-ipcMain.on("native-controls:set-visible", (_event, input: unknown) => {
+onTrusted("native-controls:set-visible", (_event, input: unknown) => {
   if (typeof input !== "boolean") return;
   nativeControlsVisible = input;
   if (!nativeControlsWindow) return;
@@ -956,7 +1047,7 @@ ipcMain.on("native-controls:set-visible", (_event, input: unknown) => {
   }
 });
 
-ipcMain.on("native-controls:set-expanded", (_event, input: unknown) => {
+onTrusted("native-controls:set-expanded", (_event, input: unknown) => {
   if (typeof input !== "boolean") return;
   nativeControlsExpanded = input;
   if (!nativeControlsWindow) return;
@@ -969,7 +1060,7 @@ ipcMain.on("native-controls:set-expanded", (_event, input: unknown) => {
   applyNativeControlsBounds();
 });
 
-ipcMain.on("native-controls:set-emote-picker", (_event, input: unknown) => {
+onTrusted("native-controls:set-emote-picker", (_event, input: unknown) => {
   if (typeof input !== "boolean" || activePlayerMode !== "native") return;
   nativeEmotePickerOpen = input;
   if (!input) nativeEmotePickerBounds = null;
@@ -986,13 +1077,13 @@ ipcMain.on("native-controls:set-emote-picker", (_event, input: unknown) => {
     applyNativeControlsBounds();
   }
 });
-ipcMain.on("player:set-modal-open", (_event, input: unknown) => {
+onTrusted("player:set-modal-open", (_event, input: unknown) => {
   if (typeof input !== "boolean" || activePlayerMode !== "native") return;
   if (input) suspendDetachedNativeSurfaces();
   else restoreDetachedNativeSurfaces();
 });
 
-ipcMain.on("native-controls:set-emote-picker-bounds", (_event, input: unknown) => {
+onTrusted("native-controls:set-emote-picker-bounds", (_event, input: unknown) => {
   if (input === null) {
     nativeEmotePickerBounds = null;
     return;
@@ -1003,7 +1094,7 @@ ipcMain.on("native-controls:set-emote-picker-bounds", (_event, input: unknown) =
   if (nativeEmotePickerOpen) applyNativeControlsBounds();
 });
 
-ipcMain.on("native-controls:emote-selected", (_event, input: unknown) => {
+onTrusted("native-controls:emote-selected", (_event, input: unknown) => {
   const result = outgoingChatMessageSchema.safeParse(input);
   if (!result.success) return;
   nativeEmotePickerOpen = false;
@@ -1014,7 +1105,7 @@ ipcMain.on("native-controls:emote-selected", (_event, input: unknown) => {
   applyNativeControlsBounds();
 });
 
-ipcMain.on("native-controls:ready", (event) => {
+onTrusted("native-controls:ready", (event) => {
   event.sender.send("native-player:state", nativePlayer.getState());
   event.sender.send("native-controls:visibility", nativeControlsVisible);
   const context =
@@ -1033,7 +1124,7 @@ ipcMain.on("native-controls:ready", (event) => {
   }
 });
 
-ipcMain.on("native-controls:set-context", (_event, input: unknown) => {
+onTrusted("native-controls:set-context", (_event, input: unknown) => {
   const result = nativeControlsContextSchema.safeParse(input);
   if (!result.success) return;
   nativeControlsContext = result.data;
@@ -1045,19 +1136,19 @@ ipcMain.on("native-controls:set-context", (_event, input: unknown) => {
   }
 });
 
-ipcMain.on("native-controls:action", (_event, input: unknown) => {
+onTrusted("native-controls:action", (_event, input: unknown) => {
   const result = nativeControlActionSchema.safeParse(input);
   if (!result.success) return;
   sendToWindow(mainWindow, "native-controls:action", result.data);
 });
 
-ipcMain.handle("window:set-fullscreen", (_event, fullscreen: unknown) => {
+handleTrusted("window:set-fullscreen", (_event, fullscreen: unknown) => {
   if (!mainWindow || typeof fullscreen !== "boolean") return false;
   mainWindow.setFullScreen(fullscreen);
   return mainWindow.isFullScreen();
 });
 
-ipcMain.handle("system:open-external", async (_event, input: unknown) => {
+handleTrusted("system:open-external", async (_event, input: unknown) => {
   if (typeof input !== "string" || input.length > 2_048) {
     throw new Error("Invalid external link.");
   }
@@ -1077,22 +1168,22 @@ ipcMain.handle("system:open-external", async (_event, input: unknown) => {
   });
 });
 
-ipcMain.handle("channel:open-action", async (_event, rawChannel: unknown, rawAction: unknown) => {
+handleTrusted("channel:open-action", async (_event, rawChannel: unknown, rawAction: unknown) => {
   const channel = channelNameSchema.parse(rawChannel);
   const action = channelActionSchema.parse(rawAction);
   await openChannelActionWindow(channel, action);
 });
 
-ipcMain.handle("twitch:get-auth-state", () => twitchService.getAuthState());
-ipcMain.handle("twitch:begin-sign-in", () => twitchService.beginSignIn());
-ipcMain.handle("twitch:complete-sign-in", () => twitchService.completeSignIn());
-ipcMain.handle("twitch:cancel-sign-in", () => twitchService.cancelSignIn());
-ipcMain.handle("twitch:sign-out", () => twitchService.signOut());
-ipcMain.handle("twitch-playback:get-state", () => playbackSessionService.getState());
-ipcMain.handle("twitch-playback:link", () => playbackSessionService.link());
-ipcMain.handle("twitch-playback:unlink", () => playbackSessionService.unlink());
-ipcMain.handle("twitch:get-followed-channels", () => twitchService.getFollowedChannels());
-ipcMain.handle(
+handleTrusted("twitch:get-auth-state", () => twitchService.getAuthState());
+handleTrusted("twitch:begin-sign-in", () => twitchService.beginSignIn());
+handleTrusted("twitch:complete-sign-in", () => twitchService.completeSignIn());
+handleTrusted("twitch:cancel-sign-in", () => twitchService.cancelSignIn());
+handleTrusted("twitch:sign-out", () => twitchService.signOut());
+handleTrusted("twitch-playback:get-state", () => playbackSessionService.getState());
+handleTrusted("twitch-playback:link", () => playbackSessionService.link());
+handleTrusted("twitch-playback:unlink", () => playbackSessionService.unlink());
+handleTrusted("twitch:get-followed-channels", () => twitchService.getFollowedChannels());
+handleTrusted(
   "twitch:get-browse-categories",
   (_event, rawQuery: unknown, rawAfter: unknown) => {
     const query = typeof rawQuery === "string" ? rawQuery.slice(0, 100) : "";
@@ -1100,7 +1191,7 @@ ipcMain.handle(
     return twitchService.getBrowseCategories(query, after);
   },
 );
-ipcMain.handle(
+handleTrusted(
   "twitch:get-category-streams",
   (_event, rawGameId: unknown, rawAfter: unknown) => {
     if (typeof rawGameId !== "string" || !/^\d+$/.test(rawGameId)) {
@@ -1110,14 +1201,14 @@ ipcMain.handle(
     return twitchService.getCategoryStreams(rawGameId, after);
   },
 );
-ipcMain.handle("twitch:search", (_event, rawQuery: unknown) => {
+handleTrusted("twitch:search", (_event, rawQuery: unknown) => {
   if (typeof rawQuery !== "string") throw new Error("Search text must be a string.");
   return twitchService.search(rawQuery.slice(0, 100));
 });
-ipcMain.handle("twitch:get-stream-metadata", (_event, rawChannel: unknown) =>
+handleTrusted("twitch:get-stream-metadata", (_event, rawChannel: unknown) =>
   twitchService.getStreamMetadata(channelNameSchema.parse(rawChannel)),
 );
-ipcMain.handle(
+handleTrusted(
   "twitch:get-chat-user-profile",
   (_event, rawChannel: unknown, rawLogin: unknown) =>
     twitchService.getChatUserProfile(
@@ -1125,34 +1216,34 @@ ipcMain.handle(
       channelNameSchema.parse(rawLogin),
     ),
 );
-ipcMain.handle("twitch:create-clip", (_event, rawChannel: unknown) =>
+handleTrusted("twitch:create-clip", (_event, rawChannel: unknown) =>
   twitchService.createClip(channelNameSchema.parse(rawChannel)),
 );
-ipcMain.handle("twitch:open-subscription", (_event, rawChannel: unknown) =>
+handleTrusted("twitch:open-subscription", (_event, rawChannel: unknown) =>
   twitchService.openSubscription(channelNameSchema.parse(rawChannel)),
 );
-ipcMain.handle("twitch:open-channel", (_event, rawChannel: unknown) =>
+handleTrusted("twitch:open-channel", (_event, rawChannel: unknown) =>
   twitchService.openChannel(channelNameSchema.parse(rawChannel)),
 );
-ipcMain.handle("emotes:7tv-global", () => sevenTvService.getGlobal());
-ipcMain.handle("emotes:7tv-channel", (_event, broadcasterId: unknown) => {
+handleTrusted("emotes:7tv-global", () => sevenTvService.getGlobal());
+handleTrusted("emotes:7tv-channel", (_event, broadcasterId: unknown) => {
   if (typeof broadcasterId !== "string") throw new Error("Broadcaster ID must be text.");
   return sevenTvService.getChannel(broadcasterId);
 });
-ipcMain.handle("emotes:ffz-global", () => thirdPartyEmoteService.getFfzGlobal());
-ipcMain.handle("emotes:ffz-channel", (_event, broadcasterId: unknown) => {
+handleTrusted("emotes:ffz-global", () => thirdPartyEmoteService.getFfzGlobal());
+handleTrusted("emotes:ffz-channel", (_event, broadcasterId: unknown) => {
   if (typeof broadcasterId !== "string") throw new Error("Broadcaster ID must be text.");
   return thirdPartyEmoteService.getFfzChannel(broadcasterId);
 });
-ipcMain.handle("emotes:bttv-global", () => thirdPartyEmoteService.getBttvGlobal());
-ipcMain.handle("emotes:bttv-channel", (_event, broadcasterId: unknown) => {
+handleTrusted("emotes:bttv-global", () => thirdPartyEmoteService.getBttvGlobal());
+handleTrusted("emotes:bttv-channel", (_event, broadcasterId: unknown) => {
   if (typeof broadcasterId !== "string") throw new Error("Broadcaster ID must be text.");
   return thirdPartyEmoteService.getBttvChannel(broadcasterId);
 });
-ipcMain.handle("emotes:clear-cache", async () => {
+handleTrusted("emotes:clear-cache", async () => {
   await Promise.all([sevenTvService.clear(), thirdPartyEmoteService.clear()]);
 });
-ipcMain.handle("chat:send", (
+handleTrusted("chat:send", (
   _event,
   rawChannel: unknown,
   rawMessage: unknown,
@@ -1166,20 +1257,20 @@ ipcMain.handle("chat:send", (
       : chatReplyParentIdSchema.parse(rawReplyParentMessageId);
   return twitchService.sendChatMessage(channel, message, replyParentMessageId);
 });
-ipcMain.handle("chat:get-assets", (_event, rawChannel: unknown) =>
+handleTrusted("chat:get-assets", (_event, rawChannel: unknown) =>
   twitchService.getChatAssets(channelNameSchema.parse(rawChannel)),
 );
-ipcMain.on("chat:set-history-limit", (_event, rawLimit: unknown) => {
+onTrusted("chat:set-history-limit", (_event, rawLimit: unknown) => {
   const result = chatHistoryLimitSchema.safeParse(rawLimit);
   if (result.success) twitchChatService.setHistoryLimit(result.data);
 });
-ipcMain.handle("updates:get-status", () => updateService.getStatus());
-ipcMain.handle("updates:check", () => updateService.check());
-ipcMain.on("updates:install", () => updateService.install());
-ipcMain.handle("preferences:get-or-migrate", (_event, legacyPreferences: unknown) =>
+handleTrusted("updates:get-status", () => updateService.getStatus());
+handleTrusted("updates:check", () => updateService.check());
+onTrusted("updates:install", () => updateService.install());
+handleTrusted("preferences:get-or-migrate", (_event, legacyPreferences: unknown) =>
   preferencesService.getOrMigrate(legacyPreferences),
 );
-ipcMain.handle("preferences:update", async (_event, patch: unknown) => {
+handleTrusted("preferences:update", async (_event, patch: unknown) => {
   const preferences = await preferencesService.update(patch);
   sendToWindow(mainWindow, "preferences:changed", preferences);
   sendToWindow(nativeControlsWindow, "preferences:changed", preferences);

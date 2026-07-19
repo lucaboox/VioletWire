@@ -12,6 +12,18 @@ All notable changes to VioletWire are documented in this file.
 
 ### Improvements
 
+- Hardened Electron's trust boundaries by isolating the official Twitch player
+  cross-origin, locking privileged renderer navigation, validating every IPC
+  sender, and narrowing the legacy controls window's preload capabilities.
+- Kept authenticated/source-quality Streamlink playback while moving the
+  website token from visible process arguments to a private stdin handoff.
+- Moved the application renderer into an ephemeral storage partition while
+  retaining encrypted playback credentials and synchronizing only the
+  in-memory Twitch cookie required by the official player.
+- Hardened release automation with exact dependency versions, immutable
+  GitHub Action commits, read-only build permissions, non-replaceable release
+  assets, automated dependency update proposals, and signing-ready Windows
+  configuration.
 - Made reply threads compact and content-sized above the chat composer instead
   of occupying a tall fixed panel.
 - Refined overlay chat so its border, composer, tools, and scrollbar stay out

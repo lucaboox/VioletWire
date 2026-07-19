@@ -12,6 +12,10 @@ import type {
   PlayerBounds,
 } from "../shared/player";
 import { parseStreamlinkQualityOutput, presentNativePlaybackError } from "../shared/player";
+import {
+  redactSensitivePlaybackText,
+  spawnStreamlink,
+} from "./streamlink-process";
 
 type StateListener = (state: NativePlayerState) => void;
 const AUDIO_COMPRESSOR_FILTER =
@@ -229,19 +233,17 @@ export class NativePlayer {
     }
 
     const result = new Promise<NativeQuality[]>((resolve) => {
-      const process = spawn(
+      const process = spawnStreamlink(
         availability.streamlinkPath!,
         [
           "--no-config",
           "--loglevel",
           "none",
-          ...(playbackToken
-            ? [`--twitch-api-header=Authorization=OAuth ${playbackToken}`]
-            : []),
           "--twitch-supported-codecs",
           "h264,h265,av1",
           `https://www.twitch.tv/${channel}`,
         ],
+        playbackToken,
         {
           windowsHide: true,
           stdio: ["ignore", "pipe", "ignore"],
@@ -337,15 +339,12 @@ export class NativePlayer {
     });
 
     const playbackToken = this.getTwitchPlaybackToken();
-    const streamlinkProcess = spawn(
+    const streamlinkProcess = spawnStreamlink(
       availability.streamlinkPath,
       [
         "--no-config",
         "--loglevel",
         "info",
-        ...(playbackToken
-          ? [`--twitch-api-header=Authorization=OAuth ${playbackToken}`]
-          : []),
         "--player",
         availability.mpvPath,
         "--player-args",
@@ -358,6 +357,7 @@ export class NativePlayer {
         `https://www.twitch.tv/${channel}`,
         quality,
       ],
+      playbackToken,
       {
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -367,7 +367,7 @@ export class NativePlayer {
 
     let lastFailure = "";
     const rememberFailure = (chunk: Buffer | string) => {
-      const text = chunk.toString();
+      const text = redactSensitivePlaybackText(chunk.toString());
       const usefulLine = text
         .split(/\r?\n/)
         .map((line) => line.trim())

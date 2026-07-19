@@ -236,4 +236,39 @@ const api: DesktopApi = {
   },
 };
 
-contextBridge.exposeInMainWorld("desktop", api);
+// The legacy window-hosted player needs a separate transparent controls
+// renderer, but that renderer does not need account management, browsing,
+// update installation, or general player lifecycle capabilities. Expose only
+// the operations its chat and controls UI actually uses.
+const controlsApi = {
+  system: {
+    openExternal: api.system.openExternal,
+  },
+  twitch: {
+    getChatUserProfile: api.twitch.getChatUserProfile,
+  },
+  emotes: api.emotes,
+  chat: api.chat,
+  preferences: api.preferences,
+  player: {
+    getNativeQualities: api.player.getNativeQualities,
+    setNativeQuality: api.player.setNativeQuality,
+    controlNative: api.player.controlNative,
+    onNativeState: api.player.onNativeState,
+    readyNativeControls: api.player.readyNativeControls,
+    setNativeControlsVisible: api.player.setNativeControlsVisible,
+    setNativeControlsExpanded: api.player.setNativeControlsExpanded,
+    setNativeEmotePicker: api.player.setNativeEmotePicker,
+    setNativeEmotePickerBounds: api.player.setNativeEmotePickerBounds,
+    sendNativeControlAction: api.player.sendNativeControlAction,
+    onNativeControlsVisibility: api.player.onNativeControlsVisibility,
+    onNativeControlsContext: api.player.onNativeControlsContext,
+    sendNativeEmoteSelection: api.player.sendNativeEmoteSelection,
+    onNativeEmotePicker: api.player.onNativeEmotePicker,
+  },
+};
+
+const exposedApi = window.location.pathname.endsWith("/controls.html")
+  ? controlsApi
+  : api;
+contextBridge.exposeInMainWorld("desktop", exposedApi);

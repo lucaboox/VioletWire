@@ -23,7 +23,6 @@ export default defineConfig({
         input: {
           main: path.join(projectRoot, "src/renderer/index.html"),
           controls: path.join(projectRoot, "src/renderer/controls.html"),
-          twitchPlayer: path.join(projectRoot, "src/renderer/twitch-player.html"),
         },
       },
     },

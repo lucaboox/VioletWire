@@ -2424,7 +2424,8 @@ export function App() {
                       allow="autoplay; fullscreen; picture-in-picture"
                       allowFullScreen
                       className="standard-player-frame"
-                      src={`twitch-player.html?channel=${encodeURIComponent(activeChannel)}`}
+                      sandbox="allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
+                      src={`https://player.twitch.tv/?channel=${encodeURIComponent(activeChannel)}&parent=${encodeURIComponent(window.location.hostname)}&autoplay=true&muted=false`}
                       title={`Official Twitch player for ${activeChannel}`}
                     />
                   )}

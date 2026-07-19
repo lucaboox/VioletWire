@@ -2,7 +2,7 @@ import { app, BrowserWindow, sharedTexture } from "electron";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import type {
   NativePlayerCommand,
   NativePlayerState,
@@ -10,6 +10,10 @@ import type {
   NativeQualityValue,
   PlayerBounds,
 } from "../shared/player";
+import {
+  redactSensitivePlaybackText,
+  spawnStreamlink,
+} from "./streamlink-process";
 
 interface TextureFrame {
   slot: number;
@@ -425,22 +429,20 @@ export class TextureNativePlayer {
     if (!streamlinkPath) return Promise.reject(new Error("Streamlink is unavailable."));
     const playbackToken = this.getTwitchPlaybackToken();
     return new Promise((resolve, reject) => {
-      const child = spawn(
+      const child = spawnStreamlink(
         streamlinkPath,
         [
           "--no-config",
           "--loglevel",
           "none",
           "--stream-url",
-          ...(playbackToken
-            ? [`--twitch-api-header=Authorization=OAuth ${playbackToken}`]
-            : []),
           "--twitch-low-latency",
           "--twitch-supported-codecs",
           "h264,h265,av1",
           `https://www.twitch.tv/${channel}`,
           quality,
         ],
+        playbackToken,
         {
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],
@@ -464,7 +466,14 @@ export class TextureNativePlayer {
             .map((line) => line.trim())
             .find((line) => /^https?:\/\//i.test(line));
           if (url) resolve(url);
-          else reject(new Error(errorOutput.trim() || "Streamlink did not return a playable URL."));
+          else {
+            reject(
+              new Error(
+                redactSensitivePlaybackText(errorOutput.trim()) ||
+                  "Streamlink did not return a playable URL.",
+              ),
+            );
+          }
         }
       };
       const timeout = setTimeout(() => {
