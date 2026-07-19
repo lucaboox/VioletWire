@@ -1,6 +1,12 @@
 import type { ChatMessage } from "./chat";
 
 export const CHAT_MESSAGE_LIMIT = 500;
+// While the reader has scrolled up, appending below them never moves their
+// view, so the list may grow past the live cap. Trimming the top (which
+// shifts every row) only happens once the hard limit is reached, cutting
+// back far enough that the next trim is hundreds of messages away.
+export const CHAT_PAUSED_HARD_LIMIT = 1_500;
+export const CHAT_PAUSED_TRIM_TO = 1_000;
 
 /**
  * Applies one incoming chat message to a timestamp-ordered message list and
@@ -60,4 +66,21 @@ export function applyChatMessage(
   }
   const next = [...current.slice(0, low), message, ...current.slice(low)];
   return next.length > limit ? next.slice(-limit) : next;
+}
+
+/**
+ * Applies a batch of messages in arrival order. Callers batch on a short
+ * interval so heavy chats cost a handful of React commits per second instead
+ * of one per message. Pass Infinity as the limit to defer trimming to the
+ * caller (needed while the reader is scrolled up, where trimming must be
+ * rare and anchored).
+ */
+export function applyChatMessageBatch(
+  current: ChatMessage[],
+  batch: ChatMessage[],
+  limit = CHAT_MESSAGE_LIMIT,
+): ChatMessage[] {
+  let next = current;
+  for (const message of batch) next = applyChatMessage(next, message, limit);
+  return next;
 }

@@ -68,6 +68,7 @@ describe("PreferencesService", () => {
       mentionSoundEnabled: true,
       oledMode: true,
       audioCompression: true,
+      lastSeenChangelogVersion: "0.3.0-alpha.1",
     });
 
     const second = new PreferencesService(preferencesPath);
@@ -86,6 +87,10 @@ describe("PreferencesService", () => {
       mentionSoundEnabled: true,
       oledMode: true,
       audioCompression: true,
+      lastSeenChangelogVersion: "0.3.0-alpha.1",
+      emoteFavorites: [],
+      emotePickerWidth: 390,
+      emotePickerHeight: 500,
     });
   });
 

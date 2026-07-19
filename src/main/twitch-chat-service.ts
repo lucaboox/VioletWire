@@ -7,6 +7,15 @@ import type {
 type MessageListener = (message: ChatMessage) => void;
 type StateListener = (state: ChatConnectionState) => void;
 
+// A TCP connection can stop delivering data without ever firing "close"
+// (Wi-Fi power saving while gaming, NAT timeouts, congestion drops). Twitch's
+// IRC server pings roughly every five minutes, so a healthy connection is
+// never silent longer than that: probe after four minutes of silence and
+// declare the connection dead after five and a half.
+const WATCHDOG_INTERVAL = 30_000;
+const KEEPALIVE_AFTER_SILENCE = 4 * 60_000;
+const DEAD_AFTER_SILENCE = 330_000;
+
 export class TwitchChatService {
   private socket: WebSocket | null = null;
   private channel: string | null = null;
@@ -17,6 +26,9 @@ export class TwitchChatService {
   private readonly recentMessageIds = new Set<string>();
   private readonly recentMessageOrder: string[] = [];
   private historyLimit = 20;
+  private lastActivityAt = 0;
+  private keepalivePingSentAt = 0;
+  private watchdogTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly onMessage: MessageListener,
@@ -37,6 +49,7 @@ export class TwitchChatService {
     this.manuallyClosed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.stopWatchdog();
     this.socket?.close();
     this.socket = null;
     this.channel = null;
@@ -58,6 +71,9 @@ export class TwitchChatService {
     socket.addEventListener("open", () => {
       if (this.socket !== socket || !this.channel) return;
       this.reconnectAttempt = 0;
+      this.lastActivityAt = Date.now();
+      this.keepalivePingSentAt = 0;
+      this.startWatchdog();
       const nickname = `justinfan${Math.floor(10_000 + Math.random() * 89_999)}`;
       socket.send("CAP REQ :twitch.tv/tags twitch.tv/commands\r\n");
       socket.send("PASS SCHMOOPIIE\r\n");
@@ -66,14 +82,58 @@ export class TwitchChatService {
       this.onState("connected");
     });
     socket.addEventListener("message", (event) => {
-      if (this.socket === socket) this.handleData(String(event.data));
+      if (this.socket !== socket) return;
+      this.lastActivityAt = Date.now();
+      this.handleData(String(event.data));
     });
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
+      this.stopWatchdog();
       this.socket = null;
       if (!this.manuallyClosed && this.channel) this.scheduleReconnect();
     });
     socket.addEventListener("error", () => socket.close());
+  }
+
+  private startWatchdog(): void {
+    this.stopWatchdog();
+    const timer = setInterval(() => this.checkConnectionLiveness(), WATCHDOG_INTERVAL);
+    timer.unref?.();
+    this.watchdogTimer = timer;
+  }
+
+  private stopWatchdog(): void {
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+    this.watchdogTimer = null;
+  }
+
+  private checkConnectionLiveness(): void {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const silence = Date.now() - this.lastActivityAt;
+    if (silence >= DEAD_AFTER_SILENCE) {
+      // Silently dead: "close" may never fire on its own, so force the
+      // reconnect path instead of waiting for the OS to notice.
+      this.stopWatchdog();
+      this.socket = null;
+      try {
+        socket.close();
+      } catch {
+        // The socket is already unusable; reconnecting is what matters.
+      }
+      if (!this.manuallyClosed && this.channel) this.scheduleReconnect();
+      return;
+    }
+    // One probe per silent stretch: a healthy server answers with PONG,
+    // which counts as activity and rearms the probe.
+    if (silence >= KEEPALIVE_AFTER_SILENCE && this.keepalivePingSentAt <= this.lastActivityAt) {
+      this.keepalivePingSentAt = Date.now();
+      try {
+        socket.send("PING :violetwire-keepalive\r\n");
+      } catch {
+        // Send failures are covered by the dead-connection cutoff above.
+      }
+    }
   }
 
   private scheduleReconnect(): void {

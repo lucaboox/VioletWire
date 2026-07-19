@@ -343,7 +343,9 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-line span { display: block; height: 5px; border-radius: 4px; background: #3e3a44; }
 
 .player-page { position: relative; display: grid; grid-template-rows: 54px minmax(0, 1fr); height: calc(100% - 68px); min-height: 0; overflow: hidden; background: #050506; }
-.player-toolbar { display: grid; grid-template-columns: minmax(400px, 1fr) minmax(300px, 350px); min-width: 0; border-bottom: 1px solid #28282e; background: #121216; font-size: 13px; }
+/* Right column must match .viewer-layout's chat column exactly so the chat
+   actions (overlay toggle) stay aligned with the chat panel edge at any width. */
+.player-toolbar { display: grid; grid-template-columns: minmax(400px, 1fr) minmax(330px, 390px); min-width: 0; border-bottom: 1px solid #28282e; background: #121216; font-size: 13px; }
 .player-toolbar.chat-collapsed { grid-template-columns: minmax(400px, 1fr) auto; }
 .player-toolbar-main { display: flex; min-width: 0; align-items: center; gap: 11px; padding: 0 12px; }
 .player-chat-actions { display: flex; min-width: 0; align-items: center; justify-content: center; gap: 7px; padding: 0 10px; border-left: 1px solid #28282e; background: #151519; }
@@ -429,7 +431,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .native-status-orb { width: 12px; height: 12px; border: 2px solid #8b5cf6; border-right-color: transparent; border-radius: 50%; animation: native-spin .8s linear infinite; }
 .native-status-orb.error { border-color: #fb7185; animation: none; }
 .chat-panel { display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; min-height: 0; max-height: 100%; overflow: hidden; contain: layout size; border-left: 1px solid #29292f; background: #0e0e10; }
-.chat-panel:has(.vw-emote-picker) { position: relative; z-index: 90; overflow: visible; contain: none; }
+/* Only overflow is relaxed so the picker can escape; size containment stays so
+   the viewer-layout grid track can't recompute and nudge the video (the video
+   is a DOM canvas in texture mode). Dropping `contain` here caused that shift. */
+.chat-panel:has(.vw-emote-picker) { position: relative; z-index: 90; overflow: visible; }
 .chat-panel:has(.vw-emote-picker) .chat-host,
 .chat-panel:has(.vw-emote-picker) .native-chat { overflow: visible; }
 .chat-panel:has(.vw-emote-picker) .native-chat-input { z-index: 91; }

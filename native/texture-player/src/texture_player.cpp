@@ -152,6 +152,13 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   }
 
  private:
+  // A slot is owned by exactly one party at a time: kFree (available to the
+  // render thread), kRendering (render thread is producing into it, with the
+  // slot mutex RELEASED during GPU work), or kExported (Chromium holds it
+  // until ReleaseFrame). ReleaseFrame must only ever free kExported slots so
+  // in-progress GPU work can safely run outside the lock.
+  enum class SlotState { kFree, kRendering, kExported };
+
   struct Slot {
     ComPtr<ID3D11Texture2D> texture;
     ComPtr<ID3D11Texture2D> gl_texture;
@@ -163,7 +170,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     uint32_t width = 0;
     uint32_t height = 0;
     uint64_t device_generation = 0;
-    bool busy = false;
+    SlotState state = SlotState::kFree;
   };
 
   bool LoadMpvApi() {
@@ -310,7 +317,10 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         std::scoped_lock lock(slot_mutex_);
         if (index < slots_.size()) {
           auto& slot = slots_[index];
-          slot.busy = false;
+          // Only Chromium-held slots may be freed here. A slot in kRendering
+          // is being written outside the lock and a stale release (for
+          // example after a device recovery reset it) must not touch it.
+          if (slot.state == SlotState::kExported) slot.state = SlotState::kFree;
         }
       }
       // If every slot was in Chromium when mpv announced its latest frame,
@@ -333,6 +343,20 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   void RequestRender() {
     render_requested_ = true;
     render_condition_.notify_one();
+  }
+
+  // After mpv announces MPV_RENDER_UPDATE_FRAME, the frame must be consumed
+  // even when this bridge cannot present it. Skipping through the render API
+  // lets mpv advance its frame queue and keep A/V pacing intact instead of
+  // accumulating genuinely dropped frames.
+  void SkipMpvFrame() {
+    if (!render_context_) return;
+    int skip = 1;
+    mpv_render_param params[] = {
+      {MPV_RENDER_PARAM_SKIP_RENDERING, &skip},
+      {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+    api_.render_context_render(render_context_, params);
   }
 
   static LRESULT CALLBACK HiddenWindowProc(
@@ -676,7 +700,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         }
       } else {
         for (auto& slot : slots_) {
-          if (!slot.busy) ResetSlotLocked(slot);
+          if (slot.state == SlotState::kFree) ResetSlotLocked(slot);
         }
       }
       device_ = std::move(next_device);
@@ -717,7 +741,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     ) {
       return true;
     }
-    if (slot.busy) return false;
+    if (slot.state != SlotState::kFree) return false;
     ResetSlotLocked(slot);
 
     D3D11_TEXTURE2D_DESC description{};
@@ -871,7 +895,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     slot.width = 0;
     slot.height = 0;
     slot.device_generation = 0;
-    slot.busy = false;
+    slot.state = SlotState::kFree;
   }
 
   void ResetSlotsLocked() {
@@ -917,136 +941,161 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       const uint32_t width = width_.load();
       const uint32_t height = height_.load();
       uint32_t selected = static_cast<uint32_t>(slots_.size());
+      HANDLE shared_handle = nullptr;
+      ComPtr<ID3D11Texture2D> texture;
+      ComPtr<ID3D11Texture2D> gl_texture;
+      ComPtr<IDXGIKeyedMutex> keyed_mutex;
+      HANDLE gl_interop_object = nullptr;
+      GLuint gl_framebuffer = 0;
       {
         std::scoped_lock lock(slot_mutex_);
         for (uint32_t index = 0; index < slots_.size(); ++index) {
-          if (!slots_[index].busy && EnsureSlotLocked(index, width, height)) {
+          if (
+            slots_[index].state == SlotState::kFree &&
+            EnsureSlotLocked(index, width, height)
+          ) {
             selected = index;
-            slots_[selected].busy = true;
+            auto& slot = slots_[selected];
+            slot.state = SlotState::kRendering;
+            shared_handle = slot.handle;
+            texture = slot.texture;
+            gl_texture = slot.gl_texture;
+            keyed_mutex = slot.keyed_mutex;
+            gl_interop_object = slot.gl_interop_object;
+            gl_framebuffer = slot.gl_framebuffer;
             break;
           }
         }
       }
-      // Do not perform the expensive software render and full-frame upload
-      // when Chromium is still using every shared texture.
-      if (selected == slots_.size()) continue;
+      if (selected == slots_.size()) {
+        // Every shared texture is still held by Chromium. The announced frame
+        // must still be consumed so mpv's queue and A/V pacing advance.
+        SkipMpvFrame();
+        continue;
+      }
 
-      HANDLE shared_handle = nullptr;
-      int render_result = 0;
-      {
+      // All GPU work below runs with slot_mutex_ RELEASED. ReleaseFrame is
+      // called on the Electron main thread after every presented frame; it
+      // must never wait behind a render or a keyed-mutex acquisition. The
+      // kRendering state guarantees exclusive ownership of this slot.
+      const auto free_slot = [this, selected] {
         std::scoped_lock lock(slot_mutex_);
-        auto& slot = slots_[selected];
+        slots_[selected].state = SlotState::kFree;
+      };
+
+      // The frame is disposable; a briefly contended compositor should cost
+      // a dropped frame, not a second-long stall of the render thread.
+      const HRESULT acquire_result = keyed_mutex->AcquireSync(0, 100);
+      if (FAILED(acquire_result)) {
+        free_slot();
+        SkipMpvFrame();
+        // Chromium can retain a shared texture briefly while replacing or
+        // resizing its compositor surface. This frame is disposable; a
+        // timeout must not permanently stop otherwise healthy playback.
+        EmitEvent({
+          "diagnostic",
+          false,
+          static_cast<double>(static_cast<uint32_t>(acquire_result)),
+          "Dropped a video frame while waiting for its shared texture.",
+        });
+        continue;
+      }
+
+      int render_result = 0;
+      if (use_open_gl_) {
         if (
-          !slot.texture ||
-          slot.width != width ||
-          slot.height != height ||
-          slot.device_generation != device_generation_
+          !gl_interop_object ||
+          !wgl_dx_lock_objects_(gl_interop_device_, 1, &gl_interop_object)
         ) {
-          slot.busy = false;
-          continue;
-        }
-        shared_handle = slot.handle;
-        const HRESULT acquire_result = slot.keyed_mutex->AcquireSync(0, 1'000);
-        if (FAILED(acquire_result)) {
-          slot.busy = false;
-          // Chromium can retain a shared texture briefly while replacing or
-          // resizing its compositor surface. This frame is disposable; a
-          // timeout must not permanently stop otherwise healthy playback.
+          keyed_mutex->ReleaseSync(0);
+          free_slot();
+          SkipMpvFrame();
           EmitEvent({
             "diagnostic",
             false,
-            static_cast<double>(static_cast<uint32_t>(acquire_result)),
-            "Dropped a video frame while waiting for its shared texture.",
+            static_cast<double>(GetLastError()),
+            "Dropped a frame because OpenGL could not lock its shared D3D11 texture.",
           });
           continue;
         }
 
-        if (use_open_gl_) {
-          if (
-            !slot.gl_interop_object ||
-            !wgl_dx_lock_objects_(gl_interop_device_, 1, &slot.gl_interop_object)
-          ) {
-            slot.keyed_mutex->ReleaseSync(0);
-            slot.busy = false;
-            EmitEvent({
-              "diagnostic",
-              false,
-              static_cast<double>(GetLastError()),
-              "Dropped a frame because OpenGL could not lock its shared D3D11 texture.",
-            });
-            continue;
-          }
-
-          gl_bind_framebuffer_(kGlFramebuffer, slot.gl_framebuffer);
-          glClearColor(0, 0, 0, 1);
-          glClear(GL_COLOR_BUFFER_BIT);
-          mpv_opengl_fbo framebuffer{
-            static_cast<int>(slot.gl_framebuffer),
-            static_cast<int>(width),
-            static_cast<int>(height),
-            static_cast<int>(kGlRgba8),
-          };
-          int flip_y = 0;
-          mpv_render_param params[] = {
-            {MPV_RENDER_PARAM_OPENGL_FBO, &framebuffer},
-            {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
-            {MPV_RENDER_PARAM_INVALID, nullptr},
-          };
-          render_result = api_.render_context_render(render_context_, params);
-          glFlush();
-          gl_bind_framebuffer_(kGlFramebuffer, 0);
-          const BOOL unlocked =
-            wgl_dx_unlock_objects_(gl_interop_device_, 1, &slot.gl_interop_object);
-          if (!unlocked && render_result >= 0) render_result = -1;
-          if (render_result >= 0) {
-            device_context_->CopyResource(slot.texture.Get(), slot.gl_texture.Get());
-            device_context_->Flush();
-          }
-        } else {
-          const size_t stride = static_cast<size_t>(width) * 4;
-          pixels_.resize(stride * height);
-          int size[] = {static_cast<int>(width), static_cast<int>(height)};
-          const char* format = "bgra";
-          mpv_render_param params[] = {
-            {MPV_RENDER_PARAM_SW_SIZE, size},
-            {MPV_RENDER_PARAM_SW_FORMAT, const_cast<char*>(format)},
-            {MPV_RENDER_PARAM_SW_STRIDE, const_cast<size_t*>(&stride)},
-            {MPV_RENDER_PARAM_SW_POINTER, pixels_.data()},
-            {MPV_RENDER_PARAM_INVALID, nullptr},
-          };
-          render_result = api_.render_context_render(render_context_, params);
-          if (render_result >= 0) {
-            // Some libswscale paths leave alpha undefined even for BGRA.
-            auto* opaque_pixels = reinterpret_cast<uint32_t*>(pixels_.data());
-            const size_t pixel_count = pixels_.size() / sizeof(uint32_t);
-            for (size_t index = 0; index < pixel_count; ++index) {
-              opaque_pixels[index] |= 0xff000000u;
-            }
-            device_context_->UpdateSubresource(
-              slot.texture.Get(),
-              0,
-              nullptr,
-              pixels_.data(),
-              static_cast<UINT>(stride),
-              0
-            );
-            device_context_->Flush();
-          }
+        gl_bind_framebuffer_(kGlFramebuffer, gl_framebuffer);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        mpv_opengl_fbo framebuffer{
+          static_cast<int>(gl_framebuffer),
+          static_cast<int>(width),
+          static_cast<int>(height),
+          static_cast<int>(kGlRgba8),
+        };
+        int flip_y = 0;
+        mpv_render_param params[] = {
+          {MPV_RENDER_PARAM_OPENGL_FBO, &framebuffer},
+          {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+          {MPV_RENDER_PARAM_INVALID, nullptr},
+        };
+        render_result = api_.render_context_render(render_context_, params);
+        glFlush();
+        gl_bind_framebuffer_(kGlFramebuffer, 0);
+        const BOOL unlocked =
+          wgl_dx_unlock_objects_(gl_interop_device_, 1, &gl_interop_object);
+        if (!unlocked && render_result >= 0) render_result = -1;
+        if (render_result >= 0) {
+          device_context_->CopyResource(texture.Get(), gl_texture.Get());
+          device_context_->Flush();
         }
-
-        slot.keyed_mutex->ReleaseSync(0);
-        if (render_result < 0) {
-          slot.busy = false;
-          EmitEvent({"error", false, 0, "libmpv could not render a video frame."});
-          continue;
+      } else {
+        const size_t stride = static_cast<size_t>(width) * 4;
+        pixels_.resize(stride * height);
+        int size[] = {static_cast<int>(width), static_cast<int>(height)};
+        const char* format = "bgra";
+        mpv_render_param params[] = {
+          {MPV_RENDER_PARAM_SW_SIZE, size},
+          {MPV_RENDER_PARAM_SW_FORMAT, const_cast<char*>(format)},
+          {MPV_RENDER_PARAM_SW_STRIDE, const_cast<size_t*>(&stride)},
+          {MPV_RENDER_PARAM_SW_POINTER, pixels_.data()},
+          {MPV_RENDER_PARAM_INVALID, nullptr},
+        };
+        render_result = api_.render_context_render(render_context_, params);
+        if (render_result >= 0) {
+          // Some libswscale paths leave alpha undefined even for BGRA.
+          auto* opaque_pixels = reinterpret_cast<uint32_t*>(pixels_.data());
+          const size_t pixel_count = pixels_.size() / sizeof(uint32_t);
+          for (size_t index = 0; index < pixel_count; ++index) {
+            opaque_pixels[index] |= 0xff000000u;
+          }
+          device_context_->UpdateSubresource(
+            texture.Get(),
+            0,
+            nullptr,
+            pixels_.data(),
+            static_cast<UINT>(stride),
+            0
+          );
+          device_context_->Flush();
         }
-        if (FAILED(device_->GetDeviceRemovedReason())) {
-          slot.busy = false;
+      }
+
+      keyed_mutex->ReleaseSync(0);
+      if (render_result < 0) {
+        free_slot();
+        EmitEvent({"error", false, 0, "libmpv could not render a video frame."});
+        continue;
+      }
+      if (FAILED(device_->GetDeviceRemovedReason())) {
+        {
+          std::scoped_lock lock(slot_mutex_);
+          auto& slot = slots_[selected];
+          slot.state = SlotState::kFree;
           ResetSlotLocked(slot);
-          graphics_recovery_requested_ = 1;
-          RequestRender();
-          continue;
         }
+        graphics_recovery_requested_ = 1;
+        RequestRender();
+        continue;
+      }
+      {
+        std::scoped_lock lock(slot_mutex_);
+        slots_[selected].state = SlotState::kExported;
       }
 
       auto* frame = new SharedFrame{
@@ -1073,7 +1122,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         delete frame;
         {
           std::scoped_lock lock(slot_mutex_);
-          slots_[selected].busy = false;
+          slots_[selected].state = SlotState::kFree;
         }
         RequestRender();
       }

@@ -1,10 +1,110 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "../shared/chat";
 import { TwitchChatService } from "./twitch-chat-service";
 
 interface TwitchChatServiceInternals {
   parseMessageLine(line: string): ChatMessage | null;
 }
+
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+  static OPEN = 1;
+  readyState = FakeWebSocket.OPEN;
+  sent: string[] = [];
+  closed = false;
+  private readonly listeners = new Map<string, Array<(event: unknown) => void>>();
+
+  constructor(public readonly url: string) {
+    FakeWebSocket.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: unknown) => void): void {
+    const existing = this.listeners.get(type) ?? [];
+    existing.push(listener);
+    this.listeners.set(type, existing);
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  emit(type: string, event: unknown = {}): void {
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  FakeWebSocket.instances = [];
+});
+
+describe("TwitchChatService connection watchdog", () => {
+  function createConnectedService() {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onState = vi.fn();
+    const service = new TwitchChatService(vi.fn(), onState);
+    // loadRecentMessages runs fire-and-forget; a resolved dummy keeps it inert.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 200 })));
+    service.connect("somechannel");
+    const socket = FakeWebSocket.instances.at(-1)!;
+    socket.emit("open");
+    return { service, socket, onState };
+  }
+
+  it("probes a silent connection with a client PING exactly once per stretch", async () => {
+    const { socket } = createConnectedService();
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000 + 30_000);
+    const keepalives = socket.sent.filter((line) => line.startsWith("PING"));
+    expect(keepalives).toHaveLength(1);
+
+    // Still silent, but before the dead cutoff: no additional probe.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(socket.sent.filter((line) => line.startsWith("PING"))).toHaveLength(1);
+  });
+
+  it("rearms the probe after server activity", async () => {
+    const { socket } = createConnectedService();
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000 + 30_000);
+    expect(socket.sent.filter((line) => line.startsWith("PING"))).toHaveLength(1);
+
+    socket.emit("message", { data: ":tmi.twitch.tv PONG tmi.twitch.tv :violetwire-keepalive\r\n" });
+    await vi.advanceTimersByTimeAsync(4 * 60_000 + 30_000);
+    expect(socket.sent.filter((line) => line.startsWith("PING"))).toHaveLength(2);
+  });
+
+  it("reconnects when a connection stays silent past the dead cutoff", async () => {
+    const { socket, onState } = createConnectedService();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(330_000 + 30_000);
+
+    expect(socket.closed).toBe(true);
+    expect(onState).toHaveBeenCalledWith("reconnecting");
+    // The reconnect timer (1s after first attempt) creates a fresh socket.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakeWebSocket.instances.length).toBeGreaterThan(1);
+  });
+
+  it("never declares an active connection dead", async () => {
+    const { socket } = createConnectedService();
+
+    for (let minute = 0; minute < 12; minute += 1) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      socket.emit("message", { data: "PING :tmi.twitch.tv\r\n" });
+    }
+
+    expect(socket.closed).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+});
 
 describe("TwitchChatService replies", () => {
   it("keeps Twitch reply and thread metadata from IRC tags", () => {

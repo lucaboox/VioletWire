@@ -15,6 +15,13 @@ export const appPreferencesSchema = z.object({
   mentionSoundEnabled: z.boolean(),
   oledMode: z.boolean(),
   audioCompression: z.boolean(),
+  // These live here rather than in localStorage: the packaged renderer is
+  // served from a random localhost port, so its browser storage is a fresh
+  // origin on every launch and cannot remember anything across runs.
+  lastSeenChangelogVersion: z.string().max(64),
+  emoteFavorites: z.array(z.string().max(200)).max(1_000),
+  emotePickerWidth: z.number().int().min(330).max(600),
+  emotePickerHeight: z.number().int().min(360).max(700),
 });
 
 export const appPreferencesPatchSchema = appPreferencesSchema.partial().strict();
@@ -35,6 +42,10 @@ export const defaultAppPreferences: AppPreferences = {
   mentionSoundEnabled: false,
   oledMode: false,
   audioCompression: false,
+  lastSeenChangelogVersion: "",
+  emoteFavorites: [],
+  emotePickerWidth: 390,
+  emotePickerHeight: 500,
 };
 
 export interface PreferencesApi {

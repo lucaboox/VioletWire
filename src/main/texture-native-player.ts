@@ -395,6 +395,13 @@ export class TextureNativePlayer {
       return;
     }
 
+    // A minimized window presents nothing: skip the import/IPC round trip
+    // per frame. Audio and decoding continue; frames resume on restore.
+    if (window.isMinimized()) {
+      session.addon.releaseFrame(frame.slot);
+      return;
+    }
+
     const handle = Buffer.allocUnsafe(8);
     handle.writeBigUInt64LE(frame.handle);
     let imported: Electron.SharedTextureImported;

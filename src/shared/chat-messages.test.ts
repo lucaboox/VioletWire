@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "./chat";
-import { applyChatMessage, CHAT_MESSAGE_LIMIT } from "./chat-messages";
+import {
+  applyChatMessage,
+  applyChatMessageBatch,
+  CHAT_MESSAGE_LIMIT,
+} from "./chat-messages";
 
 function makeMessage(id: string, sentAt: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -116,5 +120,42 @@ describe("applyChatMessage", () => {
     // The oldest entry is the freshly inserted one, so the cap drops it again.
     expect(inserted).toHaveLength(CHAT_MESSAGE_LIMIT);
     expect(inserted.some((message) => message.id === "old")).toBe(false);
+  });
+});
+
+describe("applyChatMessageBatch", () => {
+  it("applies a batch in arrival order with duplicates rejected", () => {
+    const base = [makeMessage("a", 1_000)];
+    const next = applyChatMessageBatch(base, [
+      makeMessage("b", 2_000),
+      makeMessage("a", 3_000),
+      makeMessage("c", 4_000),
+    ]);
+
+    expect(next.map((message) => message.id)).toEqual(["a", "b", "c"]);
+    expect(next[0].sentAt).toBe(1_000);
+  });
+
+  it("defers trimming entirely when the limit is Infinity", () => {
+    let messages: ChatMessage[] = [];
+    const batch = Array.from({ length: CHAT_MESSAGE_LIMIT + 100 }, (_, index) =>
+      makeMessage(`m-${index}`, index),
+    );
+    messages = applyChatMessageBatch(messages, batch, Number.POSITIVE_INFINITY);
+
+    expect(messages).toHaveLength(CHAT_MESSAGE_LIMIT + 100);
+    expect(messages[0].id).toBe("m-0");
+  });
+
+  it("applies deletions inside the batch to earlier entries", () => {
+    const next = applyChatMessageBatch([], [
+      makeMessage("a", 1_000),
+      makeMessage("b", 2_000),
+      makeMessage("a", 1_000, { deleted: true }),
+    ]);
+
+    expect(next).toHaveLength(2);
+    expect(next[0].deleted).toBe(true);
+    expect(next[1].deleted).toBeUndefined();
   });
 });

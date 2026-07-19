@@ -23,6 +23,7 @@ import type {
 } from "../shared/preferences";
 
 let newestTextureSequence = -1;
+let textureCanvas: HTMLCanvasElement | null = null;
 sharedTexture.setSharedTextureReceiver(async (received, sequence: unknown) => {
   const imported = received.importedSharedTexture;
   const frame = imported.getVideoFrame();
@@ -30,9 +31,17 @@ sharedTexture.setSharedTextureReceiver(async (received, sequence: unknown) => {
   try {
     if (typeof sequence === "number" && sequence <= newestTextureSequence) return;
     if (typeof sequence === "number") newestTextureSequence = sequence;
+    // Nothing can be seen while the document is hidden; skip the bitmap and
+    // canvas work. Decode and audio continue, and the next frame after the
+    // window becomes visible repaints the canvas.
+    if (document.visibilityState === "hidden") return;
     bitmap = await createImageBitmap(frame);
     if (typeof sequence === "number" && sequence < newestTextureSequence) return;
-    const canvas = document.querySelector<HTMLCanvasElement>("[data-native-texture-canvas]");
+    // Cached: querying the DOM per frame at 60 FPS is measurable waste.
+    if (!textureCanvas?.isConnected) {
+      textureCanvas = document.querySelector<HTMLCanvasElement>("[data-native-texture-canvas]");
+    }
+    const canvas = textureCanvas;
     if (!canvas) return;
     const width = bitmap.width;
     const height = bitmap.height;

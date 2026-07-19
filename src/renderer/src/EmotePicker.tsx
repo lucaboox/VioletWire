@@ -7,6 +7,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -17,6 +18,11 @@ import type {
   EmoteProvider,
   ProviderEmote,
 } from "../../shared/emotes";
+import {
+  defaultAppPreferences,
+  type AppPreferences,
+  type AppPreferencesPatch,
+} from "../../shared/preferences";
 import "./emote-picker.css";
 import {
   ProviderLogo,
@@ -130,6 +136,57 @@ export function EmotePicker({
   const [size, setSize] = useState(() => clampSize(readSize()));
   const scrollHost = useRef<HTMLDivElement>(null);
   const sectionHosts = useRef(new Map<string, HTMLElement>());
+  const resizing = useRef(false);
+
+  // Favorites and size persist in the main-process preferences file: the
+  // packaged renderer sits on a random-port origin, so its localStorage is
+  // wiped every launch. localStorage survives below only as a one-time
+  // migration source from older builds, and onChanged keeps the pickers in
+  // the main and native-controls windows in sync.
+  useEffect(() => {
+    let disposed = false;
+    const apply = (preferences: AppPreferences) => {
+      if (disposed) return;
+      setFavorites(new Set(preferences.emoteFavorites));
+      if (!resizing.current) {
+        setSize(clampSize({
+          width: preferences.emotePickerWidth,
+          height: preferences.emotePickerHeight,
+        }));
+      }
+    };
+    const removeListener = window.desktop.preferences.onChanged(apply);
+    void window.desktop.preferences
+      .getOrMigrate()
+      .then((preferences) => {
+        apply(preferences);
+        const patch: AppPreferencesPatch = {};
+        const legacyFavorites = readFavorites();
+        if (preferences.emoteFavorites.length === 0 && legacyFavorites.size > 0) {
+          patch.emoteFavorites = [...legacyFavorites];
+        }
+        const legacySize = readSize();
+        if (
+          preferences.emotePickerWidth === defaultAppPreferences.emotePickerWidth &&
+          preferences.emotePickerHeight === defaultAppPreferences.emotePickerHeight &&
+          (legacySize.width !== defaultAppPreferences.emotePickerWidth ||
+            legacySize.height !== defaultAppPreferences.emotePickerHeight)
+        ) {
+          patch.emotePickerWidth = Math.min(600, Math.max(330, Math.round(legacySize.width)));
+          patch.emotePickerHeight = Math.min(700, Math.max(360, Math.round(legacySize.height)));
+        }
+        if (Object.keys(patch).length > 0) {
+          window.localStorage.removeItem(FAVORITES_KEY);
+          window.localStorage.removeItem(SIZE_KEY);
+          void window.desktop.preferences.update(patch).catch(() => undefined);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      removeListener();
+    };
+  }, []);
 
   const allEmotes = useMemo(() => {
     const twitch: PickerEmote[] = twitchEmotes.map((emote) => ({
@@ -253,13 +310,13 @@ export function EmotePicker({
   }, [allEmotes, channelName, favorites, provider, query]);
 
   function toggleFavorite(emote: PickerEmote) {
-    setFavorites((current) => {
-      const next = new Set(current);
-      if (next.has(emote.key)) next.delete(emote.key);
-      else next.add(emote.key);
-      window.localStorage.setItem(FAVORITES_KEY, JSON.stringify([...next]));
-      return next;
-    });
+    const next = new Set(favorites);
+    if (next.has(emote.key)) next.delete(emote.key);
+    else next.add(emote.key);
+    setFavorites(next);
+    void window.desktop.preferences
+      .update({ emoteFavorites: [...next] })
+      .catch(() => undefined);
   }
 
   function handleEmoteClick(event: React.MouseEvent, emote: PickerEmote) {
@@ -279,6 +336,7 @@ export function EmotePicker({
     const maximumWidth = Math.max(330, Math.min(600, window.innerWidth - 20));
     const maximumHeight = Math.max(360, Math.min(700, window.innerHeight - 90));
     event.currentTarget.setPointerCapture(event.pointerId);
+    resizing.current = true;
     const move = (moveEvent: PointerEvent) => {
       const next = {
         width: Math.min(
@@ -295,8 +353,14 @@ export function EmotePicker({
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
+      resizing.current = false;
       setSize((current) => {
-        window.localStorage.setItem(SIZE_KEY, JSON.stringify(current));
+        void window.desktop.preferences
+          .update({
+            emotePickerWidth: Math.round(current.width),
+            emotePickerHeight: Math.round(current.height),
+          })
+          .catch(() => undefined);
         return current;
       });
     };

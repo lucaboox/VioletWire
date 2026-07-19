@@ -72,7 +72,12 @@ import {
   formatModerationAction,
   messageMentionsLogin,
 } from "../../shared/chat";
-import { applyChatMessage } from "../../shared/chat-messages";
+import {
+  applyChatMessageBatch,
+  CHAT_MESSAGE_LIMIT,
+  CHAT_PAUSED_HARD_LIMIT,
+  CHAT_PAUSED_TRIM_TO,
+} from "../../shared/chat-messages";
 import { getChatMentionCandidates } from "../../shared/chat-content";
 import { parseChangelog } from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
@@ -93,6 +98,8 @@ import violetWireIcon from "./assets/violetwire-icon.png";
 import changelogSource from "../../../CHANGELOG.md?raw";
 
 const NATIVE_CONTROLS_HIDE_DELAY = 5_000;
+// Chat renders in batches: one commit per interval instead of per message.
+const CHAT_BATCH_INTERVAL = 100;
 
 type AppSection = "home" | "browse" | "settings";
 type ChatLayout = "hidden" | ChatPresentation;
@@ -488,6 +495,8 @@ export function App() {
   );
   const [experimentalTexturePlayer, setExperimentalTexturePlayer] = useState(true);
   const [preferencesReady, setPreferencesReady] = useState(false);
+  const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = useState("");
+  const changelogAutoShown = useRef(false);
   const legacyPreferences = useRef({
     preferredPlayerMode: preferredMode,
     experimentalTexturePlayer: true,
@@ -533,6 +542,11 @@ export function App() {
   const chatMessagesHost = useRef<HTMLDivElement>(null);
   const chatScrollAnchor = useRef<ChatScrollAnchor | null>(null);
   const chatAutoScrollRef = useRef(true);
+  const lastChatScrollTop = useRef(0);
+  // Messages accumulate here and apply on a short interval: one React commit
+  // per batch instead of one per message keeps heavy chats cheap.
+  const chatBatch = useRef<ChatMessage[]>([]);
+  const chatBatchTimer = useRef<number | null>(null);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
   const mentionSettings = useRef({ enabled: false, login: "" });
@@ -746,6 +760,7 @@ export function App() {
       setChatOpacity(preferences.chatOverlayOpacity);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
       setOledMode(preferences.oledMode);
+      setLastSeenChangelogVersion(preferences.lastSeenChangelogVersion);
       setPreferencesReady(true);
     };
 
@@ -807,6 +822,31 @@ export function App() {
     };
   }, [mentionSoundEnabled, viewerLogin]);
 
+  const flushChatBatch = useCallback(() => {
+    if (chatBatchTimer.current !== null) {
+      window.clearTimeout(chatBatchTimer.current);
+      chatBatchTimer.current = null;
+    }
+    const batch = chatBatch.current;
+    if (batch.length === 0) return;
+    chatBatch.current = [];
+    const paused = !chatAutoScrollRef.current;
+    if (paused && chatMessagesHost.current) {
+      // Appends below the reader never move their view; the anchor only
+      // matters for the rare hard-limit trim and deletion height changes.
+      chatScrollAnchor.current = captureChatScrollAnchor(chatMessagesHost.current);
+    }
+    setChatMessages((current) => {
+      let next = applyChatMessageBatch(current, batch, Number.POSITIVE_INFINITY);
+      if (paused) {
+        if (next.length > CHAT_PAUSED_HARD_LIMIT) next = next.slice(-CHAT_PAUSED_TRIM_TO);
+      } else if (next.length > CHAT_MESSAGE_LIMIT) {
+        next = next.slice(-CHAT_MESSAGE_LIMIT);
+      }
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const removeMessageListener = window.desktop.chat.onMessage((message) => {
       if (message.deleted) {
@@ -824,17 +864,18 @@ export function App() {
       ) {
         playMentionPing();
       }
-      if (!chatAutoScrollRef.current && chatMessagesHost.current) {
-        chatScrollAnchor.current = captureChatScrollAnchor(chatMessagesHost.current);
-      }
-      setChatMessages((current) => applyChatMessage(current, message));
+      chatBatch.current.push(message);
+      chatBatchTimer.current ??= window.setTimeout(flushChatBatch, CHAT_BATCH_INTERVAL);
     });
     const removeStateListener = window.desktop.chat.onState(setChatConnectionState);
     return () => {
       removeMessageListener();
       removeStateListener();
+      if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
+      chatBatchTimer.current = null;
+      chatBatch.current = [];
     };
-  }, []);
+  }, [flushChatBatch]);
 
   useEffect(() => {
     const removePickerListener = window.desktop.player.onNativeEmotePicker(
@@ -983,21 +1024,45 @@ export function App() {
     window.requestAnimationFrame(() => chatInputHost.current?.focus());
   }, []);
 
+  function resumeLiveChat() {
+    // Apply anything still buffered, then cut the paused overflow back to
+    // the live cap; the reader is jumping to the bottom anyway.
+    flushChatBatch();
+    setChatMessages((current) =>
+      current.length > CHAT_MESSAGE_LIMIT ? current.slice(-CHAT_MESSAGE_LIMIT) : current,
+    );
+  }
+
   function handleChatScroll() {
     const host = chatMessagesHost.current;
     if (!host) return;
+    const previousTop = lastChatScrollTop.current;
+    lastChatScrollTop.current = host.scrollTop;
     const distanceFromBottom = host.scrollHeight - host.scrollTop - host.clientHeight;
-    const atBottom = distanceFromBottom < 36;
-    chatAutoScrollRef.current = atBottom;
-    setChatAutoScroll(atBottom);
+    if (distanceFromBottom < 36) {
+      chatAutoScrollRef.current = true;
+      setChatAutoScroll(true);
+      resumeLiveChat();
+      return;
+    }
+    // Only an upward movement is a user pausing the chat. Scroll events the
+    // app itself causes — forced jumps to the bottom, the composer padding
+    // transition, image loads shifting anchors, smooth scrolling — never
+    // move upward, so they can no longer disable auto-scroll by racing the
+    // bottom measurement. (The 1px slack absorbs fractional DPI rounding.)
+    if (host.scrollTop < previousTop - 1) {
+      chatAutoScrollRef.current = false;
+      setChatAutoScroll(false);
+    }
   }
 
   function scrollChatToCurrent() {
     const host = chatMessagesHost.current;
     if (!host) return;
-    host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
     chatAutoScrollRef.current = true;
     setChatAutoScroll(true);
+    resumeLiveChat();
+    host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
   }
 
   function toggleOledMode(): void {
@@ -1009,10 +1074,9 @@ export function App() {
     setSettingsOpen(false);
     setChangelogOpen(true);
     if (updateStatus.currentVersion) {
-      window.localStorage.setItem(
-        "violetwire.changelog.lastSeenVersion",
-        updateStatus.currentVersion,
-      );
+      void window.desktop.preferences
+        .update({ lastSeenChangelogVersion: updateStatus.currentVersion })
+        .catch(() => undefined);
     }
   }
 
@@ -1035,25 +1099,32 @@ export function App() {
   useEffect(() => {
     void loadAuthState();
     void window.desktop.twitch.getPlaybackSessionState().then(setPlaybackSession);
-    void window.desktop.updates.getStatus().then((status) => {
-      setUpdateStatus(status);
-      const currentVersion = status.currentVersion;
-      if (
-        status.state !== "disabled" &&
-        currentVersion &&
-        window.localStorage.getItem("violetwire.changelog.lastSeenVersion") !==
-          currentVersion
-      ) {
-        window.localStorage.setItem(
-          "violetwire.changelog.lastSeenVersion",
-          currentVersion,
-        );
-        setChangelogReturnsToSettings(false);
-        setChangelogOpen(true);
-      }
-    });
+    void window.desktop.updates.getStatus().then(setUpdateStatus);
     return window.desktop.updates.onStatus(setUpdateStatus);
   }, []);
+
+  // Auto-open the changelog once per release. The seen-version lives in the
+  // main-process preferences file because the packaged renderer's localStorage
+  // is wiped by its per-launch random origin.
+  useEffect(() => {
+    if (changelogAutoShown.current || !preferencesReady) return;
+    const currentVersion = updateStatus.currentVersion;
+    if (updateStatus.state === "disabled" || !currentVersion) return;
+    changelogAutoShown.current = true;
+    if (lastSeenChangelogVersion === currentVersion) return;
+    void window.desktop.preferences
+      .update({ lastSeenChangelogVersion: currentVersion })
+      .catch(() => undefined)
+      .finally(() => {
+        setChangelogReturnsToSettings(false);
+        setChangelogOpen(true);
+      });
+  }, [
+    lastSeenChangelogVersion,
+    preferencesReady,
+    updateStatus.currentVersion,
+    updateStatus.state,
+  ]);
 
   useEffect(
     () =>
@@ -1603,6 +1674,9 @@ export function App() {
     setRevealedDeletedMessages(new Set());
     chatAutoScrollRef.current = true;
     chatScrollAnchor.current = null;
+    chatBatch.current = [];
+    if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
+    chatBatchTimer.current = null;
     setChatAutoScroll(true);
     setChannelInput(channel);
     // Mount the player shell immediately so clicking a card feels instant and
