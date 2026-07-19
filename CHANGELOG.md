@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2-alpha.2] - 2026-07-19
+
 ### Additions
 
 - Added versioned GitHub Release notes as the changelog viewer's primary
