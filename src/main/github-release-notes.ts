@@ -35,6 +35,7 @@ interface ReleaseNotesCache {
 
 export class GitHubReleaseNotesService {
   private refreshInFlight: Promise<string | null> | null = null;
+  private refreshInFlightIsForced = false;
 
   constructor(
     private readonly cachePath = path.join(
@@ -46,11 +47,25 @@ export class GitHubReleaseNotesService {
   ) {}
 
   getMarkdown(forceRefresh = false): Promise<string | null> {
-    if (this.refreshInFlight) return this.refreshInFlight;
-    this.refreshInFlight = this.resolveMarkdown(forceRefresh).finally(() => {
-      this.refreshInFlight = null;
+    // An automatic read may legitimately return a short-lived local cache.
+    // A caller explicitly asking for fresh release notes (the post-update
+    // modal) must not join that read, or it can display the previous release.
+    if (this.refreshInFlight && (!forceRefresh || this.refreshInFlightIsForced)) {
+      return this.refreshInFlight;
+    }
+
+    const refresh = this.resolveMarkdown(forceRefresh);
+    this.refreshInFlight = refresh;
+    this.refreshInFlightIsForced = forceRefresh;
+    void refresh.finally(() => {
+      // A forced refresh may replace a cached request before it settles.
+      // Only the active request is allowed to clear the shared state.
+      if (this.refreshInFlight === refresh) {
+        this.refreshInFlight = null;
+        this.refreshInFlightIsForced = false;
+      }
     });
-    return this.refreshInFlight;
+    return refresh;
   }
 
   private async resolveMarkdown(forceRefresh: boolean): Promise<string | null> {

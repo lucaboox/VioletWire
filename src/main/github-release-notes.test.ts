@@ -87,6 +87,35 @@ describe("GitHubReleaseNotesService", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("does not let a forced refresh join an in-flight cached read", async () => {
+    await fs.writeFile(
+      cachePath,
+      JSON.stringify({ fetchedAt: now, markdown: "## [0.3.2-alpha.2]\n\n- Cached notes." }),
+      "utf8",
+    );
+    const fetcher = vi.fn(async () =>
+      new Response(
+        JSON.stringify([
+          {
+            tag_name: "v0.3.2-alpha.3",
+            body: "### Fixes\n\n- Fresh notes.",
+            draft: false,
+            published_at: "2026-07-19T13:00:00Z",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    const service = new GitHubReleaseNotesService(cachePath, fetcher, () => now);
+
+    const cached = service.getMarkdown();
+    const fresh = service.getMarkdown(true);
+
+    expect(await cached).toContain("Cached notes.");
+    expect(await fresh).toContain("Fresh notes.");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("returns null when neither GitHub nor a valid cache is available", async () => {
     const service = new GitHubReleaseNotesService(
       cachePath,

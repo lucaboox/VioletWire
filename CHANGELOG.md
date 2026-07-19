@@ -11,6 +11,8 @@ All notable changes to VioletWire are documented in this file.
   an alarming updater failure.
 - Ensure the automatic post-update changelog waits for fresh GitHub Release
   notes instead of briefly displaying a stale cached changelog.
+- Ensure an explicit fresh changelog request cannot be satisfied by an
+  in-flight cached request from app startup.
 
 ## [0.3.2-alpha.3] - 2026-07-19
 
