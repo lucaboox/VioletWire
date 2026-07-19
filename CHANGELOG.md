@@ -4,6 +4,14 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Fixed rapid stream switching so a cancelled older startup cannot clear the
+  selected embedded backend, trigger the window-hosted fallback, or tear down
+  the newer stream.
+- Kept Twitch event cards purple when hovered in OLED mode and limited the
+  hover feedback to the row behind the card.
+
 ## [0.3.0-alpha.1] - 2026-07-18
 
 ### Additions

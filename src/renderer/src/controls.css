@@ -365,6 +365,10 @@ input {
   background: linear-gradient(135deg, rgb(45 23 59 / 94%), rgb(25 24 30 / 94%));
 }
 
+.controls-surface.oled-mode .native-video-chat-message.native-chat-notice:hover {
+  background: linear-gradient(135deg, rgb(45 23 59 / 94%), rgb(25 24 30 / 94%));
+}
+
 .native-chat-notice::before {
   position: absolute;
   z-index: -1;

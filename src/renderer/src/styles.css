@@ -474,6 +474,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .native-chat-badges img { width: 18px; height: 18px; object-fit: contain; }
 .chat-notice-message { position: relative; isolation: isolate; margin: 6px 7px; padding: 10px; border: 1px solid #5b3d76; border-left: 3px solid #a855f7; border-radius: 8px; background: linear-gradient(135deg, #2d173bee, #19181eee); }
 .chat-notice-message:hover { background: linear-gradient(135deg, #2d173bee, #19181eee); }
+.oled-mode .native-chat-message.chat-notice-message:hover { background: linear-gradient(135deg, #2d173bee, #19181eee); }
 .chat-notice-message::before { position: absolute; z-index: -1; inset: -3px -7px; border-radius: 5px; background: transparent; content: ""; transition: background 90ms ease; }
 .chat-notice-message:hover::before { background: #ffffff0a; }
 .chat-notice-heading { display: flex; align-items: flex-start; gap: 7px; color: #e9d5ff; line-height: 1.4; }

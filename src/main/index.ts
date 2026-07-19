@@ -87,6 +87,7 @@ let activePlayerMode: PlayerMode | null = null;
 let activeNativeBackend: NativeRenderBackend | null = null;
 let activeChannelName: string | null = null;
 let textureFallbackInProgress = false;
+let playerOpenGeneration = 0;
 let rendererServer: RendererServer | null = null;
 const playbackSessionService = new PlaybackSessionService(
   () => mainWindow,
@@ -628,7 +629,8 @@ function setChatPresentation(presentation: ChatPresentation): void {
   }
 }
 
-function destroyPlayer(): void {
+function destroyPlayer(invalidatePendingOpen = true): void {
+  if (invalidatePendingOpen) playerOpenGeneration += 1;
   if (channelActionWindow && !channelActionWindow.isDestroyed()) channelActionWindow.close();
   channelActionWindow = null;
   channelActionKind = null;
@@ -745,7 +747,8 @@ ipcMain.handle(
   const requestedMode = playerModeSchema.parse(requestedModeInput);
   const requestedQuality =
     requestedQualityInput === undefined ? "best" : nativeQualitySchema.parse(requestedQualityInput);
-  destroyPlayer();
+  const openGeneration = ++playerOpenGeneration;
+  destroyPlayer(false);
   activeChannelName = channel;
 
   let mode = requestedMode;
@@ -756,6 +759,11 @@ ipcMain.handle(
     const textureResult = useTextureBackend
       ? await textureNativePlayer.start(channel, requestedQuality)
       : null;
+    if (openGeneration !== playerOpenGeneration || activeChannelName !== channel) {
+      // A newer player request intentionally cancelled this startup. Its
+      // cancellation is not a texture failure and must not trigger fallback.
+      return { channel, mode: requestedMode };
+    }
     const result =
       textureResult?.ok
         ? textureResult

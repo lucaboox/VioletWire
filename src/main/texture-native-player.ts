@@ -110,6 +110,7 @@ export class TextureNativePlayer {
   private lastBounds: PlayerBounds = { x: 0, y: 0, width: 1280, height: 720 };
   private resizeTimer: NodeJS.Timeout | null = null;
   private transferSequence = 0;
+  private startGeneration = 0;
   private stopping = false;
   private state: NativePlayerState = {
     status: "idle",
@@ -157,6 +158,7 @@ export class TextureNativePlayer {
     quality: NativeQualityValue,
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
     this.destroy();
+    const generation = this.startGeneration;
     const availability = this.getAvailability();
     if (!availability.available) {
       return { ok: false, reason: availability.reason ?? "Texture playback is unavailable." };
@@ -183,7 +185,9 @@ export class TextureNativePlayer {
         this.resolveStreamUrl(channel, quality),
         this.getChromiumGpuDevice(),
       ]);
-      if (this.stopping) return { ok: false, reason: "Texture playback was cancelled." };
+      if (this.stopping || generation !== this.startGeneration) {
+        return { ok: false, reason: "Texture playback was cancelled." };
+      }
       const nativePaths = resolveNativePaths();
       const require = createRequire(import.meta.url);
       const module = require(nativePaths.addonPath) as TexturePlayerAddon;
@@ -217,7 +221,9 @@ export class TextureNativePlayer {
       return { ok: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      this.destroy();
+      // A newer start owns the player now. Never let an older resolver's
+      // cancellation tear down that newer session.
+      if (generation === this.startGeneration) this.destroy();
       return { ok: false, reason };
     }
   }
@@ -277,6 +283,7 @@ export class TextureNativePlayer {
   }
 
   destroy(): void {
+    this.startGeneration += 1;
     this.stopping = true;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeTimer = null;

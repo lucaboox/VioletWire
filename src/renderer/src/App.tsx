@@ -555,6 +555,7 @@ export function App() {
   const browseCategoryLoadPending = useRef(false);
   const categoryStreamLoadPending = useRef(false);
   const nativeControlsTimer = useRef<number | null>(null);
+  const watchChannelGeneration = useRef(0);
   const lastPlayerPointerPosition = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -1657,6 +1658,7 @@ export function App() {
   }
 
   async function watchChannel(channel: string) {
+    const generation = ++watchChannelGeneration.current;
     const returnSection = activeChannel ? playerReturnSection : activeSection;
     const optimisticMode = preferredMode;
     const optimisticBackend =
@@ -1692,6 +1694,7 @@ export function App() {
     setTheaterMode(false);
     try {
       const savedPreferences = await window.desktop.preferences.getOrMigrate();
+      if (generation !== watchChannelGeneration.current) return;
       setActiveMode(savedPreferences.preferredPlayerMode);
       setActiveNativeBackend(
         savedPreferences.preferredPlayerMode === "native"
@@ -1704,6 +1707,7 @@ export function App() {
         channel,
         savedPreferences.preferredPlayerMode,
       );
+      if (generation !== watchChannelGeneration.current) return;
       setActiveChannel(result.channel);
       setActiveMode(result.mode);
       setActiveNativeBackend(result.nativeBackend ?? null);
@@ -1719,6 +1723,7 @@ export function App() {
         );
       }
     } catch (reason) {
+      if (generation !== watchChannelGeneration.current) return;
       const message = reason instanceof Error ? reason.message : String(reason);
       setActiveChannel(null);
       setActiveMode(null);
@@ -1729,6 +1734,7 @@ export function App() {
   }
 
   async function closePlayer() {
+    watchChannelGeneration.current += 1;
     if (activeMode === "native") window.desktop.player.setNativeEmotePicker(false);
     if (fullscreen) await window.desktop.player.setFullscreen(false);
     await window.desktop.player.close();
