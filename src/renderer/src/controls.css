@@ -38,7 +38,6 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: transparent;
 }
 
 button,
@@ -50,6 +49,23 @@ input {
   position: relative;
   width: 100%;
   height: 100%;
+}
+
+.controls-surface.inline-controls {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+  transform: translateZ(0);
+}
+
+.controls-surface.inline-controls .controls-bar,
+.controls-surface.inline-controls .control-popover,
+.controls-surface.inline-controls .native-video-chat,
+.controls-surface.inline-controls .native-chat-edge-restore,
+.controls-surface.inline-controls .native-detached-emote-picker {
+  pointer-events: auto;
 }
 
 .native-detached-emote-picker {
@@ -768,6 +784,9 @@ input {
 
 .native-video-chat-input button,
 .native-scroll-current {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid #59416e;
   border-radius: 7px;
   color: white;

@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import {
+  ArrowDown,
   Clock,
   ChevronLeft,
   ChevronRight,
@@ -27,6 +28,7 @@ import {
   Maximize,
   Minimize,
   Play,
+  Pause,
   RotateCcw,
   RefreshCw,
   Reply,
@@ -92,10 +94,14 @@ import { ReactTooltipLayer } from "./ReactTooltipLayer";
 import { ChatEmote } from "./ChatEmote";
 import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
+import { ChatUserCard } from "./ChatUserCard";
+import { NativeControls } from "./NativeControls";
+import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
 import changelogSource from "../../../CHANGELOG.md?raw";
+import "./controls.css";
 
 const NATIVE_CONTROLS_HIDE_DELAY = 5_000;
 // Chat renders in batches: one commit per interval instead of per message.
@@ -166,9 +172,17 @@ function renderChatMessageText(
   message: ChatMessage,
   providerEmotes: Map<string, ProviderEmote>,
 ): ReactNode[] {
-  const ranges = [...message.twitchEmotes].sort((left, right) => left.start - right.start);
+  const displayMessage = withoutRedundantReplyMention(message);
+  const ranges = [...displayMessage.twitchEmotes].sort(
+    (left, right) => left.start - right.start,
+  );
   if (ranges.length === 0) {
-    return renderProviderText(message.text, providerEmotes, message.id, "chat-emote");
+    return renderProviderText(
+      displayMessage.text,
+      providerEmotes,
+      message.id,
+      "chat-emote",
+    );
   }
   const output: ReactNode[] = [];
   let cursor = 0;
@@ -176,14 +190,14 @@ function renderChatMessageText(
     if (range.start > cursor) {
       output.push(
         ...renderProviderText(
-          message.text.slice(cursor, range.start),
+          displayMessage.text.slice(cursor, range.start),
           providerEmotes,
           `${message.id}-text-${index}`,
           "chat-emote",
         ),
       );
     }
-    const name = message.text.slice(range.start, range.end + 1);
+    const name = displayMessage.text.slice(range.start, range.end + 1);
     output.push(
       <ChatEmote
         className="chat-emote"
@@ -195,10 +209,10 @@ function renderChatMessageText(
     );
     cursor = range.end + 1;
   });
-  if (cursor < message.text.length) {
+  if (cursor < displayMessage.text.length) {
     output.push(
       ...renderProviderText(
-        message.text.slice(cursor),
+        displayMessage.text.slice(cursor),
         providerEmotes,
         `${message.id}-tail`,
         "chat-emote",
@@ -247,6 +261,7 @@ interface ChatMessageRowProps {
   onRevealDeleted: (id: string) => void;
   onReply: (message: ChatMessage) => void;
   onOpenThread: (message: ChatMessage) => void;
+  onOpenUser: (message: ChatMessage, anchor: DOMRect) => void;
   providerEmotes: Map<string, ProviderEmote>;
 }
 
@@ -263,6 +278,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
   onRevealDeleted,
   onReply,
   onOpenThread,
+  onOpenUser,
   providerEmotes,
 }: ChatMessageRowProps) {
   if (message.notice) {
@@ -292,16 +308,19 @@ const ChatMessageRow = memo(function ChatMessageRow({
                 {formatChatTimestamp(message.sentAt)}
               </time>
             )}
-            <strong
+            <button
+              className="chat-username"
+              onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}
               style={{
                 color: readableUsernameColor(
                   message.color,
                   oledMode ? "#000000" : "#18181b",
                 ),
               }}
+              type="button"
             >
               {message.displayName}
-            </strong>
+            </button>
             <span className="chat-colon">:</span>{" "}
             {renderChatMessageText(message, providerEmotes)}
           </div>
@@ -345,16 +364,19 @@ const ChatMessageRow = memo(function ChatMessageRow({
           })}
         </span>
       )}
-      <strong
+      <button
+        className="chat-username"
+        onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}
         style={{
           color: readableUsernameColor(
             message.color,
             oledMode ? "#000000" : "#18181b",
           ),
         }}
+        type="button"
       >
         {message.displayName}
-      </strong>
+      </button>
       <span className="chat-colon">:</span>{" "}
       <span className="native-chat-text">
         {message.deleted && deletedMessageStyle === "placeholder" && !deletedRevealed ? (
@@ -450,6 +472,8 @@ export function App() {
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
+  const [selectedChatUser, setSelectedChatUser] = useState<ChatMessage | null>(null);
+  const [selectedChatUserAnchor, setSelectedChatUserAnchor] = useState<DOMRect | undefined>();
   const [providerEmoteMaps, setProviderEmoteMaps] = useState(emptyProviderEmoteMaps);
   const [providerChannelNames, setProviderChannelNames] = useState(
     emptyProviderChannelNames,
@@ -487,6 +511,7 @@ export function App() {
   });
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
   const [chatAutoScroll, setChatAutoScroll] = useState(true);
+  const [pausedChatNewMessages, setPausedChatNewMessages] = useState(0);
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
@@ -586,7 +611,7 @@ export function App() {
   }, [activeMode, activeNativeBackend, chatSettingsOpen, emotePickerOpen]);
 
   const revealNativeControls = useCallback(() => {
-    if (!activeChannel || activeMode !== "native") return;
+    if (!activeChannel || activeMode !== "native" || selectedChatUser) return;
     setNativeControlsVisible(true);
     if (nativeControlsTimer.current !== null) {
       window.clearTimeout(nativeControlsTimer.current);
@@ -595,7 +620,7 @@ export function App() {
       () => setNativeControlsVisible(false),
       NATIVE_CONTROLS_HIDE_DELAY,
     );
-  }, [activeChannel, activeMode]);
+  }, [activeChannel, activeMode, selectedChatUser]);
 
   useEffect(() => {
     document.title = activeChannel
@@ -738,7 +763,13 @@ export function App() {
 
   useEffect(() => {
     void refreshNativeAvailability();
-    return window.desktop.player.onNativeState(setNativeState);
+    const removeStateListener = window.desktop.player.onNativeState(setNativeState);
+    const removeBackendListener =
+      window.desktop.player.onNativeBackendChanged(setActiveNativeBackend);
+    return () => {
+      removeStateListener();
+      removeBackendListener();
+    };
   }, []);
 
   useEffect(
@@ -832,6 +863,12 @@ export function App() {
     if (batch.length === 0) return;
     chatBatch.current = [];
     const paused = !chatAutoScrollRef.current;
+    if (paused) {
+      const newMessageCount = batch.filter((message) => !message.historical && !message.deleted).length;
+      if (newMessageCount > 0) {
+        setPausedChatNewMessages((current) => Math.min(999, current + newMessageCount));
+      }
+    }
     if (paused && chatMessagesHost.current) {
       // Appends below the reader never move their view; the anchor only
       // matters for the rare hard-limit trim and deletion height changes.
@@ -1025,6 +1062,18 @@ export function App() {
     window.requestAnimationFrame(() => chatInputHost.current?.focus());
   }, []);
 
+  const openChatUserCard = useCallback((message: ChatMessage, anchor: DOMRect) => {
+    setSelectedChatUser(message);
+    setSelectedChatUserAnchor(anchor);
+    // Native controls are a separate transparent BrowserWindow. A DOM
+    // z-index cannot rise above it, so temporarily lower that overlay while
+    // this card (which is rendered in the main window) is open.
+    if (activeMode === "native" && activeNativeBackend === "window") {
+      window.desktop.player.setNativeControlsVisible(false);
+      setNativeControlsVisible(false);
+    }
+  }, [activeMode, activeNativeBackend]);
+
   function resumeLiveChat() {
     // Apply anything still buffered, then cut the paused overflow back to
     // the live cap; the reader is jumping to the bottom anyway.
@@ -1032,6 +1081,7 @@ export function App() {
     setChatMessages((current) =>
       current.length > CHAT_MESSAGE_LIMIT ? current.slice(-CHAT_MESSAGE_LIMIT) : current,
     );
+    setPausedChatNewMessages(0);
   }
 
   function handleChatScroll() {
@@ -1062,6 +1112,7 @@ export function App() {
     if (!host) return;
     chatAutoScrollRef.current = true;
     setChatAutoScroll(true);
+    setPausedChatNewMessages(0);
     resumeLiveChat();
     host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
   }
@@ -1393,7 +1444,7 @@ export function App() {
   useEffect(
     () =>
       window.desktop.player.onNativeControlAction((action) => {
-        if (action === "activity") {
+        if (action === "activity" && !selectedChatUser) {
           revealNativeControls();
         } else if (action === "toggle-theater") {
           setTheaterMode((current) => !current);
@@ -1407,7 +1458,7 @@ export function App() {
           setChatLayout("overlay");
         }
       }),
-    [fullscreen, revealNativeControls],
+    [fullscreen, revealNativeControls, selectedChatUser],
   );
 
   async function refreshNativeAvailability() {
@@ -1675,6 +1726,8 @@ export function App() {
     setEmotePickerOpen(false);
     setRevealedDeletedMessages(new Set());
     chatAutoScrollRef.current = true;
+    setChatAutoScroll(true);
+    setPausedChatNewMessages(0);
     chatScrollAnchor.current = null;
     chatBatch.current = [];
     if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
@@ -2408,11 +2461,26 @@ export function App() {
                     />
                   )}
                   {activeMode === "native" && activeNativeBackend === "texture" && (
-                    <canvas
-                      className="native-texture-canvas"
-                      data-native-texture-canvas
-                      aria-hidden="true"
-                    />
+                    <>
+                      <canvas
+                        className="native-texture-canvas"
+                        data-native-texture-canvas
+                        aria-hidden="true"
+                      />
+                      <NativeControls
+                        inline
+                        key={`inline-native-controls:${activeChannel}`}
+                        inlineContext={{
+                          channel: activeChannel,
+                          fullscreen,
+                          theaterMode,
+                          chatVisible,
+                          chatPresentation,
+                          viewerLogin,
+                        }}
+                        inlineVisible={nativeControlsVisible}
+                      />
+                    </>
                   )}
                   {activeMode === "native" && nativeState.status !== "playing" && (
                     <div className="native-player-placeholder">
@@ -2688,6 +2756,7 @@ export function App() {
                           oledMode={oledMode}
                           onRevealDeleted={revealDeletedMessage}
                           onOpenThread={setOpenReplyThread}
+                          onOpenUser={openChatUserCard}
                           onReply={beginReply}
                           providerEmotes={chatProviderEmotes}
                           showTimestamp={chatTimestamps}
@@ -2706,19 +2775,47 @@ export function App() {
                         messages={chatMessages}
                         oledMode={oledMode}
                         onClose={() => setOpenReplyThread(null)}
+                        onOpenUser={openChatUserCard}
                         onReply={beginReply}
                         renderText={(message) =>
                           renderChatMessageText(message, chatProviderEmotes)}
                         selected={openReplyThread}
                       />
                     )}
+                    {selectedChatUser && activeChannel && (
+                      <ChatUserCard
+                        anchor={selectedChatUserAnchor}
+                        badges={twitchBadges}
+                        channel={activeChannel}
+                        key={`${activeChannel}:${selectedChatUser.login}`}
+                        messages={chatMessages}
+                        onClose={() => {
+                          setSelectedChatUser(null);
+                          setSelectedChatUserAnchor(undefined);
+                          window.desktop.player.setNativeControlsVisible(true);
+                          setNativeControlsVisible(true);
+                        }}
+                        renderText={(message) =>
+                          renderChatMessageText(message, chatProviderEmotes)}
+                        selected={selectedChatUser}
+                      />
+                    )}
                     {!chatAutoScroll && (
                       <button
                         className="scroll-to-current"
                         onClick={scrollChatToCurrent}
+                        title={
+                          pausedChatNewMessages > 20
+                            ? "20+ new messages"
+                            : pausedChatNewMessages > 0
+                              ? `${pausedChatNewMessages} new ${pausedChatNewMessages === 1 ? "message" : "messages"}`
+                              : "Return to live chat"
+                        }
                         type="button"
                       >
-                        Scroll to current
+                        <Pause aria-hidden="true" size={12} />
+                        <span>Chat paused due to scroll</span>
+                        <ArrowDown aria-hidden="true" size={14} />
                       </button>
                     )}
                     <form className="native-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>

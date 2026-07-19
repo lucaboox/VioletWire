@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import {
+  ArrowDown,
   AudioLines,
   ChevronLeft,
   ChevronRight,
@@ -66,7 +67,9 @@ import { EmotePicker } from "./EmotePicker";
 import { ReactTooltipLayer } from "./ReactTooltipLayer";
 import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
+import { ChatUserCard } from "./ChatUserCard";
 import { ChatEmote } from "./ChatEmote";
+import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
 import {
   captureChatScrollAnchor,
@@ -88,6 +91,12 @@ const initialState: NativePlayerState = {
 };
 const emoteProviders: EmoteProvider[] = ["7tv", "ffz", "bttv"];
 
+interface NativeControlsProps {
+  inline?: boolean;
+  inlineContext?: NativeControlsContext;
+  inlineVisible?: boolean;
+}
+
 function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>> {
   return new Map(emoteProviders.map((provider) => [provider, new Map()]));
 }
@@ -100,15 +109,23 @@ function renderOverlayText(
   message: ChatMessage,
   sevenTvEmotes: Map<string, ProviderEmote>,
 ): ReactNode[] {
-  const twitchRanges = [...message.twitchEmotes].sort((left, right) => left.start - right.start);
+  const displayMessage = withoutRedundantReplyMention(message);
+  const twitchRanges = [...displayMessage.twitchEmotes].sort(
+    (left, right) => left.start - right.start,
+  );
   const output: ReactNode[] = [];
   let cursor = 0;
   const appendText = (text: string, key: string) => {
     output.push(...renderProviderText(text, sevenTvEmotes, key, "native-overlay-emote"));
   };
   twitchRanges.forEach((range, index) => {
-    if (range.start > cursor) appendText(message.text.slice(cursor, range.start), `${message.id}-${index}`);
-    const name = message.text.slice(range.start, range.end + 1);
+    if (range.start > cursor) {
+      appendText(
+        displayMessage.text.slice(cursor, range.start),
+        `${message.id}-${index}`,
+      );
+    }
+    const name = displayMessage.text.slice(range.start, range.end + 1);
     output.push(
       <ChatEmote
         className="native-overlay-emote"
@@ -120,7 +137,9 @@ function renderOverlayText(
     );
     cursor = range.end + 1;
   });
-  if (cursor < message.text.length) appendText(message.text.slice(cursor), `${message.id}-tail`);
+  if (cursor < displayMessage.text.length) {
+    appendText(displayMessage.text.slice(cursor), `${message.id}-tail`);
+  }
   return output;
 }
 
@@ -135,6 +154,7 @@ interface OverlayChatMessageRowProps {
   onRevealDeleted: (id: string) => void;
   onReply: (message: ChatMessage) => void;
   onOpenThread: (message: ChatMessage) => void;
+  onOpenUser: (message: ChatMessage, anchor: DOMRect) => void;
   providerEmotes: Map<string, ProviderEmote>;
 }
 
@@ -151,6 +171,7 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
   onRevealDeleted,
   onReply,
   onOpenThread,
+  onOpenUser,
   providerEmotes,
 }: OverlayChatMessageRowProps) {
   if (message.notice) {
@@ -175,7 +196,14 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
         </div>
         {message.text && (
           <div className="native-chat-notice-text">
-            <strong>{message.displayName}:</strong>{" "}
+            <button
+              className="chat-username"
+              onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}
+              type="button"
+            >
+              {message.displayName}
+            </button>
+            <span>: </span>
             {renderOverlayText(message, providerEmotes)}
           </div>
         )}
@@ -218,16 +246,19 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
           })}
         </span>
       )}
-      <strong
+      <button
+        className="chat-username"
+        onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}
         style={{
           color: readableUsernameColor(
             message.color,
             oledMode ? "#000000" : "#18181b",
           ),
         }}
+        type="button"
       >
         {message.displayName}
-      </strong>
+      </button>
       <span>: </span>
       {message.deleted && deletedMessageStyle === "placeholder" && !deletedRevealed ? (
         <button
@@ -265,8 +296,13 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
   );
 });
 
-export function NativeControls() {
-  const [context, setContext] = useState<NativeControlsContext | null>(null);
+export function NativeControls({
+  inline = false,
+  inlineContext,
+  inlineVisible = true,
+}: NativeControlsProps = {}) {
+  const [windowContext, setWindowContext] = useState<NativeControlsContext | null>(null);
+  const context = inline ? (inlineContext ?? null) : windowContext;
   const [state, setState] = useState<NativePlayerState>(initialState);
   const [qualities, setQualities] = useState<NativeQuality[]>([
     { value: "best", label: "Auto" },
@@ -276,6 +312,8 @@ export function NativeControls() {
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
+  const [selectedChatUser, setSelectedChatUser] = useState<ChatMessage | null>(null);
+  const [selectedChatUserAnchor, setSelectedChatUserAnchor] = useState<DOMRect | undefined>();
   const [chatOpacity, setChatOpacity] = useState(() => {
     const stored = Number(window.localStorage.getItem("glint.chat.overlayOpacity"));
     return Number.isFinite(stored) && stored >= 25 && stored <= 100 ? stored : 88;
@@ -303,6 +341,7 @@ export function NativeControls() {
     new Set(),
   );
   const [chatAutoScroll, setChatAutoScroll] = useState(true);
+  const [pausedChatNewMessages, setPausedChatNewMessages] = useState(0);
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
@@ -385,12 +424,29 @@ export function NativeControls() {
 
   useEffect(() => window.desktop.player.onNativeState(setState), []);
 
+  const applyControlsContext = useCallback((nextContext: NativeControlsContext) => {
+    if (currentChannel.current !== nextContext.channel) {
+      currentChannel.current = nextContext.channel;
+      setChatMessages([]);
+      setRevealedDeletedMessages(new Set());
+      chatAutoScrollRef.current = true;
+      chatScrollAnchor.current = null;
+      chatBatch.current = [];
+      if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
+      chatBatchTimer.current = null;
+      setChatAutoScroll(true);
+      setPausedChatNewMessages(0);
+      setReplyingTo(null);
+    }
+    setWindowContext(nextContext);
+  }, []);
+
   // Report the detached picker's real rectangle so the main process can make
   // exactly that area of this transparent window clickable, instead of a
   // fixed-size region whose invisible edges swallow clicks meant for the
   // chat behind it.
   useEffect(() => {
-    if (!detachedEmotePickerOpen) return;
+    if (inline || !detachedEmotePickerOpen) return;
     const picker = detachedPickerHost.current?.querySelector<HTMLElement>(".vw-emote-picker");
     if (!picker) return;
     const reportPickerBounds = () => {
@@ -414,34 +470,19 @@ export function NativeControls() {
       window.removeEventListener("resize", reportPickerBounds);
       window.desktop.player.setNativeEmotePickerBounds(null);
     };
-  }, [detachedEmotePickerOpen, channel]);
-  useEffect(
-    () => window.desktop.player.onNativeControlsVisibility(setControlsVisible),
-    [],
-  );
-  useEffect(
-    () => window.desktop.player.onNativeEmotePicker(setDetachedEmotePickerOpen),
-    [],
-  );
-  useEffect(
-    () =>
-      window.desktop.player.onNativeControlsContext((nextContext) => {
-        if (currentChannel.current !== nextContext.channel) {
-          currentChannel.current = nextContext.channel;
-          setChatMessages([]);
-          setRevealedDeletedMessages(new Set());
-          chatAutoScrollRef.current = true;
-          chatScrollAnchor.current = null;
-          chatBatch.current = [];
-          if (chatBatchTimer.current !== null) window.clearTimeout(chatBatchTimer.current);
-          chatBatchTimer.current = null;
-          setChatAutoScroll(true);
-          setReplyingTo(null);
-        }
-        setContext(nextContext);
-      }),
-    [],
-  );
+  }, [detachedEmotePickerOpen, channel, inline]);
+  useEffect(() => {
+    if (inline) return;
+    return window.desktop.player.onNativeControlsVisibility(setControlsVisible);
+  }, [inline]);
+  useEffect(() => {
+    if (inline) return;
+    return window.desktop.player.onNativeEmotePicker(setDetachedEmotePickerOpen);
+  }, [inline]);
+  useEffect(() => {
+    if (inline) return;
+    return window.desktop.player.onNativeControlsContext(applyControlsContext);
+  }, [applyControlsContext, inline]);
   useEffect(() => {
     if (!channel) return;
     window.desktop.player.controlNative({
@@ -449,7 +490,9 @@ export function NativeControls() {
       enabled: audioCompressionPreference,
     });
   }, [audioCompressionPreference, channel]);
-  useEffect(() => window.desktop.player.readyNativeControls(), []);
+  useEffect(() => {
+    if (!inline) window.desktop.player.readyNativeControls();
+  }, [inline]);
   useEffect(() => {
     let disposed = false;
     const applyPreferences = (preferences: AppPreferences) => {
@@ -476,8 +519,10 @@ export function NativeControls() {
     };
   }, []);
   useEffect(
-    () => () => window.desktop.player.setNativeControlsExpanded(false),
-    [],
+    () => () => {
+      if (!inline) window.desktop.player.setNativeControlsExpanded(false);
+    },
+    [inline],
   );
 
   useEffect(() => {
@@ -516,6 +561,12 @@ export function NativeControls() {
     if (batch.length === 0) return;
     chatBatch.current = [];
     const paused = !chatAutoScrollRef.current;
+    if (paused) {
+      const newMessageCount = batch.filter((message) => !message.historical && !message.deleted).length;
+      if (newMessageCount > 0) {
+        setPausedChatNewMessages((current) => Math.min(999, current + newMessageCount));
+      }
+    }
     if (paused && chatMessagesHost.current) {
       // Appends below the reader never move their view; the anchor only
       // matters for the rare hard-limit trim and deletion height changes.
@@ -667,6 +718,11 @@ export function NativeControls() {
     window.requestAnimationFrame(() => chatInputHost.current?.focus());
   }, []);
 
+  const openChatUserCard = useCallback((message: ChatMessage, anchor: DOMRect) => {
+    setSelectedChatUser(message);
+    setSelectedChatUserAnchor(anchor);
+  }, []);
+
   function resumeLiveChat() {
     // Apply anything still buffered, then cut the paused overflow back to
     // the live cap; the reader is jumping to the bottom anyway.
@@ -674,6 +730,7 @@ export function NativeControls() {
     setChatMessages((current) =>
       current.length > CHAT_MESSAGE_LIMIT ? current.slice(-CHAT_MESSAGE_LIMIT) : current,
     );
+    setPausedChatNewMessages(0);
   }
 
   function handleChatScroll() {
@@ -703,6 +760,7 @@ export function NativeControls() {
     if (!host) return;
     chatAutoScrollRef.current = true;
     setChatAutoScroll(true);
+    setPausedChatNewMessages(0);
     resumeLiveChat();
     host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });
   }
@@ -735,12 +793,12 @@ export function NativeControls() {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setOpenMenu(null);
-      window.desktop.player.setNativeControlsExpanded(false);
+      if (!inline) window.desktop.player.setNativeControlsExpanded(false);
       window.desktop.player.sendNativeControlAction("activity");
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [openMenu]);
+  }, [inline, openMenu]);
 
   useEffect(() => {
     if (!channel) return;
@@ -770,14 +828,14 @@ export function NativeControls() {
 
   function closeMenu() {
     setOpenMenu(null);
-    window.desktop.player.setNativeControlsExpanded(false);
+    if (!inline) window.desktop.player.setNativeControlsExpanded(false);
     reportActivity();
   }
 
   function toggleMenu(menu: "quality" | "chat") {
     const nextMenu = openMenu === menu ? null : menu;
     setOpenMenu(nextMenu);
-    window.desktop.player.setNativeControlsExpanded(nextMenu !== null);
+    if (!inline) window.desktop.player.setNativeControlsExpanded(nextMenu !== null);
     reportActivity();
   }
 
@@ -803,7 +861,7 @@ export function NativeControls() {
   }
 
   useEffect(() => {
-    if (!context) return;
+    if (inline || !context) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (openMenu || chatSettingsOpen || emotePickerOpen || detachedEmotePickerOpen) {
@@ -849,6 +907,7 @@ export function NativeControls() {
     context,
     detachedEmotePickerOpen,
     emotePickerOpen,
+    inline,
     openMenu,
   ]);
 
@@ -874,9 +933,10 @@ export function NativeControls() {
     <div
       className={[
         "controls-surface",
+        inline ? "inline-controls" : "",
         oledMode ? "oled-mode" : "",
         !context.chatVisible ? "chat-hidden" : "",
-        !controlsVisible ? "controls-hidden" : "",
+        !(inline ? inlineVisible : controlsVisible) ? "controls-hidden" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -889,7 +949,7 @@ export function NativeControls() {
         "--chat-emote-size": `${chatEmoteSize}px`,
       } as CSSProperties}
     >
-      <ReactTooltipLayer />
+      {!inline && <ReactTooltipLayer />}
       {detachedEmotePickerOpen && channel && (
         <div className="native-detached-emote-picker" ref={detachedPickerHost}>
           <EmotePicker
@@ -1040,6 +1100,7 @@ export function NativeControls() {
                 oledMode={oledMode}
                 onRevealDeleted={revealDeletedMessage}
                 onOpenThread={setOpenReplyThread}
+                onOpenUser={openChatUserCard}
                 onReply={beginReply}
                 providerEmotes={chatProviderEmotes}
                 showTimestamp={chatTimestamps}
@@ -1058,14 +1119,44 @@ export function NativeControls() {
               messages={chatMessages}
               oledMode={oledMode}
               onClose={() => setOpenReplyThread(null)}
+              onOpenUser={openChatUserCard}
               onReply={beginReply}
               renderText={(message) => renderOverlayText(message, chatProviderEmotes)}
               selected={openReplyThread}
             />
           )}
+          {selectedChatUser && channel && (
+            <ChatUserCard
+              anchor={selectedChatUserAnchor}
+              badges={chatBadges}
+              channel={channel}
+              key={`${channel}:${selectedChatUser.login}`}
+              messages={chatMessages}
+              onClose={() => {
+                setSelectedChatUser(null);
+                setSelectedChatUserAnchor(undefined);
+              }}
+              renderText={(message) =>
+                renderOverlayText(message, chatProviderEmotes)}
+              selected={selectedChatUser}
+            />
+          )}
           {!chatAutoScroll && (
-            <button className="native-scroll-current" onClick={scrollChatToCurrent} type="button">
-              Scroll to current
+            <button
+              className="native-scroll-current"
+              onClick={scrollChatToCurrent}
+              title={
+                pausedChatNewMessages > 20
+                  ? "20+ new messages"
+                  : pausedChatNewMessages > 0
+                    ? `${pausedChatNewMessages} new ${pausedChatNewMessages === 1 ? "message" : "messages"}`
+                    : "Return to live chat"
+              }
+              type="button"
+            >
+              <Pause aria-hidden="true" size={12} />
+              <span>Chat paused due to scroll</span>
+              <ArrowDown aria-hidden="true" size={14} />
             </button>
           )}
           <form className="native-video-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>

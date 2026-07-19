@@ -4,8 +4,16 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Added clickable chat usernames with an in-app profile card showing Twitch
+  profile details, badges, available follow and subscription status, and the
+  user's retained messages from the current chat.
+
 ### Fixes
 
+- Hid Twitch's redundant leading `@username` in reply messages while preserving
+  the official reply relationship and original message contents.
 - Fixed rapid stream switching so a cancelled older startup cannot clear the
   selected embedded backend, trigger the window-hosted fallback, or tear down
   the newer stream.

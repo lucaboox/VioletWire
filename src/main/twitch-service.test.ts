@@ -103,6 +103,9 @@ function json(payload: unknown, status = 200): Response {
 }
 
 function defaultRoutes(url: string): Response {
+  if (url.includes("api.ivr.fi/v2/twitch/subage/")) {
+    return json({ statusHidden: false, meta: null, cumulative: { months: 0 }, followedAt: null });
+  }
   if (url.includes("/oauth2/validate")) return json(validatePayload);
   if (url.includes("/oauth2/token")) return json(refreshedTokenPayload);
   if (url.includes("/helix/users")) return json(accountPayload);
@@ -699,6 +702,94 @@ describe("TwitchService chat replies", () => {
       sender_id: "42",
       message: "This is a reply",
       reply_parent_message_id: "719e45c4-5861-4c3f-932d-e34141177b0e",
+    });
+  });
+});
+
+describe("TwitchService chat user profiles", () => {
+  it("returns public details without requesting another user's private relationships", async () => {
+    installFetch((url) => {
+      if (url.includes("api.ivr.fi/v2/twitch/subage/otheruser/somechannel")) {
+        return json({
+          statusHidden: false,
+          meta: { tier: "2" },
+          cumulative: { months: 14 },
+          followedAt: "2024-11-02T00:00:00Z",
+        });
+      }
+      if (url.includes("/helix/users?login=somechannel")) return json(broadcasterPayload);
+      if (url.includes("/helix/users?login=otheruser")) {
+        return json({
+          data: [{
+            id: "88",
+            login: "otheruser",
+            display_name: "OtherUser",
+            profile_image_url: "https://example.com/other.png",
+            description: "A chatter",
+            created_at: "2024-10-29T00:00:00Z",
+          }],
+        });
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await expect(service.getChatUserProfile("somechannel", "otheruser")).resolves.toEqual({
+      id: "88",
+      login: "otheruser",
+      displayName: "OtherUser",
+      profileImageUrl: "https://example.com/other.png",
+      description: "A chatter",
+      createdAt: "2024-10-29T00:00:00Z",
+      subage: {
+        followingSince: "2024-11-02T00:00:00Z",
+        subscription: { isHidden: false, isSubscribed: true, tier: "2", cumulativeMonths: 14 },
+      },
+    });
+    expect(requestCount("/channels/followed")).toBe(0);
+    expect(requestCount("/subscriptions/user")).toBe(0);
+  });
+
+  it("includes the authenticated user's own follow and subscription relationship", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/users?login=somechannel")) return json(broadcasterPayload);
+      if (url.includes("/helix/users?login=tester")) {
+        return json({
+          data: [{
+            ...accountPayload.data[0],
+            description: "Test account",
+            created_at: "2020-01-02T00:00:00Z",
+          }],
+        });
+      }
+      if (url.includes("/helix/channels/followed?")) {
+        return json({
+          data: [{
+            broadcaster_id: "77",
+            broadcaster_login: "somechannel",
+            broadcaster_name: "SomeChannel",
+            followed_at: "2023-04-05T00:00:00Z",
+          }],
+          pagination: {},
+        });
+      }
+      if (url.includes("/helix/subscriptions/user?")) {
+        return json({ data: [{ tier: "2000", is_gift: true }] });
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    const result = await service.getChatUserProfile("somechannel", "tester");
+
+    expect(result.relationship).toEqual({
+      isFollowing: true,
+      followedAt: "2023-04-05T00:00:00Z",
+      subscription: { isSubscribed: true, tier: "2000", isGift: true },
     });
   });
 });

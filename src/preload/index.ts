@@ -6,6 +6,7 @@ import type {
   DesktopApi,
   NativeControlAction,
   NativeControlsContext,
+  NativeRenderBackend,
   NativePlayerCommand,
   NativePlayerState,
   NativeQualityValue,
@@ -83,6 +84,8 @@ const api: DesktopApi = {
     search: (query: string) => ipcRenderer.invoke("twitch:search", query),
     getStreamMetadata: (channel: string) =>
       ipcRenderer.invoke("twitch:get-stream-metadata", channel),
+    getChatUserProfile: (channel: string, login: string) =>
+      ipcRenderer.invoke("twitch:get-chat-user-profile", channel, login),
     createClip: (channel: string) => ipcRenderer.invoke("twitch:create-clip", channel),
     openSubscription: (channel: string) =>
       ipcRenderer.invoke("twitch:open-subscription", channel),
@@ -178,6 +181,12 @@ const api: DesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, state: NativePlayerState) => listener(state);
       ipcRenderer.on("native-player:state", handler);
       return () => ipcRenderer.removeListener("native-player:state", handler);
+    },
+    onNativeBackendChanged: (listener: (backend: NativeRenderBackend) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, backend: NativeRenderBackend) =>
+        listener(backend);
+      ipcRenderer.on("native-player:backend-changed", handler);
+      return () => ipcRenderer.removeListener("native-player:backend-changed", handler);
     },
     readyNativeControls: () => ipcRenderer.send("native-controls:ready"),
     setNativeControlsVisible: (visible: boolean) =>

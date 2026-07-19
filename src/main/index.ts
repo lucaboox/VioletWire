@@ -200,6 +200,8 @@ const textureNativePlayer = new TextureNativePlayer(
       const fallback = nativePlayer.start(activeChannelName, state.quality);
       if (fallback.ok) {
         if (lastPlayerBounds) nativePlayer.setBounds(lastPlayerBounds);
+        sendToWindow(mainWindow, "native-player:backend-changed", "window");
+        void createNativeControlsWindow();
         textureFallbackInProgress = false;
         return;
       }
@@ -780,7 +782,10 @@ ipcMain.handle(
       if (textureResult && !textureResult.ok) {
         fallbackReason = `Embedded Native unavailable: ${textureResult.reason} Using the window-hosted Native player.`;
       }
-      await createNativeControlsWindow();
+      // Texture playback is composited inside the main renderer, so its
+      // controls render inline over the canvas. The transparent controls
+      // BrowserWindow is only needed for the legacy HWND/airspace backend.
+      if (nativeBackend === "window") await createNativeControlsWindow();
     }
   }
 
@@ -1046,6 +1051,14 @@ ipcMain.handle("twitch:search", (_event, rawQuery: unknown) => {
 });
 ipcMain.handle("twitch:get-stream-metadata", (_event, rawChannel: unknown) =>
   twitchService.getStreamMetadata(channelNameSchema.parse(rawChannel)),
+);
+ipcMain.handle(
+  "twitch:get-chat-user-profile",
+  (_event, rawChannel: unknown, rawLogin: unknown) =>
+    twitchService.getChatUserProfile(
+      channelNameSchema.parse(rawChannel),
+      channelNameSchema.parse(rawLogin),
+    ),
 );
 ipcMain.handle("twitch:create-clip", (_event, rawChannel: unknown) =>
   twitchService.createClip(channelNameSchema.parse(rawChannel)),

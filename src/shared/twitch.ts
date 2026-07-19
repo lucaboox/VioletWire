@@ -13,6 +13,7 @@ export const twitchUserSchema = z.object({
   display_name: z.string(),
   profile_image_url: z.string().url(),
   description: z.string().optional().default(""),
+  created_at: z.string().optional().default(""),
 });
 
 export const twitchStreamSchema = z.object({
@@ -139,6 +140,38 @@ export interface ClipCreationResult {
   editUrl: string;
 }
 
+export interface ChatUserProfile {
+  id: string;
+  login: string;
+  displayName: string;
+  profileImageUrl: string;
+  description: string;
+  createdAt: string;
+  /**
+   * Public relationship details supplied by IVR.fi's Twitch subage endpoint.
+   * Twitch Helix intentionally does not expose these details for arbitrary
+   * chatters, so this is kept separate from the authenticated-user relation.
+   */
+  subage?: {
+    followingSince?: string;
+    subscription: {
+      isHidden: boolean;
+      isSubscribed: boolean;
+      tier?: string;
+      cumulativeMonths: number;
+    };
+  };
+  relationship?: {
+    isFollowing: boolean;
+    followedAt?: string;
+    subscription?: {
+      isSubscribed: boolean;
+      tier?: string;
+      isGift?: boolean;
+    };
+  };
+}
+
 export interface PlaybackSessionState {
   linked: boolean;
   login?: string;
@@ -159,6 +192,7 @@ export interface TwitchApi {
   getCategoryStreams(gameId: string, after?: string): Promise<BrowsePage<BrowseStream>>;
   search(query: string): Promise<TwitchSearchResults>;
   getStreamMetadata(channel: string): Promise<StreamMetadata | null>;
+  getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile>;
   createClip(channel: string): Promise<ClipCreationResult>;
   openSubscription(channel: string): Promise<void>;
   openChannel(channel: string): Promise<void>;

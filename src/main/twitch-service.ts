@@ -9,6 +9,7 @@ import {
   type BrowseCategory,
   type BrowsePage,
   type BrowseStream,
+  type ChatUserProfile,
   type ClipCreationResult,
   type FollowedChannel,
   type SearchChannelResult,
@@ -114,6 +115,12 @@ const subscriptionResponseSchema = z.object({
       is_gift: z.boolean(),
     }),
   ),
+});
+const ivrSubageResponseSchema = z.object({
+  statusHidden: z.boolean().optional().default(false),
+  meta: z.object({ tier: z.string().optional() }).nullable().optional(),
+  cumulative: z.object({ months: z.number().int().nonnegative().optional().default(0) }).optional(),
+  followedAt: z.string().nullable().optional(),
 });
 const clipResponseSchema = z.object({
   data: z.array(z.object({ id: z.string(), edit_url: z.string().url() })).min(1),
@@ -564,6 +571,93 @@ export class TwitchService {
       }
     }
     return metadata;
+  }
+
+  async getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile> {
+    // Chatterino uses IVR's public subage endpoint for public user-card
+    // relationship data. Twitch Helix deliberately limits those fields to the
+    // authenticated user, so keep IVR's best-effort response clearly separate.
+    const subageRequest = this.getIvrSubage(login, channel);
+    await this.ensureAuthenticated();
+    const [channelUsers, targetUsers, subage] = await Promise.all([
+      this.helix(`/users?login=${encodeURIComponent(channel)}`, usersResponseSchema),
+      this.helix(`/users?login=${encodeURIComponent(login)}`, usersResponseSchema),
+      subageRequest,
+    ]);
+    const broadcaster = channelUsers.data[0];
+    const target = targetUsers.data[0];
+    if (!broadcaster || !target) throw new Error("The Twitch user could not be found.");
+
+    const profile: ChatUserProfile = {
+      id: target.id,
+      login: target.login,
+      displayName: target.display_name,
+      profileImageUrl: target.profile_image_url,
+      description: target.description,
+      createdAt: target.created_at,
+      ...(subage ? { subage } : {}),
+    };
+
+    // Twitch only permits a user token to query its own follow/subscription
+    // relationship. Do not imply that arbitrary chatter relationships are
+    // available through the public API.
+    if (this.account?.id === target.id) {
+      const follow = await this.helix(
+        `/channels/followed?user_id=${encodeURIComponent(target.id)}&broadcaster_id=${encodeURIComponent(broadcaster.id)}`,
+        followedResponseSchema,
+      );
+      let subscription: NonNullable<ChatUserProfile["relationship"]>["subscription"];
+      try {
+        const response = await this.helix(
+          `/subscriptions/user?broadcaster_id=${encodeURIComponent(broadcaster.id)}&user_id=${encodeURIComponent(target.id)}`,
+          subscriptionResponseSchema,
+        );
+        const details = response.data[0];
+        subscription = details
+          ? { isSubscribed: true, tier: details.tier, isGift: details.is_gift }
+          : { isSubscribed: false };
+      } catch (error) {
+        if (error instanceof TwitchRequestError && error.status === 404) {
+          subscription = { isSubscribed: false };
+        } else {
+          throw error;
+        }
+      }
+      profile.relationship = {
+        isFollowing: follow.data.length > 0,
+        followedAt: follow.data[0]?.followed_at,
+        subscription,
+      };
+    }
+    return profile;
+  }
+
+  private async getIvrSubage(
+    login: string,
+    channel: string,
+  ): Promise<ChatUserProfile["subage"] | undefined> {
+    try {
+      const response = await fetch(
+        `https://api.ivr.fi/v2/twitch/subage/${encodeURIComponent(login)}/${encodeURIComponent(channel)}`,
+        { headers: { Accept: "application/json" } },
+      );
+      if (!response.ok) return undefined;
+      const payload = ivrSubageResponseSchema.parse(await this.readJson(response));
+      const months = payload.cumulative?.months ?? 0;
+      return {
+        ...(payload.followedAt ? { followingSince: payload.followedAt } : {}),
+        subscription: {
+          isHidden: payload.statusHidden,
+          isSubscribed: Boolean(payload.meta?.tier),
+          ...(payload.meta?.tier ? { tier: payload.meta.tier } : {}),
+          cumulativeMonths: months,
+        },
+      };
+    } catch {
+      // The card remains useful with Twitch's public profile data if IVR is
+      // temporarily unavailable. Never surface or log a third-party failure.
+      return undefined;
+    }
   }
 
   async createClip(channel: string): Promise<ClipCreationResult> {

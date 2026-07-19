@@ -205,6 +205,7 @@ export interface DesktopApi {
     setNativeQuality(channel: string, quality: NativeQualityValue): Promise<void>;
     controlNative(command: NativePlayerCommand): void;
     onNativeState(listener: (state: NativePlayerState) => void): () => void;
+    onNativeBackendChanged(listener: (backend: NativeRenderBackend) => void): () => void;
     readyNativeControls(): void;
     setNativeControlsVisible(visible: boolean): void;
     setNativeControlsExpanded(expanded: boolean): void;

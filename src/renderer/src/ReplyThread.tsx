@@ -11,6 +11,7 @@ interface ReplyThreadProps {
   messages: ChatMessage[];
   oledMode: boolean;
   onClose: () => void;
+  onOpenUser: (message: ChatMessage, anchor: DOMRect) => void;
   onReply: (message: ChatMessage) => void;
   renderText: (message: ChatMessage) => ReactNode;
   selected: ChatMessage;
@@ -35,6 +36,7 @@ export function ReplyThread({
   messages,
   oledMode,
   onClose,
+  onOpenUser,
   onReply,
   renderText,
   selected,
@@ -73,16 +75,19 @@ export function ReplyThread({
                   const badge = badges.get(badgeKey);
                   return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
                 })}
-                <strong
+                <button
+                  className="chat-username"
+                  onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}
                   style={{
                     color: readableUsernameColor(
                       message.color,
                       oledMode ? "#000000" : "#18181b",
                     ),
                   }}
+                  type="button"
                 >
                   {message.displayName}
-                </strong>
+                </button>
               </span>
               <time dateTime={new Date(message.sentAt).toISOString()}>
                 {formatChatTimestamp(message.sentAt)}
