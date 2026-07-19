@@ -2,6 +2,14 @@
 
 All notable changes to VioletWire are documented in this file.
 
+## [Unreleased]
+
+### Fixes
+
+- Treat a GitHub release that is temporarily missing `latest.yml` while its
+  assets are still uploading as a non-error update state instead of displaying
+  an alarming updater failure.
+
 ## [0.3.2-alpha.3] - 2026-07-19
 
 ### Additions

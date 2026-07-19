@@ -82,4 +82,25 @@ describe("UpdateService", () => {
 
     expect(mocks.updater.checkForUpdates).not.toHaveBeenCalled();
   });
+
+  it("does not surface a missing latest.yml while a release is still publishing as an error", () => {
+    const published: unknown[] = [];
+    const service = new UpdateService(
+      () => null,
+      (status) => published.push(status),
+    );
+    service.initialize();
+
+    mocks.listeners.get("error")?.(
+      new Error(
+        "Cannot find latest.yml in the latest release artifacts: HttpError: 404",
+      ),
+    );
+
+    expect(service.getStatus()).toMatchObject({
+      state: "not-available",
+      message: "A new release is still being published. Check again shortly.",
+    });
+    expect(published.at(-1)).toMatchObject({ state: "not-available" });
+  });
 });

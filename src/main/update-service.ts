@@ -11,6 +11,16 @@ import type { AppUpdateStatus } from "../shared/updates";
 const AUTOMATIC_CHECK_DELAY = 15_000;
 const AUTOMATIC_CHECK_INTERVAL = 6 * 60 * 60 * 1_000;
 
+/**
+ * GitHub can expose a newly-created release tag a moment before the publish
+ * job has attached electron-updater's `latest.yml` asset. It is a temporary
+ * publishing state, not a failed update check.
+ */
+function isReleaseStillPublishing(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /latest\.yml/i.test(message) && /\b404\b|cannot find/i.test(message);
+}
+
 function getAutoUpdater(): AppUpdater {
   // electron-updater is CommonJS internally; default import + destructuring is
   // its documented TypeScript/ESM compatibility path.
@@ -83,6 +93,13 @@ export class UpdateService {
       if (shouldOfferRestart) void this.offerRestart(info.version);
     });
     this.updater.on("error", (error: Error) => {
+      if (isReleaseStillPublishing(error)) {
+        this.setStatus({
+          state: "not-available",
+          message: "A new release is still being published. Check again shortly.",
+        });
+        return;
+      }
       this.setStatus({
         state: "error",
         message: error.message || "The update check failed.",
@@ -111,6 +128,13 @@ export class UpdateService {
     try {
       await this.updater.checkForUpdates();
     } catch (error) {
+      if (isReleaseStillPublishing(error)) {
+        this.setStatus({
+          state: "not-available",
+          message: "A new release is still being published. Check again shortly.",
+        });
+        return this.getStatus();
+      }
       this.setStatus({
         state: "error",
         message: error instanceof Error ? error.message : "The update check failed.",
