@@ -63,13 +63,32 @@ export function formatChatTimestamp(sentAt: number): string {
   });
 }
 
+// Break an arbitrary timeout length into its two most significant units, e.g.
+// 90 → "1m 30s", 3661 → "1h 1m", 180000 → "2d 2h". The previous formatter only
+// converted exact multiples, so any non-round duration showed raw seconds.
+export function formatTimeoutDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const units: Array<[number, string]> = [
+    [86_400, "d"],
+    [3_600, "h"],
+    [60, "m"],
+    [1, "s"],
+  ];
+  const parts: string[] = [];
+  let remaining = seconds;
+  for (const [size, label] of units) {
+    if (parts.length >= 2) break;
+    if (remaining >= size) {
+      parts.push(`${Math.floor(remaining / size)}${label}`);
+      remaining %= size;
+    }
+  }
+  return parts.length > 0 ? parts.join(" ") : "0s";
+}
+
 export function formatModerationAction(message: ChatMessage): string {
   if (message.moderation?.type === "timeout") {
-    const seconds = message.moderation.durationSeconds ?? 0;
-    if (seconds >= 86_400 && seconds % 86_400 === 0) return `timed out for ${seconds / 86_400}d`;
-    if (seconds >= 3_600 && seconds % 3_600 === 0) return `timed out for ${seconds / 3_600}h`;
-    if (seconds >= 60 && seconds % 60 === 0) return `timed out for ${seconds / 60}m`;
-    return `timed out for ${seconds}s`;
+    return `timed out for ${formatTimeoutDuration(message.moderation.durationSeconds ?? 0)}`;
   }
   if (message.moderation?.type === "ban") return "permanently banned";
   return "deleted";
