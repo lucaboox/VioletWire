@@ -4,6 +4,7 @@ import type {
   ChannelActionWindowState,
   ChatPresentation,
   DesktopApi,
+  MultiStreamTileState,
   NativeControlAction,
   NativeControlsContext,
   NativeRenderBackend,
@@ -23,26 +24,49 @@ import type {
   PreferencesApi,
 } from "../shared/preferences";
 
-let newestTextureSequence = -1;
-let textureCanvas: HTMLCanvasElement | null = null;
-sharedTexture.setSharedTextureReceiver(async (received, sequence: unknown) => {
+// Each render target ("main" for the single full-window/mini player, or a
+// multistream tile id) tracks its own newest sequence and cached canvas so
+// tiles never drop one another's frames or paint onto the wrong <canvas>.
+const newestTextureSequence = new Map<string, number>();
+const textureCanvases = new Map<string, HTMLCanvasElement>();
+
+function readTransferTarget(userData: unknown): { target: string; sequence: number } {
+  if (typeof userData === "object" && userData !== null) {
+    const record = userData as { target?: unknown; sequence?: unknown };
+    return {
+      target: typeof record.target === "string" ? record.target : "main",
+      sequence: typeof record.sequence === "number" ? record.sequence : Number.NaN,
+    };
+  }
+  // Back-compat with the pre-multistream protocol where userData was the raw
+  // sequence number and there was only the "main" target.
+  return { target: "main", sequence: typeof userData === "number" ? userData : Number.NaN };
+}
+
+sharedTexture.setSharedTextureReceiver(async (received, userData: unknown) => {
   const imported = received.importedSharedTexture;
   const frame = imported.getVideoFrame();
   let bitmap: ImageBitmap | null = null;
+  const { target, sequence } = readTransferTarget(userData);
   try {
-    if (typeof sequence === "number" && sequence <= newestTextureSequence) return;
-    if (typeof sequence === "number") newestTextureSequence = sequence;
+    const newest = newestTextureSequence.get(target) ?? -1;
+    if (Number.isFinite(sequence) && sequence <= newest) return;
+    if (Number.isFinite(sequence)) newestTextureSequence.set(target, sequence);
     // Nothing can be seen while the document is hidden; skip the bitmap and
     // canvas work. Decode and audio continue, and the next frame after the
     // window becomes visible repaints the canvas.
     if (document.visibilityState === "hidden") return;
     bitmap = await createImageBitmap(frame);
-    if (typeof sequence === "number" && sequence < newestTextureSequence) return;
+    if (Number.isFinite(sequence) && sequence < (newestTextureSequence.get(target) ?? -1)) return;
     // Cached: querying the DOM per frame at 60 FPS is measurable waste.
-    if (!textureCanvas?.isConnected) {
-      textureCanvas = document.querySelector<HTMLCanvasElement>("[data-native-texture-canvas]");
+    let canvas = textureCanvases.get(target);
+    if (!canvas?.isConnected) {
+      canvas =
+        document.querySelector<HTMLCanvasElement>(
+          `[data-native-texture-canvas="${target}"]`,
+        ) ?? undefined;
+      if (canvas) textureCanvases.set(target, canvas);
     }
-    const canvas = textureCanvas;
     if (!canvas) return;
     const width = bitmap.width;
     const height = bitmap.height;
@@ -235,6 +259,28 @@ const api: DesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, name: string) => listener(name);
       ipcRenderer.on("native-controls:emote-selected", handler);
       return () => ipcRenderer.removeListener("native-controls:emote-selected", handler);
+    },
+    multiStart: (channels: string[]) =>
+      ipcRenderer.invoke("native-multi:start", channels) as Promise<MultiStreamTileState[]>,
+    multiStop: () => ipcRenderer.send("native-multi:stop"),
+    multiAddTile: (channel: string) =>
+      ipcRenderer.invoke("native-multi:add-tile", channel) as Promise<MultiStreamTileState | null>,
+    multiRemoveTile: (id: number) => ipcRenderer.send("native-multi:remove-tile", id),
+    multiSetActive: (id: number) => ipcRenderer.send("native-multi:set-active", id),
+    multiSetBounds: (id: number, bounds: PlayerBounds) =>
+      ipcRenderer.send("native-multi:set-bounds", id, bounds),
+    multiControl: (id: number, command: NativePlayerCommand) =>
+      ipcRenderer.send("native-multi:control", id, command),
+    onMultiTileState: (listener: (tile: MultiStreamTileState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, tile: MultiStreamTileState) =>
+        listener(tile);
+      ipcRenderer.on("native-multi:tile-state", handler);
+      return () => ipcRenderer.removeListener("native-multi:tile-state", handler);
+    },
+    onMultiTileRemoved: (listener: (id: number) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, id: number) => listener(id);
+      ipcRenderer.on("native-multi:tile-removed", handler);
+      return () => ipcRenderer.removeListener("native-multi:tile-removed", handler);
     },
   },
 };

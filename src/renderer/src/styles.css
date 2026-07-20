@@ -95,6 +95,10 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .top-settings-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid #34343b; border-radius: 8px; color: #a1a1aa; background: #1a1a1f; cursor: pointer; }
 .top-settings-button:hover { color: #f4f4f5; background: #25252b; }
 .top-settings-button.active { border-color: #5a4173; color: #d8b4fe; background: #2a2035; }
+.top-multistream { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border: 1px solid #34343b; border-radius: 8px; color: #d4d4d8; background: #1a1a1f; cursor: pointer; font-size: 12px; font-weight: 600; }
+.top-multistream:hover:not(:disabled) { color: #f4f4f5; background: #25252b; }
+.top-multistream.active { border-color: #7c3aed; color: #e9d5ff; background: #2c1c44; }
+.top-multistream:disabled { opacity: .5; cursor: not-allowed; }
 .top-account-avatar { position: relative; flex: 0 0 auto; width: 26px; height: 26px; }
 .top-account-avatar img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .top-account-avatar i { position: absolute; right: -2px; bottom: -1px; width: 8px; height: 8px; border: 2px solid #1a1a1f; border-radius: 50%; background: #22c55e; box-shadow: 0 0 7px #22c55e99; }

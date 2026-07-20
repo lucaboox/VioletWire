@@ -1,0 +1,222 @@
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, RotateCcw, Volume2, VolumeX, X } from "lucide-react";
+import { MAX_MULTISTREAM_TILES, type MultiStreamTileState } from "../../shared/player";
+import type { FollowedChannel } from "../../shared/twitch";
+import "./multi-stream.css";
+
+interface MultiStreamViewProps {
+  tiles: MultiStreamTileState[];
+  followedLive: FollowedChannel[];
+  nameFor: (login: string) => string;
+  onAdd: (channel: string) => void;
+  onRemove: (id: number) => void;
+  onActivate: (id: number) => void;
+  onExit: () => void;
+}
+
+export function MultiStreamView({
+  tiles,
+  followedLive,
+  nameFor,
+  onAdd,
+  onRemove,
+  onActivate,
+  onExit,
+}: MultiStreamViewProps) {
+  const [pickerOpen, setPickerOpen] = useState(tiles.length === 0);
+  const canAdd = tiles.length < MAX_MULTISTREAM_TILES;
+  const usedLogins = useMemo(() => new Set(tiles.map((tile) => tile.channel)), [tiles]);
+
+  return (
+    <section className="multi-stream-page">
+      <header className="multi-stream-bar">
+        <div className="multi-stream-title">
+          <strong>Multistream</strong>
+          <span>
+            {tiles.length}/{MAX_MULTISTREAM_TILES} streams
+          </span>
+        </div>
+        <div className="multi-stream-bar-actions">
+          {canAdd && (
+            <button
+              className={pickerOpen ? "multi-add-toggle active" : "multi-add-toggle"}
+              onClick={() => setPickerOpen((open) => !open)}
+              type="button"
+            >
+              <Plus size={16} /> Add stream
+            </button>
+          )}
+          <button className="multi-exit" onClick={onExit} type="button">
+            Exit multistream
+          </button>
+          {pickerOpen && canAdd && (
+            <AddStreamPicker
+              followedLive={followedLive}
+              usedLogins={usedLogins}
+              onAdd={(login) => {
+                onAdd(login);
+                setPickerOpen(false);
+              }}
+              onClose={() => setPickerOpen(false)}
+            />
+          )}
+        </div>
+      </header>
+
+      <div className={`multi-grid count-${tiles.length}`}>
+        {tiles.map((tile) => (
+          <MultiTile
+            key={tile.id}
+            tile={tile}
+            name={nameFor(tile.channel)}
+            onRemove={onRemove}
+            onActivate={onActivate}
+          />
+        ))}
+        {tiles.length === 0 && (
+          <div className="multi-empty">
+            <p>Add up to {MAX_MULTISTREAM_TILES} streams to watch them together.</p>
+            <button onClick={() => setPickerOpen(true)} type="button">
+              <Plus size={16} /> Add a stream
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+interface MultiTileProps {
+  tile: MultiStreamTileState;
+  name: string;
+  onRemove: (id: number) => void;
+  onActivate: (id: number) => void;
+}
+
+const MultiTile = memo(function MultiTile({ tile, name, onRemove, onActivate }: MultiTileProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  // Report the tile's on-screen size so the tile's mpv instance renders at the
+  // right resolution (same CSS-pixel convention as the single player).
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const report = () => {
+      const bounds = host.getBoundingClientRect();
+      if (bounds.width < 1 || bounds.height < 1) return;
+      window.desktop.player.multiSetBounds(tile.id, {
+        x: Math.round(bounds.x),
+        y: Math.round(bounds.y),
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+      });
+    };
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(host);
+    window.addEventListener("resize", report);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", report);
+    };
+  }, [tile.id]);
+
+  const { status, error } = tile.state;
+  const offline = error === "Stream is offline." || /offline|no playable streams/i.test(error ?? "");
+  const showOverlay = status !== "playing";
+
+  return (
+    <div
+      className={tile.active ? "multi-tile active" : "multi-tile"}
+      ref={hostRef}
+      onClick={() => onActivate(tile.id)}
+    >
+      <canvas
+        className="native-texture-canvas"
+        data-native-texture-canvas={String(tile.id)}
+        aria-hidden="true"
+      />
+      {showOverlay && (
+        <div className="multi-tile-overlay">
+          <span className={`native-status-orb ${offline ? "offline" : status}`} />
+          <strong>
+            {offline
+              ? `${name} is offline`
+              : status === "error"
+                ? "Could not start"
+                : `Loading ${name}`}
+          </strong>
+          {status === "error" && !offline && error && <p>{error}</p>}
+        </div>
+      )}
+      <div className="multi-tile-bar">
+        <span className="multi-tile-name">{name}</span>
+        <span className="multi-tile-audio" title={tile.active ? "Audio active" : "Muted"}>
+          {tile.active ? <Volume2 size={14} /> : <VolumeX size={14} />}
+        </span>
+        <button
+          aria-label={`Remove ${name}`}
+          className="multi-tile-remove"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove(tile.id);
+          }}
+          title="Remove stream"
+          type="button"
+        >
+          <X size={14} />
+        </button>
+      </div>
+      {!tile.active && <div className="multi-tile-focus-hint">Click for audio</div>}
+    </div>
+  );
+});
+
+interface AddStreamPickerProps {
+  followedLive: FollowedChannel[];
+  usedLogins: Set<string>;
+  onAdd: (login: string) => void;
+  onClose: () => void;
+}
+
+function AddStreamPicker({ followedLive, usedLogins, onAdd, onClose }: AddStreamPickerProps) {
+  const [query, setQuery] = useState("");
+  const available = useMemo(
+    () => followedLive.filter((channel) => !usedLogins.has(channel.login)),
+    [followedLive, usedLogins],
+  );
+
+  return (
+    <div className="multi-add-picker" role="dialog" aria-label="Add a stream">
+      <input
+        aria-label="Add channel by name"
+        autoFocus
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onClose();
+          if (event.key === "Enter") {
+            const login = query.trim().toLowerCase();
+            if (login) onAdd(login);
+          }
+        }}
+        placeholder="Add channel by name…"
+        type="text"
+        value={query}
+      />
+      <div className="multi-add-list">
+        {available.map((channel) => (
+          <button key={channel.login} onClick={() => onAdd(channel.login)} type="button">
+            {channel.profileImageUrl && <img alt="" src={channel.profileImageUrl} />}
+            <span className="multi-add-name">{channel.displayName}</span>
+            <span className="multi-add-game">{channel.category || "Live"}</span>
+          </button>
+        ))}
+        {available.length === 0 && (
+          <p className="multi-add-empty">
+            <RotateCcw size={13} /> No more live followed channels — type a name above.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}

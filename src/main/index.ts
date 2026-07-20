@@ -23,6 +23,7 @@ import {
   playerBoundsSchema,
   playerModeSchema,
   isNativeStreamUnavailable,
+  MAX_MULTISTREAM_TILES,
   type ChatPresentation,
   type ChannelAction,
   type ChannelActionWindowState,
@@ -32,6 +33,7 @@ import {
 } from "../shared/player";
 import { NativePlayer } from "./native-player";
 import { TextureNativePlayer } from "./texture-native-player";
+import { MultiStreamManager } from "./multi-stream-manager";
 import { TwitchService } from "./twitch-service";
 import { PlaybackSessionService } from "./playback-session";
 import { SevenTvService } from "./seven-tv-service";
@@ -304,6 +306,13 @@ const textureNativePlayer = new TextureNativePlayer(
   },
   () => nativePlayer.getAvailability().streamlinkPath,
   () => playbackSessionService.getToken(),
+);
+const multiStreamManager = new MultiStreamManager(
+  () => mainWindow,
+  () => nativePlayer.getAvailability().streamlinkPath,
+  () => playbackSessionService.getToken(),
+  (tile) => sendToWindow(mainWindow, "native-multi:tile-state", tile),
+  (id) => sendToWindow(mainWindow, "native-multi:tile-removed", id),
 );
 const twitchService = new TwitchService();
 const linkPreviewService = new LinkPreviewService(twitchService);
@@ -872,6 +881,8 @@ handleTrusted(
   const requestedMode = playerModeSchema.parse(requestedModeInput);
   const requestedQuality =
     requestedQualityInput === undefined ? "best" : nativeQualitySchema.parse(requestedQualityInput);
+  // Opening a single stream leaves multistream mode; free those tiles first.
+  if (multiStreamManager.isActive()) multiStreamManager.stop();
   const openGeneration = ++playerOpenGeneration;
   const keepTextureSession =
     requestedMode === "native" &&
@@ -1025,6 +1036,56 @@ onTrusted("native-player:control", (_event, input: unknown) => {
   if (!result.success || activePlayerMode !== "native") return;
   if (activeNativeBackend === "texture") textureNativePlayer.control(result.data);
   else nativePlayer.control(result.data);
+});
+
+function isMultiTileId(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value < MAX_MULTISTREAM_TILES
+  );
+}
+
+handleTrusted("native-multi:start", async (_event, input: unknown) => {
+  if (!Array.isArray(input)) return [];
+  const channels: string[] = [];
+  for (const entry of input) {
+    const result = channelNameSchema.safeParse(entry);
+    if (result.success) channels.push(result.data);
+  }
+  // Multistream replaces the single full-window player; tear it down so its
+  // mpv/GPU resources are free before the tiles start.
+  destroyPlayer();
+  return multiStreamManager.start(channels);
+});
+
+handleTrusted("native-multi:add-tile", async (_event, input: unknown) => {
+  const result = channelNameSchema.safeParse(input);
+  if (!result.success) return null;
+  return multiStreamManager.addTile(result.data);
+});
+
+onTrusted("native-multi:stop", () => multiStreamManager.stop());
+
+onTrusted("native-multi:remove-tile", (_event, input: unknown) => {
+  if (isMultiTileId(input)) multiStreamManager.removeTile(input);
+});
+
+onTrusted("native-multi:set-active", (_event, input: unknown) => {
+  if (isMultiTileId(input)) multiStreamManager.setActive(input);
+});
+
+onTrusted("native-multi:set-bounds", (_event, idInput: unknown, boundsInput: unknown) => {
+  if (!isMultiTileId(idInput)) return;
+  const result = playerBoundsSchema.safeParse(boundsInput);
+  if (result.success) multiStreamManager.setBounds(idInput, result.data);
+});
+
+onTrusted("native-multi:control", (_event, idInput: unknown, commandInput: unknown) => {
+  if (!isMultiTileId(idInput)) return;
+  const result = nativePlayerCommandSchema.safeParse(commandInput);
+  if (result.success) multiStreamManager.control(idInput, result.data);
 });
 
 onTrusted("player:preresolve", (_event, input: unknown) => {
@@ -1304,8 +1365,14 @@ handleTrusted("preferences:update", async (_event, patch: unknown) => {
 
 app.whenReady().then(async () => {
   app.setAppUserModelId("app.violetwire.viewer");
-  powerMonitor.on("resume", () => textureNativePlayer.recoverGraphics());
-  powerMonitor.on("unlock-screen", () => textureNativePlayer.recoverGraphics());
+  powerMonitor.on("resume", () => {
+    textureNativePlayer.recoverGraphics();
+    multiStreamManager.recoverGraphics();
+  });
+  powerMonitor.on("unlock-screen", () => {
+    textureNativePlayer.recoverGraphics();
+    multiStreamManager.recoverGraphics();
+  });
   await preferencesService.initialize();
   await playbackSessionService.initialize();
   await twitchService.initialize();

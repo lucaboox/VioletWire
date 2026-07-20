@@ -149,6 +149,10 @@ export class TextureNativePlayer {
     private readonly onState: StateListener,
     private readonly getStreamlinkPath: () => string | undefined,
     private readonly getTwitchPlaybackToken: () => string | null,
+    // Identifies which renderer canvas this player's frames paint. The single
+    // full-window player uses "main"; multistream tiles use their tile id so
+    // the preload can route each stream to its own <canvas>.
+    private readonly renderTarget: string = "main",
   ) {}
 
   getAvailability(): { available: boolean; reason?: string } {
@@ -398,6 +402,19 @@ export class TextureNativePlayer {
     this.session?.addon.recoverGraphics(cycleAdapter);
   }
 
+  // Deterministic mute for multistream audio focus (only the active tile plays
+  // sound). Unlike control("toggle-mute") this sets an explicit state.
+  setMuted(muted: boolean): void {
+    const addon = this.session?.addon;
+    if (!addon) return;
+    addon.command(["set", "mute", muted ? "yes" : "no"]);
+    this.updateState({ muted });
+  }
+
+  get target(): string {
+    return this.renderTarget;
+  }
+
   private async reloadAtLiveEdge(): Promise<void> {
     const session = this.session;
     const channel = this.currentChannel;
@@ -614,7 +631,9 @@ export class TextureNativePlayer {
           frame: window.webContents.mainFrame,
           importedSharedTexture: imported,
         },
-        transferSequence,
+        // Tag the frame with its render target so the preload paints it onto
+        // the matching canvas; the sequence stays per-target for ordering.
+        { target: this.renderTarget, sequence: transferSequence },
       )
       .then(() => this.recordTransferSuccess(session))
       .catch((error: unknown) => {

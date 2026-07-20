@@ -23,6 +23,7 @@ import {
   History,
   Home,
   Layers,
+  LayoutGrid,
   LogIn,
   Maximize,
   Minimize,
@@ -48,6 +49,7 @@ import {
   formatQualityLabel,
   type ChatPresentation,
   type ChannelActionWindowState,
+  type MultiStreamTileState,
   type NativePlayerAvailability,
   type NativeRenderBackend,
   type NativePlayerState,
@@ -88,6 +90,7 @@ import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
 import { useChatFeed } from "./chat-feed";
 import { EmotePicker } from "./EmotePicker";
+import { MultiStreamView } from "./MultiStreamView";
 import { ReactTooltipLayer } from "./ReactTooltipLayer";
 import { ChatEmote } from "./ChatEmote";
 import { ChatBadge } from "./ChatBadge";
@@ -566,6 +569,8 @@ export function App() {
     behindLive: false,
     quality: "best",
   });
+  const [multiStreamActive, setMultiStreamActive] = useState(false);
+  const [multiTiles, setMultiTiles] = useState<MultiStreamTileState[]>([]);
   const chatProviderEmotes = useMemo(() => {
     const combined = new Map<string, ProviderEmote>();
     // Channel sets win over global sets in each service; provider priority
@@ -832,6 +837,26 @@ export function App() {
     return () => {
       removeStateListener();
       removeBackendListener();
+    };
+  }, []);
+
+  // Keep the multistream tile list in sync with the main process. Upsert each
+  // tile by id, and drop tiles the manager reports removed.
+  useEffect(() => {
+    const removeState = window.desktop.player.onMultiTileState((tile) => {
+      setMultiTiles((current) => {
+        const next = current.filter((existing) => existing.id !== tile.id);
+        next.push(tile);
+        next.sort((left, right) => left.id - right.id);
+        return next;
+      });
+    });
+    const removeRemoved = window.desktop.player.onMultiTileRemoved((id) => {
+      setMultiTiles((current) => current.filter((tile) => tile.id !== id));
+    });
+    return () => {
+      removeState();
+      removeRemoved();
     };
   }, []);
 
@@ -1932,6 +1957,54 @@ export function App() {
     setActiveSection("home");
   }
 
+  async function enterMultiStream() {
+    // Carry the currently-watched channel in as the first tile, if any.
+    const seed = activeChannel ? [activeChannel] : [];
+    // Tear down the single-player renderer state; the main process frees its
+    // mpv session as part of multiStart.
+    setMiniPlayerActive(false);
+    setMiniPlayerPosition(null);
+    setActiveChannel(null);
+    setActiveMode(null);
+    setActiveNativeBackend(null);
+    setFullscreen(false);
+    setTheaterMode(false);
+    setEmotePickerOpen(false);
+    setMultiStreamActive(true);
+    setMultiTiles(await window.desktop.player.multiStart(seed));
+  }
+
+  function exitMultiStream() {
+    window.desktop.player.multiStop();
+    setMultiTiles([]);
+    setMultiStreamActive(false);
+    setActiveSection("home");
+  }
+
+  async function addMultiTile(channel: string) {
+    const tile = await window.desktop.player.multiAddTile(channel);
+    if (!tile) return;
+    setMultiTiles((current) => {
+      const next = current.filter((existing) => existing.id !== tile.id);
+      next.push(tile);
+      next.sort((left, right) => left.id - right.id);
+      return next;
+    });
+  }
+
+  function removeMultiTile(id: number) {
+    window.desktop.player.multiRemoveTile(id);
+    setMultiTiles((current) => current.filter((tile) => tile.id !== id));
+  }
+
+  function activateMultiTile(id: number) {
+    window.desktop.player.multiSetActive(id);
+  }
+
+  function nameForChannel(login: string): string {
+    return followedChannels.find((channel) => channel.login === login)?.displayName ?? login;
+  }
+
   async function navigateTo(section: AppSection) {
     if (section === "settings") {
       setSettingsOpen(true);
@@ -2396,6 +2469,17 @@ export function App() {
             </button>
           </div>
           <button
+            aria-pressed={multiStreamActive}
+            className={multiStreamActive ? "top-multistream active" : "top-multistream"}
+            disabled={authState.status !== "signed-in"}
+            onClick={() => (multiStreamActive ? exitMultiStream() : void enterMultiStream())}
+            title="Watch up to 4 streams at once"
+            type="button"
+          >
+            <LayoutGrid size={16} />
+            <span>Multistream</span>
+          </button>
+          <button
             className="sign-in"
             disabled={authBusy}
             onClick={() =>
@@ -2436,7 +2520,17 @@ export function App() {
           </div>
         </header>
 
-        {activeChannel && !miniPlayerActive ? (
+        {multiStreamActive ? (
+          <MultiStreamView
+            tiles={multiTiles}
+            followedLive={liveFollowedChannels}
+            nameFor={nameForChannel}
+            onAdd={(channel) => void addMultiTile(channel)}
+            onRemove={removeMultiTile}
+            onActivate={activateMultiTile}
+            onExit={exitMultiStream}
+          />
+        ) : activeChannel && !miniPlayerActive ? (
           <section
             className={chatResizing ? "player-page chat-resizing" : "player-page"}
             ref={playerPageRef}
@@ -2699,7 +2793,7 @@ export function App() {
                     <>
                       <canvas
                         className="native-texture-canvas"
-                        data-native-texture-canvas
+                        data-native-texture-canvas="main"
                         aria-hidden="true"
                       />
                       <NativeControls
@@ -4237,7 +4331,7 @@ export function App() {
               if (offset && !offset.moved) restoreMiniPlayer();
             }}
           >
-            <canvas className="native-texture-canvas mini-player-canvas" data-native-texture-canvas />
+            <canvas className="native-texture-canvas mini-player-canvas" data-native-texture-canvas="main" />
             <button
               aria-label="Close the stream"
               className="mini-player-close"

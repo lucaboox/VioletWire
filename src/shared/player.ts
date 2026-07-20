@@ -187,6 +187,20 @@ export interface NativePlayerState {
   transition?: NativePlayerTransition;
 }
 
+// Multistream shows up to this many native players in a grid at once. Only the
+// active tile plays audio.
+export const MAX_MULTISTREAM_TILES = 4;
+
+export interface MultiStreamTile {
+  id: number;
+  channel: string;
+}
+
+export interface MultiStreamTileState extends MultiStreamTile {
+  state: NativePlayerState;
+  active: boolean;
+}
+
 export interface DesktopApi {
   system: {
     openExternal(url: string): Promise<void>;
@@ -236,5 +250,15 @@ export interface DesktopApi {
     sendNativeEmoteSelection(name: string): void;
     onNativeEmotePicker(listener: (open: boolean) => void): () => void;
     onNativeEmoteSelection(listener: (name: string) => void): () => void;
+    // Multistream: up to MAX_MULTISTREAM_TILES native players in a grid.
+    multiStart(channels: string[]): Promise<MultiStreamTileState[]>;
+    multiStop(): void;
+    multiAddTile(channel: string): Promise<MultiStreamTileState | null>;
+    multiRemoveTile(id: number): void;
+    multiSetActive(id: number): void;
+    multiSetBounds(id: number, bounds: PlayerBounds): void;
+    multiControl(id: number, command: NativePlayerCommand): void;
+    onMultiTileState(listener: (tile: MultiStreamTileState) => void): () => void;
+    onMultiTileRemoved(listener: (id: number) => void): () => void;
   };
 }
