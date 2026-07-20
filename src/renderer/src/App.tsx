@@ -2579,6 +2579,7 @@ export function App() {
               onExit={exitMultiStream}
             />
             <aside className="multi-chat" aria-label="Stream chat">
+              <div className="multi-chat-header">
               <div className="multi-chat-tabs" role="tablist">
                 {multiTiles.length === 0 ? (
                   <span className="multi-chat-empty-tabs">Add a stream to see its chat</span>
@@ -2601,6 +2602,81 @@ export function App() {
                     </button>
                   ))
                 )}
+              </div>
+              <div className="chat-header-actions">
+                <button
+                  aria-expanded={chatSettingsOpen}
+                  aria-label="Chat settings"
+                  className={chatSettingsOpen ? "toolbar-icon active" : "toolbar-icon"}
+                  onClick={() => setChatSettingsOpen((current) => !current)}
+                  title="Chat settings"
+                  type="button"
+                >
+                  <Settings size={16} />
+                </button>
+                {chatSettingsOpen && (
+                  <div className="chat-overlay-settings chat-header-settings">
+                    <strong>Chat settings</strong>
+                    <ChatToggleSetting
+                      checked={chatTimestamps}
+                      label="Show timestamps"
+                      onChange={setChatTimestamps}
+                    />
+                    <ChatToggleSetting
+                      checked={mentionSoundEnabled}
+                      label="Mention sound"
+                      onChange={setMentionSoundEnabled}
+                    />
+                    <MentionSoundControls
+                      onSoundChange={setMentionSoundId}
+                      onVolumeChange={setMentionSoundVolume}
+                      soundId={mentionSoundId}
+                      volume={mentionSoundVolume}
+                    />
+                    <ChatToggleSetting
+                      checked={chatDeletedMessageStyle === "dimmed"}
+                      label="Dim deleted messages"
+                      onChange={(checked) =>
+                        setChatDeletedMessageStyle(checked ? "dimmed" : "placeholder")
+                      }
+                    />
+                    <label>
+                      <span>Font size: {chatFontSize}px</span>
+                      <input
+                        aria-label="Chat font size"
+                        max="25"
+                        min="14"
+                        onChange={(event) => setChatFontSize(Number(event.target.value))}
+                        type="range"
+                        value={chatFontSize}
+                      />
+                    </label>
+                    <label>
+                      <span>Emote size: {chatEmoteSize}px</span>
+                      <input
+                        aria-label="Chat emote size"
+                        max="48"
+                        min="18"
+                        onChange={(event) => setChatEmoteSize(Number(event.target.value))}
+                        type="range"
+                        value={chatEmoteSize}
+                      />
+                    </label>
+                    <label>
+                      <span>History: {chatHistoryLimit}</span>
+                      <input
+                        aria-label="Chat history message count"
+                        max="100"
+                        min="20"
+                        onChange={(event) => setChatHistoryLimit(Number(event.target.value))}
+                        step="10"
+                        type="range"
+                        value={chatHistoryLimit}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
               </div>
               <div
                 aria-live="polite"
@@ -2715,14 +2791,17 @@ export function App() {
                         />
                       )}
                     </div>
-                    <button
-                      className="chat-send-button"
-                      disabled={authState.status !== "signed-in" || !chatInput.trim()}
-                      type="submit"
-                    >
-                      Chat
-                    </button>
                   </div>
+                </div>
+                <div className="chat-composer-footer">
+                  <span />
+                  <button
+                    className="chat-send-button"
+                    disabled={authState.status !== "signed-in" || !chatInput.trim()}
+                    type="submit"
+                  >
+                    {replyingTo ? "Reply" : "Chat"}
+                  </button>
                 </div>
               </form>
               {openReplyThread && (

@@ -37,12 +37,25 @@
   z-index: 91;
 }
 
+.multi-chat-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #202024;
+}
+
 .multi-chat-tabs {
   display: flex;
+  flex: 1 1 auto;
   gap: 4px;
-  padding: 8px;
+  min-width: 0;
   overflow-x: auto;
-  border-bottom: 1px solid #202024;
+}
+
+.multi-chat-header .chat-header-actions {
+  flex: 0 0 auto;
 }
 
 .multi-chat-tab {
