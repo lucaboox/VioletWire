@@ -181,7 +181,8 @@
 }
 
 .multi-theater .sidebar,
-.multi-theater .topbar {
+.multi-theater .topbar,
+.multi-theater .brand {
   display: none;
 }
 

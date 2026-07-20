@@ -73,6 +73,9 @@ export function MultiStreamView({
               <Plus size={16} /> Add stream
             </button>
           )}
+          <button className="multi-exit" onClick={onExit} type="button">
+            <X size={16} /> Exit
+          </button>
           <button
             aria-pressed={theater}
             className={theater ? "multi-theater-toggle active" : "multi-theater-toggle"}
@@ -81,9 +84,6 @@ export function MultiStreamView({
             type="button"
           >
             {theater ? <Minimize2 size={16} /> : <Maximize2 size={16} />} Theater
-          </button>
-          <button className="multi-exit" onClick={onExit} type="button">
-            Exit multistream
           </button>
           {pickerOpen && canAdd && (
             <AddStreamPicker
