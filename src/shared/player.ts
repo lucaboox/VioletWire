@@ -259,6 +259,7 @@ export interface DesktopApi {
     multiSetActive(id: number): void;
     multiSetBounds(id: number, bounds: PlayerBounds): void;
     multiControl(id: number, command: NativePlayerCommand): void;
+    multiSetQuality(id: number, quality: NativeQualityValue): Promise<void>;
     onMultiTileState(listener: (tile: MultiStreamTileState) => void): () => void;
     onMultiTileRemoved(listener: (id: number) => void): () => void;
   };

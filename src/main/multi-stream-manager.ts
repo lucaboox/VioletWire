@@ -4,6 +4,7 @@ import {
   type MultiStreamTileState,
   type NativePlayerCommand,
   type NativePlayerState,
+  type NativeQualityValue,
   type PlayerBounds,
 } from "../shared/player";
 import { TextureNativePlayer } from "./texture-native-player";
@@ -101,6 +102,12 @@ export class MultiStreamManager {
 
   control(id: number, command: NativePlayerCommand): void {
     this.tiles.get(id)?.player.control(command);
+  }
+
+  async setQuality(id: number, quality: NativeQualityValue): Promise<void> {
+    const tile = this.tiles.get(id);
+    if (!tile) return;
+    await tile.player.start(tile.channel, quality, { kind: "quality", detail: quality });
   }
 
   stop(): void {

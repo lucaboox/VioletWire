@@ -2570,6 +2570,12 @@ export function App() {
               onAdd={(channel) => void addMultiTile(channel)}
               onRemove={removeMultiTile}
               onActivate={activateMultiTile}
+              onToggleMute={(id) =>
+                window.desktop.player.multiControl(id, { command: "toggle-mute" })
+              }
+              onSetQuality={(id, quality) =>
+                void window.desktop.player.multiSetQuality(id, quality)
+              }
               onExit={exitMultiStream}
             />
             <aside className="multi-chat" aria-label="Stream chat">
@@ -2719,6 +2725,33 @@ export function App() {
                   </div>
                 </div>
               </form>
+              {openReplyThread && (
+                <ReplyThread
+                  badges={twitchBadges}
+                  messages={chatMessages}
+                  oledMode={oledMode}
+                  onClose={() => setOpenReplyThread(null)}
+                  onOpenUser={openChatUserCard}
+                  onReply={beginReply}
+                  renderText={renderCardText}
+                  selected={openReplyThread}
+                />
+              )}
+              {selectedChatUser && effectiveMultiChatChannel && (
+                <ChatUserCard
+                  anchor={selectedChatUserAnchor}
+                  badges={twitchBadges}
+                  channel={effectiveMultiChatChannel}
+                  key={`${effectiveMultiChatChannel}:${selectedChatUser.login}`}
+                  messages={chatMessages}
+                  onClose={() => {
+                    setSelectedChatUser(null);
+                    setSelectedChatUserAnchor(undefined);
+                  }}
+                  renderText={renderCardText}
+                  selected={selectedChatUser}
+                />
+              )}
             </aside>
           </div>
         ) : activeChannel && !miniPlayerActive ? (

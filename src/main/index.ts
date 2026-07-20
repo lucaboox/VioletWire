@@ -1099,6 +1099,12 @@ onTrusted("native-multi:control", (_event, idInput: unknown, commandInput: unkno
   if (result.success) multiStreamManager.control(idInput, result.data);
 });
 
+handleTrusted("native-multi:set-quality", async (_event, idInput: unknown, qualityInput: unknown) => {
+  if (!isMultiTileId(idInput)) return;
+  const quality = nativeQualitySchema.parse(qualityInput);
+  await multiStreamManager.setQuality(idInput, quality);
+});
+
 onTrusted("player:preresolve", (_event, input: unknown) => {
   const result = channelNameSchema.safeParse(input);
   if (!result.success) return;

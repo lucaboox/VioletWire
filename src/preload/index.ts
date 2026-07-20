@@ -273,6 +273,8 @@ const api: DesktopApi = {
       ipcRenderer.send("native-multi:set-bounds", id, bounds),
     multiControl: (id: number, command: NativePlayerCommand) =>
       ipcRenderer.send("native-multi:control", id, command),
+    multiSetQuality: (id: number, quality: NativeQualityValue) =>
+      ipcRenderer.invoke("native-multi:set-quality", id, quality) as Promise<void>,
     onMultiTileState: (listener: (tile: MultiStreamTileState) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, tile: MultiStreamTileState) =>
         listener(tile);

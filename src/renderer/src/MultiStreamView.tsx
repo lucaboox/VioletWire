@@ -1,6 +1,11 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, RotateCcw, Volume2, VolumeX, X } from "lucide-react";
-import { MAX_MULTISTREAM_TILES, type MultiStreamTileState } from "../../shared/player";
+import { Plus, RotateCcw, Settings, Volume2, VolumeX, X } from "lucide-react";
+import {
+  MAX_MULTISTREAM_TILES,
+  type MultiStreamTileState,
+  type NativeQuality,
+  type NativeQualityValue,
+} from "../../shared/player";
 import type { FollowedChannel } from "../../shared/twitch";
 import "./multi-stream.css";
 
@@ -11,6 +16,8 @@ interface MultiStreamViewProps {
   onAdd: (channel: string) => void;
   onRemove: (id: number) => void;
   onActivate: (id: number) => void;
+  onToggleMute: (id: number) => void;
+  onSetQuality: (id: number, quality: NativeQualityValue) => void;
   onExit: () => void;
 }
 
@@ -21,6 +28,8 @@ export function MultiStreamView({
   onAdd,
   onRemove,
   onActivate,
+  onToggleMute,
+  onSetQuality,
   onExit,
 }: MultiStreamViewProps) {
   const [pickerOpen, setPickerOpen] = useState(tiles.length === 0);
@@ -71,6 +80,8 @@ export function MultiStreamView({
             name={nameFor(tile.channel)}
             onRemove={onRemove}
             onActivate={onActivate}
+            onToggleMute={onToggleMute}
+            onSetQuality={onSetQuality}
           />
         ))}
         {tiles.length === 0 && (
@@ -91,10 +102,36 @@ interface MultiTileProps {
   name: string;
   onRemove: (id: number) => void;
   onActivate: (id: number) => void;
+  onToggleMute: (id: number) => void;
+  onSetQuality: (id: number, quality: NativeQualityValue) => void;
 }
 
-const MultiTile = memo(function MultiTile({ tile, name, onRemove, onActivate }: MultiTileProps) {
+const MultiTile = memo(function MultiTile({
+  tile,
+  name,
+  onRemove,
+  onActivate,
+  onToggleMute,
+  onSetQuality,
+}: MultiTileProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [qualities, setQualities] = useState<NativeQuality[]>([]);
+
+  // Lazy-load the quality list the first time the menu opens for this tile.
+  useEffect(() => {
+    if (!qualityMenuOpen || qualities.length > 0) return;
+    let cancelled = false;
+    void window.desktop.player
+      .getNativeQualities(tile.channel)
+      .then((list) => {
+        if (!cancelled) setQualities(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [qualityMenuOpen, qualities.length, tile.channel]);
 
   // Report the tile's on-screen size so the tile's mpv instance renders at the
   // right resolution (same CSS-pixel convention as the single player).
@@ -149,25 +186,65 @@ const MultiTile = memo(function MultiTile({ tile, name, onRemove, onActivate }: 
           {status === "error" && !offline && error && <p>{error}</p>}
         </div>
       )}
-      <div className="multi-tile-bar">
+      <div className="multi-tile-bar" onClick={(event) => event.stopPropagation()}>
+        {tile.active && <span className="multi-tile-live-dot" title="Audio focus" />}
         <span className="multi-tile-name">{name}</span>
-        <span className="multi-tile-audio" title={tile.active ? "Audio active" : "Muted"}>
-          {tile.active ? <Volume2 size={14} /> : <VolumeX size={14} />}
-        </span>
+        <button
+          aria-label={tile.state.muted ? `Unmute ${name}` : `Mute ${name}`}
+          className="multi-tile-btn"
+          onClick={() => onToggleMute(tile.id)}
+          title={tile.state.muted ? "Unmute" : "Mute"}
+          type="button"
+        >
+          {tile.state.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+        </button>
+        <div className="multi-tile-quality">
+          <button
+            aria-label="Quality"
+            className={qualityMenuOpen ? "multi-tile-btn active" : "multi-tile-btn"}
+            onClick={() => setQualityMenuOpen((open) => !open)}
+            title="Change quality"
+            type="button"
+          >
+            <Settings size={14} />
+          </button>
+          {qualityMenuOpen && (
+            <div className="multi-tile-quality-menu">
+              {qualities.length === 0 ? (
+                <span className="multi-tile-quality-loading">Loading…</span>
+              ) : (
+                qualities.map((quality) => (
+                  <button
+                    className={
+                      tile.state.quality === quality.value
+                        ? "multi-tile-quality-option active"
+                        : "multi-tile-quality-option"
+                    }
+                    key={quality.value}
+                    onClick={() => {
+                      onSetQuality(tile.id, quality.value);
+                      setQualityMenuOpen(false);
+                    }}
+                    type="button"
+                  >
+                    {quality.label}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
         <button
           aria-label={`Remove ${name}`}
-          className="multi-tile-remove"
-          onClick={(event) => {
-            event.stopPropagation();
-            onRemove(tile.id);
-          }}
+          className="multi-tile-btn multi-tile-remove"
+          onClick={() => onRemove(tile.id)}
           title="Remove stream"
           type="button"
         >
           <X size={14} />
         </button>
       </div>
-      {!tile.active && <div className="multi-tile-focus-hint">Click for audio</div>}
+      {!tile.active && <div className="multi-tile-focus-hint">Click video for audio</div>}
     </div>
   );
 });
