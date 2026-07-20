@@ -1844,6 +1844,7 @@ export function App() {
   async function chooseSearchCategory(category: BrowseCategory) {
     setTopSearchOpen(false);
     setChannelInput("");
+    leaveMultiStream();
     if (activeChannel) await closePlayer();
     setActiveSection("browse");
     await openBrowseCategory(category);
@@ -1886,6 +1887,8 @@ export function App() {
     channel: string,
     identity?: ChannelNavigationIdentity,
   ) {
+    // Opening a single stream replaces multistream rather than layering over it.
+    leaveMultiStream();
     // Re-clicking the channel that is already playing must not restart or
     // reset anything (metadata, chat, player) — just surface the full player.
     if (activeChannel && activeChannel === channel.trim().toLowerCase()) {
@@ -2012,10 +2015,18 @@ export function App() {
     setMultiTiles(await window.desktop.player.multiStart(seed));
   }
 
-  function exitMultiStream() {
+  // Tear down multistream without navigating — used both by the explicit exit
+  // and whenever another view (opening a stream, Home/Browse) takes over.
+  function leaveMultiStream() {
+    if (!multiStreamActive) return;
     window.desktop.player.multiStop();
     setMultiTiles([]);
+    setMultiChatChannel(null);
     setMultiStreamActive(false);
+  }
+
+  function exitMultiStream() {
+    leaveMultiStream();
     setActiveSection("home");
   }
 
@@ -2052,6 +2063,8 @@ export function App() {
       return;
     }
     setSettingsOpen(false);
+    // Home/Browse leave multistream rather than sitting behind it.
+    leaveMultiStream();
     if (activeChannel && !miniPlayerActive) {
       // The embedded texture player keeps running as a floating mini player
       // while browsing, exactly because its video is an in-page canvas. The
