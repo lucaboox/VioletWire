@@ -530,8 +530,6 @@ export function App() {
   const [activeMode, setActiveMode] = useState<PlayerMode | null>(null);
   const [activeNativeBackend, setActiveNativeBackend] =
     useState<NativeRenderBackend | null>(null);
-  const [standardPlayerReloadNonce, setStandardPlayerReloadNonce] = useState(0);
-  const standardPlayerWasOffline = useRef<boolean | null>(null);
   // Twitch-style floating mini player: the texture session keeps playing in a
   // small draggable corner canvas while the user browses other sections.
   const [miniPlayerActive, setMiniPlayerActive] = useState(false);
@@ -1010,23 +1008,6 @@ export function App() {
       cancelled = true;
     };
   }, [activeChannel, authState.status]);
-
-  // If Native fell back to Twitch's Standard offline surface, refresh that
-  // iframe as soon as the normal metadata poll observes the channel becoming
-  // live. The ref prevents routine polling from restarting a healthy player.
-  useEffect(() => {
-    if (!activeChannel || activeMode !== "official") {
-      standardPlayerWasOffline.current = null;
-      return;
-    }
-    if (!streamMetadata) return;
-    const wasOffline = standardPlayerWasOffline.current === false;
-    standardPlayerWasOffline.current = streamMetadata.isLive;
-    if (wasOffline && streamMetadata.isLive) {
-      setStandardPlayerReloadNonce((current) => current + 1);
-      setNotice(`${streamMetadata.displayName ?? activeChannel} is live. Reloading Twitch playback.`);
-    }
-  }, [activeChannel, activeMode, streamMetadata]);
 
   const chatHistoryBoundary = chatMessages.reduce(
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
@@ -1980,23 +1961,6 @@ export function App() {
     if (result.fallbackReason) setNotice(result.fallbackReason);
   }
 
-  async function reloadPlayback() {
-    if (!activeChannel) return;
-
-    if (activeMode === "official") {
-      setStandardPlayerReloadNonce((current) => current + 1);
-      setNotice("Reloading Twitch playback.");
-      return;
-    }
-
-    try {
-      await retryNativePlayer();
-      setNotice("Reloading native playback.");
-    } catch {
-      setNotice("Unable to reload native playback.");
-    }
-  }
-
   async function setFullscreenMode(nextFullscreen: boolean) {
     try {
       const actualState = await window.desktop.player.setFullscreen(nextFullscreen);
@@ -2356,17 +2320,6 @@ export function App() {
               Standard
             </button>
           </div>
-          {activeChannel && (
-            <button
-              aria-label="Reload playback"
-              className="top-playback-reload"
-              onClick={() => void reloadPlayback()}
-              title="Reload playback"
-              type="button"
-            >
-              <RefreshCw size={15} />
-            </button>
-          )}
           <button
             className="sign-in"
             disabled={authBusy}
@@ -2662,7 +2615,7 @@ export function App() {
                       allow="autoplay; fullscreen; picture-in-picture"
                       allowFullScreen
                       className="standard-player-frame"
-                      key={`standard-player:${activeChannel}:${standardPlayerReloadNonce}`}
+                      key={`standard-player:${activeChannel}`}
                       sandbox="allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
                       src={`https://player.twitch.tv/?channel=${encodeURIComponent(activeChannel)}&parent=${encodeURIComponent(window.location.hostname)}&autoplay=true&muted=false`}
                       aria-label={`Official Twitch player for ${activeChannel}`}
@@ -2719,7 +2672,7 @@ export function App() {
                               ? "Reconnecting the stream at the new quality."
                               : "Streamlink is resolving the Twitch stream and connecting it to mpv."))}
                       </p>
-                      {nativeState.status === "error" && !nativeStreamOffline && (
+                      {(nativeStreamOffline || nativeState.status === "error") && (
                         <button onClick={() => void retryNativePlayer()} type="button">
                           <RotateCcw size={15} /> Retry
                         </button>

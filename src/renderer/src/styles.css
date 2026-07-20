@@ -89,8 +89,6 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .top-search-direct strong { min-width: 0; overflow: hidden; color: #d8b4fe; text-overflow: ellipsis; white-space: nowrap; }
 .top-actions { grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 7px; }
 .top-mode-switch { flex: 0 0 auto; }
-.top-playback-reload { display: grid; width: 32px; height: 32px; padding: 0; place-items: center; border: 1px solid #34343b; border-radius: 8px; color: #aaaab4; background: #1a1a1f; cursor: pointer; }
-.top-playback-reload:hover { color: #f4f4f5; background: #25252b; }
 .sign-in { display: flex; align-items: center; gap: 8px; padding: 8px 13px; border: 1px solid #34343b; border-radius: 8px; background: #1a1a1f; cursor: pointer; font-size: 13px; }
 .sign-in:hover { background: #25252b; }
 .sign-in:disabled { opacity: .65; cursor: wait; }
