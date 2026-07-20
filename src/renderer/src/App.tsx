@@ -584,7 +584,9 @@ export function App() {
     Map<string, ChatConnectionState>
   >(new Map());
   const multiChatHost = useRef<HTMLDivElement>(null);
+  const multiChatContent = useRef<HTMLDivElement>(null);
   const multiChatPinned = useRef(true);
+  const [multiChatPaused, setMultiChatPaused] = useState(false);
   // The selected chat tab, falling back to the active tile (or first) when the
   // held selection has no tile — derived rather than stored so no effect writes
   // it. A user tab click or tile activation still sets multiChatChannel.
@@ -946,17 +948,44 @@ export function App() {
     };
   }, []);
 
-  // A new tab starts pinned to the newest message.
-  useEffect(() => {
+  const scrollMultiChatToBottom = useCallback(() => {
+    const host = multiChatHost.current;
+    if (host) host.scrollTop = host.scrollHeight;
     multiChatPinned.current = true;
+    setMultiChatPaused(false);
+  }, []);
+
+  const handleMultiChatScroll = useCallback(() => {
+    const host = multiChatHost.current;
+    if (!host) return;
+    const atBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 40;
+    multiChatPinned.current = atBottom;
+    setMultiChatPaused(!atBottom);
+  }, []);
+
+  // A new tab starts pinned to the newest message. The programmatic scroll
+  // fires a scroll event, which clears the paused state via handleMultiChatScroll.
+  useLayoutEffect(() => {
+    multiChatPinned.current = true;
+    const host = multiChatHost.current;
+    if (host) host.scrollTop = host.scrollHeight;
   }, [effectiveMultiChatChannel]);
 
-  // Keep the multistream chat stuck to the bottom unless the reader scrolled up.
-  useLayoutEffect(() => {
+  // Keep the chat glued to the bottom while pinned even as content grows — new
+  // messages and, crucially, late-loading emote/badge images that expand rows
+  // after they first render (the naive "scroll on message" approach missed
+  // these and left the view stuck above the newest line).
+  useEffect(() => {
     if (!multiStreamActive) return;
     const host = multiChatHost.current;
-    if (host && multiChatPinned.current) host.scrollTop = host.scrollHeight;
-  }, [multiDisplayMessages, effectiveMultiChatChannel, multiStreamActive]);
+    const content = multiChatContent.current;
+    if (!host || !content) return;
+    const observer = new ResizeObserver(() => {
+      if (multiChatPinned.current) host.scrollTop = host.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [multiStreamActive, effectiveMultiChatChannel]);
 
   useEffect(
     () => window.desktop.player.onFullscreenChanged(setFullscreen),
@@ -2663,6 +2692,8 @@ export function App() {
               }
               theater={multiTheater}
               onToggleTheater={() => setMultiTheater((current) => !current)}
+              fullscreen={fullscreen}
+              onToggleFullscreen={() => void window.desktop.player.setFullscreen(!fullscreen)}
               onExit={exitMultiStream}
             />
             <aside className="multi-chat" aria-label="Stream chat">
@@ -2691,41 +2722,50 @@ export function App() {
               </div>
               <div
                 aria-live="polite"
-                className="chat-messages"
-                onScroll={(event) => {
-                  const element = event.currentTarget;
-                  multiChatPinned.current =
-                    element.scrollHeight - element.scrollTop - element.clientHeight < 40;
-                }}
+                className={`chat-messages${multiChatPaused ? " scroll-paused" : ""}`}
+                onScroll={handleMultiChatScroll}
                 ref={multiChatHost}
               >
-                {multiDisplayMessages.length === 0 && (
-                  <div className="chat-empty-state">
-                    {!effectiveMultiChatChannel
-                      ? "Add a stream to see its chat"
-                      : multiChatStates.get(effectiveMultiChatChannel) === "connected"
-                        ? "Waiting for the next chat message…"
-                        : "Connecting to Twitch chat…"}
-                  </div>
-                )}
-                {multiDisplayMessages.map((message) => (
-                  <ChatMessageRow
-                    badges={twitchBadges}
-                    deletedMessageStyle={chatDeletedMessageStyle}
-                    deletedRevealed={revealedDeletedMessages.has(message.id)}
-                    key={message.id}
-                    mentioned={messageMentionsLogin(message, viewerLogin)}
-                    message={message}
-                    oledMode={oledMode}
-                    onOpenThread={setOpenReplyThread}
-                    onOpenUser={openChatUserCard}
-                    onReply={beginReply}
-                    onRevealDeleted={revealDeletedMessage}
-                    providerEmotes={chatProviderEmotes}
-                    showTimestamp={chatTimestamps}
-                  />
-                ))}
+                <div ref={multiChatContent}>
+                  {multiDisplayMessages.length === 0 && (
+                    <div className="chat-empty-state">
+                      {!effectiveMultiChatChannel
+                        ? "Add a stream to see its chat"
+                        : multiChatStates.get(effectiveMultiChatChannel) === "connected"
+                          ? "Waiting for the next chat message…"
+                          : "Connecting to Twitch chat…"}
+                    </div>
+                  )}
+                  {multiDisplayMessages.map((message) => (
+                    <ChatMessageRow
+                      badges={twitchBadges}
+                      deletedMessageStyle={chatDeletedMessageStyle}
+                      deletedRevealed={revealedDeletedMessages.has(message.id)}
+                      key={message.id}
+                      mentioned={messageMentionsLogin(message, viewerLogin)}
+                      message={message}
+                      oledMode={oledMode}
+                      onOpenThread={setOpenReplyThread}
+                      onOpenUser={openChatUserCard}
+                      onReply={beginReply}
+                      onRevealDeleted={revealDeletedMessage}
+                      providerEmotes={chatProviderEmotes}
+                      showTimestamp={chatTimestamps}
+                    />
+                  ))}
+                </div>
               </div>
+              {multiChatPaused && (
+                <button
+                  className="scroll-to-current"
+                  onClick={scrollMultiChatToBottom}
+                  type="button"
+                >
+                  <Pause aria-hidden="true" size={12} />
+                  <span>Chat paused due to scroll</span>
+                  <ArrowDown aria-hidden="true" size={14} />
+                </button>
+              )}
               <form className="native-chat-input" onSubmit={sendChatMessage}>
                 {replyingTo && (
                   <div className="chat-reply-composer">

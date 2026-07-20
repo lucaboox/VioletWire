@@ -1,7 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
+  Maximize,
   Maximize2,
+  Minimize,
   Minimize2,
   Plus,
   RotateCcw,
@@ -32,6 +34,8 @@ interface MultiStreamViewProps {
   onSetQuality: (id: number, quality: NativeQualityValue) => void;
   theater: boolean;
   onToggleTheater: () => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
   onExit: () => void;
 }
 
@@ -48,6 +52,8 @@ export function MultiStreamView({
   onSetQuality,
   theater,
   onToggleTheater,
+  fullscreen,
+  onToggleFullscreen,
   onExit,
 }: MultiStreamViewProps) {
   const [pickerOpen, setPickerOpen] = useState(tiles.length === 0);
@@ -84,6 +90,15 @@ export function MultiStreamView({
             type="button"
           >
             {theater ? <Minimize2 size={16} /> : <Maximize2 size={16} />} Theater
+          </button>
+          <button
+            aria-pressed={fullscreen}
+            className={fullscreen ? "multi-theater-toggle active" : "multi-theater-toggle"}
+            onClick={onToggleFullscreen}
+            title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            type="button"
+          >
+            {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />} Fullscreen
           </button>
           {pickerOpen && canAdd && (
             <AddStreamPicker

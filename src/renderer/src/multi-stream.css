@@ -186,7 +186,8 @@
   display: none;
 }
 
-.multi-theater .multi-stream-layout {
+.multi-theater .multi-stream-layout,
+.fullscreen-mode .multi-stream-layout {
   height: 100%;
 }
 
