@@ -501,3 +501,7 @@
 .oled-mode .multi-tile {
   background: #000;
 }
+
+.oled-mode .multi-stream-bar {
+  background: #000;
+}
