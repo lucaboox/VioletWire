@@ -46,6 +46,7 @@ All notable changes to VioletWire are documented in this file.
 
 - Keep the Native player selected for offline channels, with VioletWire's own offline state and Retry control instead of replacing it with Twitch's Standard offline page.
 - Removed the stray status dot from the Native offline screen and made its loading spinner easier to see.
+- Keep the known channel avatar in the player toolbar while metadata loads, and label offline channels simply as “Offline.”
 - Treat a GitHub release that is temporarily missing `latest.yml` while its
   assets are still uploading as a non-error update state instead of displaying
   an alarming updater failure.
@@ -53,10 +54,6 @@ All notable changes to VioletWire are documented in this file.
   notes instead of briefly displaying a stale cached changelog.
 - Ensure an explicit fresh changelog request cannot be satisfied by an
   in-flight cached request from app startup.
-- Keep offline channels on the standard offline surface instead of falling
-  back to the legacy Native player and leaving Native controls above it.
-- Automatically reload the Standard player when the watched offline channel
-  becomes live again.
 - Reliably detect offline channels even when Streamlink exits without any
   diagnostic output, so they stay on the offline surface instead of showing an
   "Embedded Native unavailable" notice and falling back to the window-hosted

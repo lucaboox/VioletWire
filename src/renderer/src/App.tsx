@@ -2053,6 +2053,14 @@ export function App() {
     !!streamMetadata &&
     streamMetadata.login.toLowerCase() === activeChannel.toLowerCase() &&
     !streamMetadata.isLive;
+  const activeFollowedChannel = activeChannel
+    ? followedChannels.find((channel) => channel.login.toLowerCase() === activeChannel.toLowerCase())
+    : undefined;
+  const toolbarProfileImage = streamMetadata?.profileImageUrl || activeFollowedChannel?.profileImageUrl;
+  const toolbarTitle =
+    streamMetadata?.title ??
+    activeFollowedChannel?.title ??
+    (streamMetadata && !streamMetadata.isLive ? "Offline" : "Loading channel…");
 
   function renderFollowedChannel(channel: FollowedChannel) {
     return (
@@ -2406,10 +2414,8 @@ export function App() {
               >
                 <ChevronLeft size={25} />
               </button>
-              {streamMetadata?.profileImageUrl ? (
-                <img className="stream-avatar" alt="" src={streamMetadata.profileImageUrl} />
-              ) : (
-                <div className="live-dot" />
+              {toolbarProfileImage && (
+                <img className="stream-avatar" alt="" src={toolbarProfileImage} />
               )}
               {streamMetadata?.isLive && (
                 <div className="toolbar-stream-stats">
@@ -2427,11 +2433,8 @@ export function App() {
               )}
               <div className="channel-identity">
                 <div>
-                  <span className="stream-title" title={streamMetadata?.title}>
-                    {streamMetadata?.title ??
-                      (activeMode === "native"
-                        ? "Native playback · experimental"
-                        : "Official Twitch playback")}
+                  <span className="stream-title" title={toolbarTitle}>
+                    {toolbarTitle}
                   </span>
                   <div className="channel-name-line">
                     <strong>{streamMetadata?.displayName ?? activeChannel}</strong>
