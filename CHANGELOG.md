@@ -53,6 +53,8 @@ All notable changes to VioletWire are documented in this file.
   in-flight cached request from app startup.
 - Keep offline channels on the standard offline surface instead of falling
   back to the legacy Native player and leaving Native controls above it.
+- Automatically reload the Standard player when the watched offline channel
+  becomes live again.
 - Reliably detect offline channels even when Streamlink exits without any
   diagnostic output, so they stay on the offline surface instead of showing an
   "Embedded Native unavailable" notice and falling back to the window-hosted

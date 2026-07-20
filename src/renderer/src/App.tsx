@@ -530,6 +530,8 @@ export function App() {
   const [activeMode, setActiveMode] = useState<PlayerMode | null>(null);
   const [activeNativeBackend, setActiveNativeBackend] =
     useState<NativeRenderBackend | null>(null);
+  const [standardPlayerReloadNonce, setStandardPlayerReloadNonce] = useState(0);
+  const standardPlayerWasOffline = useRef<boolean | null>(null);
   // Twitch-style floating mini player: the texture session keeps playing in a
   // small draggable corner canvas while the user browses other sections.
   const [miniPlayerActive, setMiniPlayerActive] = useState(false);
@@ -1008,6 +1010,23 @@ export function App() {
       cancelled = true;
     };
   }, [activeChannel, authState.status]);
+
+  // If Native fell back to Twitch's Standard offline surface, refresh that
+  // iframe as soon as the normal metadata poll observes the channel becoming
+  // live. The ref prevents routine polling from restarting a healthy player.
+  useEffect(() => {
+    if (!activeChannel || activeMode !== "official") {
+      standardPlayerWasOffline.current = null;
+      return;
+    }
+    if (!streamMetadata) return;
+    const wasOffline = standardPlayerWasOffline.current === false;
+    standardPlayerWasOffline.current = streamMetadata.isLive;
+    if (wasOffline && streamMetadata.isLive) {
+      setStandardPlayerReloadNonce((current) => current + 1);
+      setNotice(`${streamMetadata.displayName ?? activeChannel} is live. Reloading Twitch playback.`);
+    }
+  }, [activeChannel, activeMode, streamMetadata]);
 
   const chatHistoryBoundary = chatMessages.reduce(
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
@@ -2615,6 +2634,7 @@ export function App() {
                       allow="autoplay; fullscreen; picture-in-picture"
                       allowFullScreen
                       className="standard-player-frame"
+                      key={`standard-player:${activeChannel}:${standardPlayerReloadNonce}`}
                       sandbox="allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
                       src={`https://player.twitch.tv/?channel=${encodeURIComponent(activeChannel)}&parent=${encodeURIComponent(window.location.hostname)}&autoplay=true&muted=false`}
                       title={`Official Twitch player for ${activeChannel}`}
