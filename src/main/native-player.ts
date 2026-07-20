@@ -266,7 +266,9 @@ export class NativePlayer {
         if (output.length < 32_768) output += chunk.toString();
       });
       process.on("error", () => finish([{ value: "best", label: "Auto" }]));
-      process.on("exit", () => finish(parseStreamlinkQualityOutput(output)));
+      // "close" waits for stdout to drain; "exit" can fire with the quality
+      // list still buffered, truncating the parsed options.
+      process.on("close", () => finish(parseStreamlinkQualityOutput(output)));
     });
     this.qualityCache.set(cacheKey, {
       expiresAt: Date.now() + 5 * 60_000,

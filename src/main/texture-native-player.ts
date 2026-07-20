@@ -484,10 +484,16 @@ export class TextureNativePlayer {
             .find((line) => /^https?:\/\//i.test(line));
           if (url) resolve(url);
           else {
+            const details = redactSensitivePlaybackText(errorOutput.trim());
+            // Streamlink can exit non-zero with no stderr at all for an offline
+            // channel (environment-dependent), in which case there is no "No
+            // playable streams" text to recognize. A resolve that yields no URL
+            // is, for `--stream-url`, effectively always an unavailable stream,
+            // so classify it as offline unless streamlink handed us a concrete
+            // error to surface instead.
             reject(
               new Error(
-                redactSensitivePlaybackText(errorOutput.trim()) ||
-                  "Streamlink did not return a playable URL.",
+                details || "No playable streams found: the channel appears to be offline.",
               ),
             );
           }
@@ -504,9 +510,19 @@ export class TextureNativePlayer {
         if (errorOutput.length < 16_384) errorOutput += chunk.toString();
       });
       child.on("error", (error) => finish(error));
-      child.on("exit", (code) => {
-        if (code === 0) finish();
-        else finish(new Error(errorOutput.trim() || `Streamlink exited with code ${code}.`));
+      // "close" (not "exit") fires only after stdout/stderr are fully drained,
+      // so a slow final stderr chunk is not missed. When streamlink exits
+      // non-zero with a concrete message, surface it; when it exits non-zero
+      // with nothing (some environments do this for offline channels), fall
+      // through to finish()'s no-URL branch, which reports it as offline rather
+      // than a bare "exited with code N" that the caller can't recognize.
+      child.on("close", (code) => {
+        if (code === 0) {
+          finish();
+          return;
+        }
+        const details = redactSensitivePlaybackText(errorOutput.trim());
+        finish(details ? new Error(details) : undefined);
       });
     });
   }

@@ -123,6 +123,7 @@ input {
   pointer-events: none;
 }
 
+
 .native-video-chat {
   --overlay-scroll-track: #17171b;
   position: absolute;
@@ -1129,11 +1130,11 @@ input {
   right: 0;
   left: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-end;
   gap: 4px;
-  height: 30px;
-  padding: 0 6px 0 26px;
+  height: 42px;
+  padding: 6px 6px 0 26px;
   cursor: move;
   opacity: 0;
   transition: opacity 120ms ease;
@@ -1205,7 +1206,7 @@ input {
   right: 12px;
   display: grid;
   width: 30px;
-  height: 25px;
+  height: 30px;
   padding: 0;
   place-items: center;
   border: 1px solid rgb(255 255 255 / 18%);
@@ -1223,8 +1224,9 @@ input {
 
 .native-video-chat-settings {
   position: absolute;
-  top: 37px;
-  right: 0;
+  z-index: 10;
+  top: 42px;
+  right: 6px;
   width: 280px;
   padding: 15px;
   border: 1px solid #45404b;

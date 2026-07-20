@@ -2,6 +2,9 @@ import { z } from "zod";
 import { chatHistoryLimitSchema } from "./chat";
 import { playerModeSchema } from "./player";
 
+export const mentionSoundIdSchema = z.enum(["ping", "chime", "pop", "knock"]);
+export type MentionSoundId = z.infer<typeof mentionSoundIdSchema>;
+
 export const appPreferencesSchema = z.object({
   preferredPlayerMode: playerModeSchema,
   experimentalTexturePlayer: z.boolean(),
@@ -11,6 +14,10 @@ export const appPreferencesSchema = z.object({
   chatEmoteSize: z.number().int().min(18).max(48),
   chatDeletedMessageStyle: z.enum(["placeholder", "dimmed"]),
   chatOnLeft: z.boolean(),
+  // How long the native player controls stay visible before auto-hiding, in
+  // milliseconds (1s–10s).
+  controlsHideDelay: z.number().int().min(1000).max(10000),
+  sidebarCollapsed: z.boolean(),
   chatSidebarWidth: z.number().int().min(300).max(620),
   chatOverlayOpacity: z.number().int().min(25).max(100),
   // Overlay chat geometry, relative to the video area. `placed` stays false
@@ -22,7 +29,8 @@ export const appPreferencesSchema = z.object({
   chatOverlayWidth: z.number().int().min(280).max(560),
   chatOverlayHeight: z.number().int().min(200).max(1000),
   mentionSoundEnabled: z.boolean(),
-  mentionSoundVolume: z.number().int().min(0).max(100),
+  mentionSoundVolume: z.number().int().min(0).max(200),
+  mentionSoundId: mentionSoundIdSchema,
   oledMode: z.boolean(),
   audioCompression: z.boolean(),
   // These live here rather than in localStorage: the packaged renderer is
@@ -48,6 +56,8 @@ export const defaultAppPreferences: AppPreferences = {
   chatEmoteSize: 27,
   chatDeletedMessageStyle: "placeholder",
   chatOnLeft: false,
+  controlsHideDelay: 5000,
+  sidebarCollapsed: false,
   chatSidebarWidth: 384,
   chatOverlayOpacity: 88,
   chatOverlayPlaced: false,
@@ -56,7 +66,8 @@ export const defaultAppPreferences: AppPreferences = {
   chatOverlayWidth: 370,
   chatOverlayHeight: 440,
   mentionSoundEnabled: false,
-  mentionSoundVolume: 70,
+  mentionSoundVolume: 100,
+  mentionSoundId: "ping",
   oledMode: false,
   audioCompression: false,
   lastSeenChangelogVersion: "",

@@ -19,12 +19,28 @@ All notable changes to VioletWire are documented in this file.
   top bar to reposition it, drag the top-left grip to resize it (280–560
   wide, 200–1000 tall), and its position and size are clamped to the video
   area and remembered across sessions. Double-click to reset.
+- Added a Settings control for how long the Native player controls stay
+  visible before auto-hiding, adjustable from 1 to 10 seconds and saved
+  across sessions.
+- Added a four-sound mention alert picker (Ping, Chime, Pop, Knock) with a
+  preview button, and raised the mention volume ceiling to 200% (default
+  100%).
+- Added the ability to collapse the followed-channels sidebar to icons.
 
 ### Improvements
 
 - Moved the Native live indicator from a fixed corner into the control bar,
   left of the quality button, so it no longer sits underneath the overlay
   chat, and restyled it as a transparent label with a red live dot.
+- Hide the mouse cursor over the Native player once the controls auto-hide in
+  windowed mode as well as fullscreen, and hide the controls immediately when
+  the pointer leaves the video for chat instead of waiting out the timer.
+- Made the "Show stream chat" button match the "Hide chat" button size so the
+  control no longer changes size when toggled.
+- Open the emote picker at the user's saved size immediately instead of
+  briefly showing the default size and then resizing.
+- Made the pop and knock mention sounds noticeably louder so they are audible
+  on small speakers.
 
 ### Fixes
 
@@ -37,6 +53,25 @@ All notable changes to VioletWire are documented in this file.
   in-flight cached request from app startup.
 - Keep offline channels on the standard offline surface instead of falling
   back to the legacy Native player and leaving Native controls above it.
+- Reliably detect offline channels even when Streamlink exits without any
+  diagnostic output, so they stay on the offline surface instead of showing an
+  "Embedded Native unavailable" notice and falling back to the window-hosted
+  Native player.
+- Read Streamlink's output on process close rather than exit so resolved
+  stream URLs, quality lists, and offline error messages are captured
+  completely instead of being intermittently truncated.
+- Show a clear "stream ended" state over the Native player when a channel goes
+  offline mid-broadcast, instead of freezing on the last frame, and recover
+  automatically if the channel goes live again.
+- Fixed the Native overlay chat settings so the panel is no longer part of the
+  draggable title bar (settings stay adjustable), gave its Hide/Settings
+  buttons top spacing, stopped clicks in the divider gaps above toggles from
+  flipping them, and centered the toggle knobs so they no longer drift lower in
+  fullscreen.
+- Kept long chat tooltips on-screen without wrapping their text awkwardly near
+  the window edge.
+- Fixed the top-bar alignment when chat is placed on the left so the
+  followed-channels header lines up with the account bar.
 
 ## [0.3.2-alpha.3] - 2026-07-19
 

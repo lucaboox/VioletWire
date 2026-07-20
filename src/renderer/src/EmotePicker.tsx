@@ -100,6 +100,27 @@ function clampSize(size: { width: number; height: number }) {
   };
 }
 
+// The saved picker size lives in the main-process preferences file, so it can
+// only be read asynchronously — but the picker mounts synchronously the moment
+// it opens. Without a warm value it would open at the default and then resize,
+// a visible flash. Warm this module-level cache once at startup (long before
+// the user first opens the picker) and keep it current on every change, so each
+// open starts at the right size.
+let cachedPickerSize = {
+  width: defaultAppPreferences.emotePickerWidth,
+  height: defaultAppPreferences.emotePickerHeight,
+};
+
+void window.desktop.preferences
+  .getOrMigrate()
+  .then((preferences) => {
+    cachedPickerSize = {
+      width: preferences.emotePickerWidth,
+      height: preferences.emotePickerHeight,
+    };
+  })
+  .catch(() => undefined);
+
 function providerLabel(provider: Provider): string {
   if (provider === "favorites") return "Favorites";
   if (provider === "twitch") return "Twitch";
@@ -133,7 +154,7 @@ export function EmotePicker({
   const [provider, setProvider] = useState<Provider>("7tv");
   const [query, setQuery] = useState("");
   const [favorites, setFavorites] = useState(readFavorites);
-  const [size, setSize] = useState(() => clampSize(readSize()));
+  const [size, setSize] = useState(() => clampSize(cachedPickerSize));
   const scrollHost = useRef<HTMLDivElement>(null);
   const sectionHosts = useRef(new Map<string, HTMLElement>());
   const resizing = useRef(false);
@@ -149,10 +170,11 @@ export function EmotePicker({
       if (disposed) return;
       setFavorites(new Set(preferences.emoteFavorites));
       if (!resizing.current) {
-        setSize(clampSize({
+        cachedPickerSize = {
           width: preferences.emotePickerWidth,
           height: preferences.emotePickerHeight,
-        }));
+        };
+        setSize(clampSize(cachedPickerSize));
       }
     };
     const removeListener = window.desktop.preferences.onChanged(apply);
@@ -355,6 +377,7 @@ export function EmotePicker({
       window.removeEventListener("pointerup", stop);
       resizing.current = false;
       setSize((current) => {
+        cachedPickerSize = { width: current.width, height: current.height };
         void window.desktop.preferences
           .update({
             emotePickerWidth: Math.round(current.width),

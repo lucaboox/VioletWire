@@ -65,7 +65,7 @@ import type {
   PlaybackSessionState,
 } from "../../shared/twitch";
 import type { EmoteSetResult } from "../../shared/emotes";
-import type { AppPreferences } from "../../shared/preferences";
+import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
 import type { EmoteProvider, ProviderEmote } from "../../shared/emotes";
 import type {
   ChatBadgeAsset,
@@ -98,7 +98,7 @@ import {
   MentionSoundControls,
 } from "./ChatSettingsControls";
 import { withoutRedundantReplyMention } from "./chat-display";
-import { playMentionPing } from "./mention-sound";
+import { playMentionSound } from "./mention-sound";
 import { renderProviderText } from "./ProviderEmoteText";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
@@ -423,6 +423,7 @@ export function App() {
   const [theaterMode, setTheaterMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [nativeControlsVisible, setNativeControlsVisible] = useState(true);
+  const [controlsHideDelay, setControlsHideDelay] = useState(NATIVE_CONTROLS_HIDE_DELAY);
   const [notice, setNotice] = useState<string | null>(null);
   // The real version arrives from the main process via updates.getStatus();
   // an empty placeholder avoids hardcoding a release version in the renderer.
@@ -488,6 +489,7 @@ export function App() {
   const [chatOnLeft, setChatOnLeft] = useState(
     () => window.localStorage.getItem("glint.chat.onLeft") === "true",
   );
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatSidebarWidth, setChatSidebarWidth] = useState(384);
   const playerPageRef = useRef<HTMLElement>(null);
   const chatResizeState = useRef<{ layoutLeft: number; layoutRight: number } | null>(null);
@@ -497,7 +499,8 @@ export function App() {
     return Number.isFinite(stored) && stored >= 25 && stored <= 100 ? stored : 88;
   });
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
-  const [mentionSoundVolume, setMentionSoundVolume] = useState(70);
+  const [mentionSoundVolume, setMentionSoundVolume] = useState(100);
+  const [mentionSoundId, setMentionSoundId] = useState<MentionSoundId>("ping");
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
@@ -568,7 +571,12 @@ export function App() {
   const chatHost = useRef<HTMLDivElement>(null);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
-  const mentionSettings = useRef({ enabled: false, login: "", volume: 70 });
+  const mentionSettings = useRef<{
+    enabled: boolean;
+    login: string;
+    volume: number;
+    soundId: MentionSoundId;
+  }>({ enabled: false, login: "", volume: 70, soundId: "ping" });
 
   // Fires for every arriving message before batching; used only for the
   // mention alert. The feed engine (batching, scroll/pause, trimming) is
@@ -580,7 +588,7 @@ export function App() {
       !message.historical &&
       messageMentionsLogin(message, mention.login)
     ) {
-      playMentionPing(mention.volume);
+      playMentionSound(mention.soundId, mention.volume);
     }
   }, []);
   const {
@@ -640,9 +648,20 @@ export function App() {
     }
     nativeControlsTimer.current = window.setTimeout(
       () => setNativeControlsVisible(false),
-      NATIVE_CONTROLS_HIDE_DELAY,
+      controlsHideDelay,
     );
-  }, [activeChannel, activeMode, selectedChatUser]);
+  }, [activeChannel, activeMode, selectedChatUser, controlsHideDelay]);
+
+  // Twitch-style: the controls belong to the video, so as soon as the pointer
+  // leaves the player surface (onto chat, the toolbar, or off-window) they hide
+  // immediately rather than waiting out the auto-hide delay.
+  const hideNativeControls = useCallback(() => {
+    if (nativeControlsTimer.current !== null) {
+      window.clearTimeout(nativeControlsTimer.current);
+      nativeControlsTimer.current = null;
+    }
+    setNativeControlsVisible(false);
+  }, []);
 
   useEffect(() => {
     document.title = activeChannel
@@ -814,10 +833,13 @@ export function App() {
       setChatEmoteSize(preferences.chatEmoteSize);
       setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
       setChatOnLeft(preferences.chatOnLeft);
+      setControlsHideDelay(preferences.controlsHideDelay);
+      setSidebarCollapsed(preferences.sidebarCollapsed);
       setChatSidebarWidth(preferences.chatSidebarWidth);
       setChatOpacity(preferences.chatOverlayOpacity);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
       setMentionSoundVolume(preferences.mentionSoundVolume);
+      setMentionSoundId(preferences.mentionSoundId);
       setOledMode(preferences.oledMode);
       setLastSeenChangelogVersion(preferences.lastSeenChangelogVersion);
       setPreferencesReady(true);
@@ -847,10 +869,13 @@ export function App() {
           chatEmoteSize,
           chatDeletedMessageStyle,
           chatOnLeft,
+          controlsHideDelay,
+          sidebarCollapsed,
           chatSidebarWidth,
           chatOverlayOpacity: chatOpacity,
           mentionSoundEnabled,
           mentionSoundVolume,
+          mentionSoundId,
           oledMode,
         })
         .catch(() => undefined);
@@ -862,11 +887,14 @@ export function App() {
     chatEmoteSize,
     chatDeletedMessageStyle,
     chatOnLeft,
+    controlsHideDelay,
+    sidebarCollapsed,
     chatSidebarWidth,
     chatOpacity,
     chatTimestamps,
     mentionSoundEnabled,
     mentionSoundVolume,
+    mentionSoundId,
     oledMode,
     preferredMode,
     experimentalTexturePlayer,
@@ -886,8 +914,9 @@ export function App() {
       enabled: mentionSoundEnabled,
       login: viewerLogin,
       volume: mentionSoundVolume,
+      soundId: mentionSoundId,
     };
-  }, [mentionSoundEnabled, mentionSoundVolume, viewerLogin]);
+  }, [mentionSoundEnabled, mentionSoundVolume, mentionSoundId, viewerLogin]);
 
   useEffect(() => window.desktop.chat.onState(setChatConnectionState), []);
 
@@ -1381,7 +1410,9 @@ export function App() {
       void window.desktop.twitch.getStreamMetadata(activeChannel).then((metadata) => {
         if (!cancelled) setStreamMetadata(metadata);
       }).catch(() => undefined);
-    }, 60_000);
+      // 30s keeps the "stream ended" detection reasonably prompt without
+      // hammering Helix; mpv itself won't reliably report a live stream ending.
+    }, 30_000);
     return () => {
       cancelled = true;
       window.clearInterval(refresh);
@@ -1398,7 +1429,7 @@ export function App() {
 
     nativeControlsTimer.current = window.setTimeout(
       () => setNativeControlsVisible(false),
-      NATIVE_CONTROLS_HIDE_DELAY,
+      controlsHideDelay,
     );
     return () => {
       if (nativeControlsTimer.current !== null) {
@@ -1406,7 +1437,7 @@ export function App() {
         nativeControlsTimer.current = null;
       }
     };
-  }, [activeChannel, activeMode]);
+  }, [activeChannel, activeMode, controlsHideDelay]);
 
   useEffect(() => {
     if (!notice) return;
@@ -2012,19 +2043,31 @@ export function App() {
     [followedChannels],
   );
 
+  // A live native stream that ends usually leaves mpv stalled on the HLS
+  // playlist rather than emitting EOF, so the canvas freezes on the last frame
+  // with no state change. The reliable "it ended" signal is the Twitch metadata
+  // poll flipping isLive to false for the channel we're actually watching.
+  const nativeStreamOffline =
+    activeMode === "native" &&
+    !!activeChannel &&
+    !!streamMetadata &&
+    streamMetadata.login.toLowerCase() === activeChannel.toLowerCase() &&
+    !streamMetadata.isLive;
+
   function renderFollowedChannel(channel: FollowedChannel) {
     return (
       <button
-        className="followed-channel"
+        className={channel.isLive ? "followed-channel" : "followed-channel offline"}
         key={channel.id}
         onClick={() => void watchChannel(channel.login)}
         onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
         onMouseLeave={cancelPreresolve}
-        title={channel.displayName}
+        title={sidebarCollapsed ? channel.displayName : undefined}
         type="button"
       >
         <span className="channel-avatar">
           <img alt="" src={channel.profileImageUrl} />
+          {channel.isLive && <i className="channel-live-dot" aria-hidden="true" />}
         </span>
         <span className="followed-copy">
           <strong>{channel.displayName}</strong>
@@ -2045,6 +2088,7 @@ export function App() {
         "app-shell",
         oledMode ? "oled-mode" : "",
         chatOnLeft ? "chat-left" : "",
+        sidebarCollapsed ? "sidebar-collapsed" : "",
         theaterMode ? "theater-mode" : "",
         fullscreen ? "fullscreen-mode" : "",
         fullscreen && !nativeControlsVisible ? "controls-hidden" : "",
@@ -2069,7 +2113,20 @@ export function App() {
         <section className="followed-rail" aria-labelledby="followed-heading">
           <div className="rail-heading">
             <span id="followed-heading">Followed channels</span>
-            <Users size={15} aria-hidden="true" />
+            <button
+              aria-label={sidebarCollapsed ? "Expand followed channels" : "Collapse followed channels"}
+              aria-pressed={sidebarCollapsed}
+              className="sidebar-collapse-toggle"
+              onClick={() => setSidebarCollapsed((current) => !current)}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              type="button"
+            >
+              {(sidebarCollapsed ? !chatOnLeft : chatOnLeft) ? (
+                <ChevronRight size={16} />
+              ) : (
+                <ChevronLeft size={16} />
+              )}
+            </button>
           </div>
           <div className="followed-list">
             {liveFollowedChannels.length > 0 && (
@@ -2313,8 +2370,15 @@ export function App() {
               const previous = lastPlayerPointerPosition.current;
               if (previous?.x === event.clientX && previous.y === event.clientY) return;
               lastPlayerPointerPosition.current = { x: event.clientX, y: event.clientY };
-              revealNativeControls();
+              const overVideo =
+                event.target instanceof Element && event.target.closest(".video-column");
+              if (overVideo) {
+                revealNativeControls();
+              } else {
+                hideNativeControls();
+              }
             }}
+            onMouseLeave={hideNativeControls}
             onWheel={(event) => {
               const target = event.target;
               if (
@@ -2532,7 +2596,15 @@ export function App() {
                   {chatOnLeft ? <ChevronRight size={19} /> : <ChevronLeft size={19} />}
                 </button>
               )}
-              <div className={activeMode === "native" ? "video-column native" : "video-column"}>
+              <div
+                className={[
+                  "video-column",
+                  activeMode === "native" ? "native" : "",
+                  activeMode === "native" && !nativeControlsVisible ? "controls-hidden" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
                 <div
                   className="player-host"
                   ref={playerHost}
@@ -2570,27 +2642,36 @@ export function App() {
                       />
                     </>
                   )}
-                  {activeMode === "native" && nativeState.status !== "playing" && (
+                  {activeMode === "native" &&
+                    (nativeState.status !== "playing" || nativeStreamOffline) && (
                     <div className="native-player-placeholder">
-                      <span className={`native-status-orb ${nativeState.status}`} />
+                      <span
+                        className={`native-status-orb ${
+                          nativeStreamOffline ? "offline" : nativeState.status
+                        }`}
+                      />
                       <strong>
-                        {nativeState.error === "Stream is offline."
-                          ? "Stream offline"
-                          : nativeState.status === "error"
-                            ? "Native player could not start"
-                            : nativeState.transition?.kind === "quality"
-                              ? `Switching to ${formatQualityLabel(nativeState.transition.detail as NativeQualityValue)}`
-                              : nativeState.transition?.kind === "channel"
-                                ? `Loading ${streamMetadata?.displayName ?? activeChannel}`
-                                : "Starting native player"}
+                        {nativeStreamOffline
+                          ? `${streamMetadata?.displayName ?? activeChannel} has ended the stream`
+                          : nativeState.error === "Stream is offline."
+                            ? "Stream offline"
+                            : nativeState.status === "error"
+                              ? "Native player could not start"
+                              : nativeState.transition?.kind === "quality"
+                                ? `Switching to ${formatQualityLabel(nativeState.transition.detail as NativeQualityValue)}`
+                                : nativeState.transition?.kind === "channel"
+                                  ? `Loading ${streamMetadata?.displayName ?? activeChannel}`
+                                  : "Starting native player"}
                       </strong>
                       <p>
-                        {nativeState.error ??
-                          (nativeState.transition?.kind === "quality"
-                            ? "Reconnecting the stream at the new quality."
-                            : "Streamlink is resolving the Twitch stream and connecting it to mpv.")}
+                        {nativeStreamOffline
+                          ? "The channel is now offline. This will update automatically if they go live again."
+                          : (nativeState.error ??
+                            (nativeState.transition?.kind === "quality"
+                              ? "Reconnecting the stream at the new quality."
+                              : "Streamlink is resolving the Twitch stream and connecting it to mpv."))}
                       </p>
-                      {nativeState.status === "error" && (
+                      {nativeState.status === "error" && !nativeStreamOffline && (
                         <button onClick={() => void retryNativePlayer()} type="button">
                           <RotateCcw size={15} /> Retry
                         </button>
@@ -2670,7 +2751,9 @@ export function App() {
                             onChange={setMentionSoundEnabled}
                           />
                           <MentionSoundControls
+                            onSoundChange={setMentionSoundId}
                             onVolumeChange={setMentionSoundVolume}
+                            soundId={mentionSoundId}
                             volume={mentionSoundVolume}
                           />
                           <ChatToggleSetting
@@ -2767,7 +2850,9 @@ export function App() {
                             onChange={setMentionSoundEnabled}
                           />
                           <MentionSoundControls
+                            onSoundChange={setMentionSoundId}
                             onVolumeChange={setMentionSoundVolume}
+                            soundId={mentionSoundId}
                             volume={mentionSoundVolume}
                           />
                           <ChatToggleSetting
@@ -3423,6 +3508,28 @@ export function App() {
               </div>
               <div className="settings-card">
                 <div>
+                  <strong>Controls auto-hide delay</strong>
+                  <span>
+                    How long the player controls and cursor stay visible before hiding while
+                    a stream is playing.
+                  </span>
+                </div>
+                <label className="settings-slider">
+                  <span>{Math.round(controlsHideDelay / 1000)}s</span>
+                  <input
+                    aria-label="Controls auto-hide delay in seconds"
+                    max="10"
+                    min="1"
+                    onChange={(event) =>
+                      setControlsHideDelay(Number(event.target.value) * 1000)
+                    }
+                    type="range"
+                    value={Math.round(controlsHideDelay / 1000)}
+                  />
+                </label>
+              </div>
+              <div className="settings-card">
+                <div>
                   <strong>OLED mode</strong>
                   <span>Use true black backgrounds throughout VioletWire and its Native overlays.</span>
                 </div>
@@ -3811,6 +3918,28 @@ export function App() {
                     >
                       <span />
                     </button>
+                  </div>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Controls auto-hide delay</strong>
+                      <span>
+                        How long the player controls and cursor stay visible before hiding
+                        while a stream is playing.
+                      </span>
+                    </div>
+                    <label className="settings-slider">
+                      <span>{Math.round(controlsHideDelay / 1000)}s</span>
+                      <input
+                        aria-label="Controls auto-hide delay in seconds"
+                        max="10"
+                        min="1"
+                        onChange={(event) =>
+                          setControlsHideDelay(Number(event.target.value) * 1000)
+                        }
+                        type="range"
+                        value={Math.round(controlsHideDelay / 1000)}
+                      />
+                    </label>
                   </div>
                 </section>
                 <section>

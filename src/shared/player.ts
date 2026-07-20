@@ -156,7 +156,7 @@ export function presentNativePlaybackError(message: string): string {
 
 /** A normal channel state, not a failure of either Native render backend. */
 export function isNativeStreamUnavailable(message: string): boolean {
-  return /no playable streams found|stream is offline/i.test(message);
+  return /no playable streams|stream is offline|channel is offline/i.test(message);
 }
 
 export interface NativePlayerAvailability {

@@ -118,6 +118,9 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .settings-preview > span small { margin-top: 4px; color: #7f7f89; font-size: 9.5px; }
 .settings-stack { display: grid; gap: 9px; width: min(620px, 100%); margin-bottom: 10px; }
 .settings-card { display: flex; align-items: center; justify-content: space-between; gap: 22px; min-height: 64px; padding: 12px 14px; border: 1px solid #303037; border-radius: 10px; background: #151519; }
+.settings-slider { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; width: 200px; }
+.settings-slider span { flex: 0 0 auto; min-width: 26px; color: #d4d4d8; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.settings-slider input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: #7c3aed; cursor: pointer; }
 .settings-switch { position: relative; flex: 0 0 auto; width: 42px; height: 24px; padding: 0; border: 1px solid #3d3d45; border-radius: 999px; background: #25252b; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
 .settings-switch span { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #a1a1aa; transition: transform 140ms ease, background 140ms ease; }
 .settings-switch.active { border-color: #7c3aed; background: #4c1d95; }
@@ -414,6 +417,17 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-left main { grid-column: 1; grid-row: 1; }
 .chat-left .top-navigation { margin-left: 220px; }
 .chat-left .search-box { left: calc(50% + var(--sidebar-width) / 2); }
+/* With the followed sidebar on the right, its top would otherwise be a blank
+   band next to the account controls (which stop at the main column's edge).
+   Pin those controls to the true top-right corner and extend the top bar's
+   look across the sidebar's top, so the followed list cleanly starts below. */
+.chat-left .top-actions { position: fixed; z-index: 6; top: 0; right: 0; height: 68px; padding-right: 24px; }
+/* The main/sidebar divider is drawn only below the top bar (via ::after) so it
+   does not cut up through the continuous top-bar band (::before). */
+.chat-left .sidebar { position: relative; border-left: 0; }
+.chat-left .sidebar::before { content: ""; box-sizing: border-box; position: absolute; z-index: 1; top: 0; left: 0; right: 0; height: 68px; border-bottom: 1px solid #202024; background: #0d0d10f2; pointer-events: none; }
+.chat-left .sidebar::after { content: ""; position: absolute; z-index: 1; top: 68px; bottom: 0; left: 0; width: 1px; background: #242429; pointer-events: none; }
+.oled-mode.chat-left .sidebar::before { background: #000; }
 .chat-left .player-toolbar:not(.chat-collapsed) { grid-template-columns: var(--chat-sidebar-width, 384px) minmax(400px, 1fr); }
 .chat-left .player-toolbar:not(.chat-collapsed) .player-toolbar-main { order: 2; }
 .chat-left .player-toolbar:not(.chat-collapsed) .player-chat-actions { order: 1; border-right: 1px solid #28282e; border-left: 0; }
@@ -424,6 +438,12 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .viewer-layout.chat-collapsed { grid-template-columns: minmax(400px, 1fr); }
 .video-column { display: grid; grid-template-rows: minmax(300px, 1fr); min-width: 400px; min-height: 0; overflow: hidden; }
 .video-column.native { grid-template-rows: minmax(300px, 1fr); }
+/* Once the native controls auto-hide, hide the cursor over the whole video
+   area (canvas included) in windowed mode too — not just fullscreen. This sits
+   on the video column so it cascades over the sibling <canvas>, which is the
+   element actually under the pointer. Any pointer move re-reveals the controls,
+   dropping this class and restoring the cursor. */
+.video-column.native.controls-hidden { cursor: none; }
 .player-host { position: relative; min-width: 400px; min-height: 300px; overflow: hidden; isolation: isolate; background: #0e0e10; }
 .standard-player-frame { display: block; width: 100%; height: 100%; border: 0; background: #050506; }
 .native-texture-canvas { position: absolute; z-index: 0; display: block; width: 100%; height: 100%; inset: 0; object-fit: contain; background: #000; }
@@ -456,6 +476,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .native-player-placeholder button { display: flex; align-items: center; gap: 6px; margin-top: 14px; padding: 7px 11px; border: 1px solid #554067; border-radius: 7px; color: #e9d5ff; background: #2c1c38; cursor: pointer; font-size: 11px; }
 .native-status-orb { width: 12px; height: 12px; border: 2px solid #8b5cf6; border-right-color: transparent; border-radius: 50%; animation: native-spin .8s linear infinite; }
 .native-status-orb.error { border-color: #fb7185; animation: none; }
+.native-status-orb.offline { border-color: #71717a; border-right-color: #71717a; animation: none; }
 .chat-panel { display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; min-height: 0; max-height: 100%; overflow: hidden; contain: layout size; border-left: 1px solid #29292f; background: #0e0e10; }
 /* Drag-to-resize handle at the video/chat border, inside the chat panel (its
    overflow is hidden). A wide invisible hit area with a thin visible line at
@@ -689,19 +710,40 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .fullscreen-mode .player-toolbar { display: none; }
 .fullscreen-mode .viewer-layout { height: 100%; }
 .fullscreen-mode .chat-overlay-mode .chat-panel.overlay { top: 24px; right: 24px; bottom: 66px; width: min(390px, 30vw); }
-.fullscreen-mode.controls-hidden { cursor: none; }
 .fullscreen-mode.controls-hidden .chat-overlay-mode .chat-panel.overlay { bottom: 24px; }
 @keyframes native-spin { to { transform: rotate(360deg); } }
+
+/* Collapse toggle at the top of the followed rail. */
+.sidebar-collapse-toggle { display: grid; flex: 0 0 auto; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 6px; color: #9b9ba6; background: transparent; cursor: pointer; }
+.sidebar-collapse-toggle:hover { color: #e4e4e7; background: #1c1c21; }
+/* Live dot on the avatar, shown only when the sidebar is an icon rail so live
+   channels stay recognizable without their names. */
+.channel-live-dot { position: absolute; right: -1px; bottom: -1px; display: none; width: 11px; height: 11px; border: 2px solid #111114; border-radius: 50%; background: #eb4057; }
+.oled-mode .channel-live-dot { border-color: #000; }
+
+/* Manual collapse to an icon rail: mirrors the responsive narrow layout below,
+   toggled by preference instead of window width. */
+.app-shell.sidebar-collapsed { --sidebar-width: 68px; }
+.sidebar-collapsed .brand { justify-content: center; padding-inline: 0; }
+.sidebar-collapsed .brand > span:last-child, .sidebar-collapsed .rail-heading span, .sidebar-collapsed .followed-copy, .sidebar-collapsed .viewer-count, .sidebar-collapsed .followed-group-label, .sidebar-collapsed .followed-empty strong, .sidebar-collapsed .followed-empty > span, .sidebar-collapsed .settings-link span, .sidebar-collapsed .account-copy { display: none; }
+.sidebar-collapsed .rail-heading { justify-content: center; padding-inline: 0; }
+.sidebar-collapsed .followed-empty { margin-inline: 2px; padding: 10px 0; border: 0; background: transparent; }
+.sidebar-collapsed .followed-empty .empty-orbit { margin: 0; }
+.sidebar-collapsed .followed-channel, .sidebar-collapsed .settings-link, .sidebar-collapsed .account-status { justify-content: center; padding-inline: 0; }
+.sidebar-collapsed .followed-channel.offline { opacity: .5; }
+.sidebar-collapsed .channel-live-dot { display: block; }
 
 @media (max-width: 1080px) {
   .app-shell { --sidebar-width: 72px; }
   .brand { justify-content: center; padding-inline: 0; }
   .chat-left .top-navigation { margin-left: 58px; }
-  .brand > span:last-child, .rail-heading span, .followed-copy, .viewer-count, .followed-empty strong, .followed-empty > span, .settings-link span, .account-copy { display: none; }
+  .brand > span:last-child, .rail-heading span, .followed-copy, .viewer-count, .followed-group-label, .followed-empty strong, .followed-empty > span, .settings-link span, .account-copy { display: none; }
   .rail-heading { justify-content: center; padding-inline: 0; }
   .followed-empty { margin-inline: 2px; padding: 10px 0; border: 0; background: transparent; }
   .followed-empty .empty-orbit { margin: 0; }
   .followed-channel, .settings-link, .account-status { justify-content: center; padding-inline: 0; }
+  .followed-channel.offline { opacity: .5; }
+  .channel-live-dot { display: block; }
   .topbar { grid-template-columns: auto minmax(220px, 1fr) auto; padding-inline: 15px; gap: 12px; }
   .top-nav-item { padding-inline: 8px; }
   .home-page { grid-template-columns: 1fr; }

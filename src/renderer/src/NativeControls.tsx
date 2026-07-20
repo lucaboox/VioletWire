@@ -53,7 +53,7 @@ import type {
   EmoteSetResult,
   ProviderEmote,
 } from "../../shared/emotes";
-import type { AppPreferences } from "../../shared/preferences";
+import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
 import { getChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
@@ -403,7 +403,8 @@ export function NativeControls({
   const [chatDeletedMessageStyle, setChatDeletedMessageStyle] =
     useState<AppPreferences["chatDeletedMessageStyle"]>("placeholder");
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
-  const [mentionSoundVolume, setMentionSoundVolume] = useState(70);
+  const [mentionSoundVolume, setMentionSoundVolume] = useState(100);
+  const [mentionSoundId, setMentionSoundId] = useState<MentionSoundId>("ping");
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
@@ -482,7 +483,7 @@ export function NativeControls({
       }
       if (
         chatSettingsOpen &&
-        !target.closest(".native-video-chat-tools")
+        !target.closest(".native-video-chat-tools, .native-video-chat-settings")
       ) {
         setChatSettingsOpen(false);
       }
@@ -579,6 +580,7 @@ export function NativeControls({
       setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
       setMentionSoundVolume(preferences.mentionSoundVolume);
+      setMentionSoundId(preferences.mentionSoundId);
       setOledMode(preferences.oledMode);
       setAudioCompressionPreference(preferences.audioCompression);
       setPreferencesReady(true);
@@ -614,6 +616,7 @@ export function NativeControls({
           chatDeletedMessageStyle,
           mentionSoundEnabled,
           mentionSoundVolume,
+          mentionSoundId,
           audioCompression: audioCompressionPreference,
         })
         .catch(() => undefined);
@@ -629,6 +632,7 @@ export function NativeControls({
     chatTimestamps,
     mentionSoundEnabled,
     mentionSoundVolume,
+    mentionSoundId,
     preferencesReady,
   ]);
 
@@ -1126,80 +1130,88 @@ export function NativeControls({
             >
               <Settings size={16} />
             </button>
-            {chatSettingsOpen && (
-              <div className="native-video-chat-settings">
-                <strong>Chat settings</strong>
-                <label>
-                  <span>{chatOpacity}%</span>
-                  <input
-                    aria-label="Chat overlay opacity"
-                    max="100"
-                    min="25"
-                    onChange={(event) => setChatOpacity(Number(event.target.value))}
-                    type="range"
-                    value={chatOpacity}
-                  />
-                </label>
-                <ChatToggleSetting
-                  checked={chatTimestamps}
-                  label="Show timestamps"
-                  onChange={setChatTimestamps}
-                />
-                <ChatToggleSetting
-                  checked={mentionSoundEnabled}
-                  label="Mention sound"
-                  onChange={setMentionSoundEnabled}
-                />
-                <MentionSoundControls
-                  onVolumeChange={setMentionSoundVolume}
-                  volume={mentionSoundVolume}
-                />
-                <ChatToggleSetting
-                  checked={chatDeletedMessageStyle === "dimmed"}
-                  label="Dim deleted messages"
-                  onChange={(checked) =>
-                    setChatDeletedMessageStyle(
-                      checked ? "dimmed" : "placeholder",
-                    )
-                  }
-                />
-                <label>
-                  <span>Font size: {chatFontSize}px</span>
-                  <input
-                    aria-label="Chat font size"
-                    max="25"
-                    min="14"
-                    onChange={(event) => setChatFontSize(Number(event.target.value))}
-                    type="range"
-                    value={chatFontSize}
-                  />
-                </label>
-                <label>
-                  <span>Emote size: {chatEmoteSize}px</span>
-                  <input
-                    aria-label="Chat emote size"
-                    max="48"
-                    min="18"
-                    onChange={(event) => setChatEmoteSize(Number(event.target.value))}
-                    type="range"
-                    value={chatEmoteSize}
-                  />
-                </label>
-                <label>
-                  <span>History: {chatHistoryLimit}</span>
-                  <input
-                    aria-label="Chat history message count"
-                    max="100"
-                    min="20"
-                    onChange={(event) => setChatHistoryLimit(Number(event.target.value))}
-                    step="10"
-                    type="range"
-                    value={chatHistoryLimit}
-                  />
-                </label>
-              </div>
-            )}
           </div>
+          {chatSettingsOpen && (
+            // Rendered as a sibling of the tools bar, not a child: the tools bar
+            // is the drag surface, so nesting the panel there turned every
+            // slider and toggle into a move handle.
+            <div
+              className="native-video-chat-settings"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <strong>Chat settings</strong>
+              <label>
+                <span>{chatOpacity}%</span>
+                <input
+                  aria-label="Chat overlay opacity"
+                  max="100"
+                  min="25"
+                  onChange={(event) => setChatOpacity(Number(event.target.value))}
+                  type="range"
+                  value={chatOpacity}
+                />
+              </label>
+              <ChatToggleSetting
+                checked={chatTimestamps}
+                label="Show timestamps"
+                onChange={setChatTimestamps}
+              />
+              <ChatToggleSetting
+                checked={mentionSoundEnabled}
+                label="Mention sound"
+                onChange={setMentionSoundEnabled}
+              />
+              <MentionSoundControls
+                onSoundChange={setMentionSoundId}
+                onVolumeChange={setMentionSoundVolume}
+                soundId={mentionSoundId}
+                volume={mentionSoundVolume}
+              />
+              <ChatToggleSetting
+                checked={chatDeletedMessageStyle === "dimmed"}
+                label="Dim deleted messages"
+                onChange={(checked) =>
+                  setChatDeletedMessageStyle(
+                    checked ? "dimmed" : "placeholder",
+                  )
+                }
+              />
+              <label>
+                <span>Font size: {chatFontSize}px</span>
+                <input
+                  aria-label="Chat font size"
+                  max="25"
+                  min="14"
+                  onChange={(event) => setChatFontSize(Number(event.target.value))}
+                  type="range"
+                  value={chatFontSize}
+                />
+              </label>
+              <label>
+                <span>Emote size: {chatEmoteSize}px</span>
+                <input
+                  aria-label="Chat emote size"
+                  max="48"
+                  min="18"
+                  onChange={(event) => setChatEmoteSize(Number(event.target.value))}
+                  type="range"
+                  value={chatEmoteSize}
+                />
+              </label>
+              <label>
+                <span>History: {chatHistoryLimit}</span>
+                <input
+                  aria-label="Chat history message count"
+                  max="100"
+                  min="20"
+                  onChange={(event) => setChatHistoryLimit(Number(event.target.value))}
+                  step="10"
+                  type="range"
+                  value={chatHistoryLimit}
+                />
+              </label>
+            </div>
+          )}
           <div
             className={`native-video-chat-messages${
               chatAutoScroll ? "" : " scroll-paused"

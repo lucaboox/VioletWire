@@ -27,7 +27,7 @@
 
 .chat-toggle-track::after {
   position: absolute;
-  top: 2px;
+  top: 50%;
   left: 2px;
   width: 13px;
   height: 13px;
@@ -35,6 +35,10 @@
   background: #b7b7c0;
   box-shadow: 0 1px 3px #0008;
   content: "";
+  /* Center vertically with a transform rather than a fixed top offset: a fixed
+     px offset visibly drifts down when the overlay renders at a non-integer
+     scale (e.g. fullscreen DPR rounding). translateY keeps it centered. */
+  transform: translateY(-50%);
   transition: background 120ms ease, transform 120ms ease;
 }
 
@@ -45,7 +49,7 @@
 
 .chat-toggle-switch input:checked + .chat-toggle-track::after {
   background: white;
-  transform: translateX(15px);
+  transform: translate(15px, -50%);
 }
 
 .chat-toggle-switch input:focus-visible + .chat-toggle-track {
@@ -53,19 +57,81 @@
   outline-offset: 2px;
 }
 
+/* Sound picker, test, and volume read as one group with the "Mention sound"
+   toggle above them, so no dividing line between the toggle and these. */
 .mention-sound-controls {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: end;
-  gap: 10px;
-  padding-top: 9px;
-  border-top: 1px solid #34343b;
+  gap: 8px;
+  margin-top: 2px;
 }
 
+.mention-sound-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.mention-sound-picker {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 5px !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.mention-sound-picker > span {
+  color: #aaaab3;
+  font-size: 10px;
+}
+
+.mention-sound-picker select {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #454550;
+  border-radius: 6px;
+  color: #e4e4e7;
+  background: #232329;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.mention-sound-picker select:focus-visible {
+  outline: 2px solid #c4a1ff;
+  outline-offset: 1px;
+}
+
+/* Group the sound block from the next setting with a single top divider. */
 .mention-sound-controls + .chat-toggle-setting {
   margin-top: 10px;
   padding-top: 9px;
   border-top: 1px solid #34343b;
+}
+
+/* A toggle row is a <label>, so any padding on it is a live click target that
+   flips the checkbox — clicking the divider gap above the switch would toggle
+   it (most noticeable over the fullscreen overlay). Push the separating space
+   into margin (inert) and render the divider line inside that margin via a
+   pseudo-element, so only the switch and its text stay clickable. Wins over the
+   panels' `label + label` and `.mention-sound-controls +` divider rules. */
+.native-video-chat-settings .chat-toggle-setting,
+.chat-overlay-settings .chat-toggle-setting {
+  position: relative;
+  margin-top: 19px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.native-video-chat-settings .chat-toggle-setting::before,
+.chat-overlay-settings .chat-toggle-setting::before {
+  position: absolute;
+  top: -9px;
+  right: 0;
+  left: 0;
+  border-top: 1px solid #34343b;
+  content: "";
+  pointer-events: none;
 }
 
 .mention-sound-preview {
@@ -74,7 +140,7 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 0 9px;
+  padding: 0 11px;
   border: 1px solid #59416e;
   border-radius: 6px;
   color: #eee8f5;

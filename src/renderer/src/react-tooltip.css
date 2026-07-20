@@ -4,6 +4,10 @@
   display: grid;
   justify-items: center;
   gap: 5px;
+  /* Size to content, not to the space left of the viewport edge: a centered
+     fixed box near the right edge would otherwise collapse its width and wrap
+     short labels like "Settings". The JS clamp keeps the box on screen. */
+  width: max-content;
   max-width: min(320px, calc(100vw - 20px));
   padding: 7px 9px;
   border: 1px solid rgb(255 255 255 / 14%);
