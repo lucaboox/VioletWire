@@ -116,8 +116,14 @@ export class SevenTvService {
       const response = await fetch(url, {
         headers: { Accept: "application/json", "User-Agent": "VioletWire/0.1-alpha" },
       });
-      if (!response.ok) throw new Error(`7TV returned ${response.status}.`);
-      const providerEmotes = select(await response.json()).map((emote) => this.mapEmote(emote));
+      // A 404 at the per-channel route means the channel has no 7TV emote
+      // set. It is expected, and should behave exactly like an empty set.
+      if (!response.ok && !(response.status === 404 && cacheKey.startsWith("channel:"))) {
+        throw new Error(`7TV returned ${response.status}.`);
+      }
+      const providerEmotes = response.status === 404
+        ? []
+        : select(await response.json()).map((emote) => this.mapEmote(emote));
       const result: EmoteSetResult = {
         provider: "7tv",
         scope: cacheKey === "global" ? "global" : "channel",

@@ -72,12 +72,12 @@ export class ThirdPartyEmoteService {
   getFfzChannel(broadcasterId: string): Promise<EmoteSetResult> {
     const id = z.string().regex(/^\d+$/).parse(broadcasterId);
     return this.getSet(`ffz:channel:${id}`, "ffz", "channel", async () => {
-      const payload = ffzResponseSchema.parse(
-        await this.fetchJson(
-          `https://api.frankerfacez.com/v1/room/id/${encodeURIComponent(id)}`,
-          "FFZ",
-        ),
+      const response = await this.fetchChannelJson(
+        `https://api.frankerfacez.com/v1/room/id/${encodeURIComponent(id)}`,
+        "FFZ",
       );
+      if (response === null) return [];
+      const payload = ffzResponseSchema.parse(response);
       return Object.values(payload.sets).flatMap((set) =>
         set.emoticons.map((emote) => this.mapFfzEmote(emote)),
       );
@@ -100,12 +100,12 @@ export class ThirdPartyEmoteService {
   getBttvChannel(broadcasterId: string): Promise<EmoteSetResult> {
     const id = z.string().regex(/^\d+$/).parse(broadcasterId);
     return this.getSet(`bttv:v2:channel:${id}`, "bttv", "channel", async () => {
-      const payload = bttvChannelSchema.parse(
-        await this.fetchJson(
-          `https://api.betterttv.net/3/cached/users/twitch/${encodeURIComponent(id)}`,
-          "BetterTTV",
-        ),
+      const response = await this.fetchChannelJson(
+        `https://api.betterttv.net/3/cached/users/twitch/${encodeURIComponent(id)}`,
+        "BetterTTV",
       );
+      if (response === null) return [];
+      const payload = bttvChannelSchema.parse(response);
       return [...payload.channelEmotes, ...payload.sharedEmotes].map((emote) =>
         this.mapBttvEmote(emote),
       );
@@ -178,6 +178,22 @@ export class ThirdPartyEmoteService {
         "User-Agent": "VioletWire/0.1-alpha",
       },
     });
+    if (!response.ok) throw new Error(`${provider} returned ${response.status}.`);
+    return response.json();
+  }
+
+  // These APIs use 404 to mean that a valid Twitch channel simply has no
+  // emote set with that provider. Treat it as an empty, cacheable set rather
+  // than rejecting the IPC request and making an expected condition look like
+  // an Electron application error.
+  private async fetchChannelJson(url: string, provider: string): Promise<unknown | null> {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "VioletWire/0.1-alpha",
+      },
+    });
+    if (response.status === 404) return null;
     if (!response.ok) throw new Error(`${provider} returned ${response.status}.`);
     return response.json();
   }

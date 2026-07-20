@@ -44,6 +44,7 @@ All notable changes to VioletWire are documented in this file.
 
 ### Fixes
 
+- Treat expected 404 responses from 7TV, FrankerFaceZ, and BetterTTV channel-emote endpoints as an empty channel set instead of emitting Electron handler errors.
 - Keep the Native player selected for offline channels, with VioletWire's own offline state and Retry control instead of replacing it with Twitch's Standard offline page.
 - Removed the stray status dot from the Native offline screen and made its loading spinner easier to see.
 - Keep the known channel avatar in the player toolbar while metadata loads, and label offline channels simply as “Offline.”
