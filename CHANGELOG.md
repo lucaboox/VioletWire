@@ -4,6 +4,22 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2-alpha.6] - 2026-07-20
+
+### Additions
+
+- Added Multistream: watch up to four native streams at once in a grid. Toggle
+  it from the new Multistream button in the top bar, then add channels from
+  your live followed list or by name. Two streams stack vertically and three or
+  four use a 2×2 grid; tiles sit flush and theme to OLED mode.
+- Added multistream audio focus: only one stream plays sound at a time — click
+  a tile to move audio to it, and its bar marks the active stream.
+- Added per-tile multistream controls in each tile's hover bar: mute a stream
+  independently and change its resolution without affecting the others.
+- Added a tabbed Stream Chat for multistream with a tab per stream. Selecting a
+  tab, or giving a tile audio focus, switches the chat to that channel with the
+  full message rendering, emote picker, chat settings, and user cards.
+
 ## [0.3.2-alpha.5] - 2026-07-20
 
 ### Additions
