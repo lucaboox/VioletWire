@@ -58,6 +58,7 @@ import type {
   BrowseCategory,
   BrowseStream,
   FollowedChannel,
+  SearchChannelResult,
   TwitchSearchResults,
   StreamMetadata,
   TwitchAuthState,
@@ -415,6 +416,9 @@ export function App() {
   const [topSearchOpen, setTopSearchOpen] = useState(false);
   const [topSearchLoading, setTopSearchLoading] = useState(false);
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
+  const [activeChannelIdentity, setActiveChannelIdentity] = useState<
+    Pick<FollowedChannel, "login" | "displayName" | "profileImageUrl" | "title"> | undefined
+  >();
   const [subscriptionDrawerState, setSubscriptionDrawerState] =
     useState<ChannelActionWindowState>("closed");
   const [error, setError] = useState<string | null>(null);
@@ -663,11 +667,14 @@ export function App() {
     setNativeControlsVisible(false);
   }, []);
 
+  const activeChannelDisplayName =
+    streamMetadata?.displayName ?? activeChannelIdentity?.displayName ?? activeChannel;
+
   useEffect(() => {
     document.title = activeChannel
-      ? `${streamMetadata?.displayName ?? activeChannel} - VioletWire`
+      ? `${activeChannelDisplayName} - VioletWire`
       : "VioletWire";
-  }, [activeChannel, streamMetadata?.displayName]);
+  }, [activeChannel, activeChannelDisplayName]);
 
   useEffect(() => {
     window.desktop.player.setModalOpen(settingsOpen || topSearchOpen || changelogOpen);
@@ -1791,12 +1798,15 @@ export function App() {
     }
   }
 
-  function chooseSearchChannel(login: string) {
+  function chooseSearchChannel(channel: SearchChannelResult) {
     setTopSearchOpen(false);
-    void watchChannel(login);
+    void watchChannel(channel.login, channel);
   }
 
-  async function watchChannel(channel: string) {
+  async function watchChannel(
+    channel: string,
+    identity?: Pick<FollowedChannel, "login" | "displayName" | "profileImageUrl" | "title">,
+  ) {
     // Re-clicking the channel that is already playing must not restart or
     // reset anything (metadata, chat, player) — just surface the full player.
     if (activeChannel && activeChannel === channel.trim().toLowerCase()) {
@@ -1832,6 +1842,12 @@ export function App() {
     setChatVisible(true);
     setChatPresentation("side");
     setTheaterMode(false);
+    setActiveChannelIdentity(
+      identity ??
+        followedChannels.find(
+          (followedChannel) => followedChannel.login.toLowerCase() === channel.trim().toLowerCase(),
+        ),
+    );
     try {
       const savedPreferences = await window.desktop.preferences.getOrMigrate();
       if (generation !== watchChannelGeneration.current) return;
@@ -1866,6 +1882,7 @@ export function App() {
       if (generation !== watchChannelGeneration.current) return;
       const message = reason instanceof Error ? reason.message : String(reason);
       setActiveChannel(null);
+      setActiveChannelIdentity(undefined);
       setActiveMode(null);
       setActiveNativeBackend(null);
       setActiveSection(returnSection);
@@ -2053,13 +2070,10 @@ export function App() {
     !!streamMetadata &&
     streamMetadata.login.toLowerCase() === activeChannel.toLowerCase() &&
     !streamMetadata.isLive;
-  const activeFollowedChannel = activeChannel
-    ? followedChannels.find((channel) => channel.login.toLowerCase() === activeChannel.toLowerCase())
-    : undefined;
-  const toolbarProfileImage = streamMetadata?.profileImageUrl || activeFollowedChannel?.profileImageUrl;
+  const toolbarProfileImage = streamMetadata?.profileImageUrl || activeChannelIdentity?.profileImageUrl;
   const toolbarTitle =
     streamMetadata?.title ??
-    activeFollowedChannel?.title ??
+    activeChannelIdentity?.title ??
     (streamMetadata && !streamMetadata.isLive ? "Offline" : "Loading channel…");
 
   function renderFollowedChannel(channel: FollowedChannel) {
@@ -2067,7 +2081,7 @@ export function App() {
       <button
         className={channel.isLive ? "followed-channel" : "followed-channel offline"}
         key={channel.id}
-        onClick={() => void watchChannel(channel.login)}
+        onClick={() => void watchChannel(channel.login, channel)}
         onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
         onMouseLeave={cancelPreresolve}
         title={sidebarCollapsed ? channel.displayName : undefined}
@@ -2253,7 +2267,7 @@ export function App() {
                             className="top-search-result"
                             key={`channel-${channel.id}`}
                             onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => chooseSearchChannel(channel.login)}
+                            onClick={() => chooseSearchChannel(channel)}
                             onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
                             onMouseLeave={cancelPreresolve}
                             type="button"
@@ -2437,7 +2451,7 @@ export function App() {
                     {toolbarTitle}
                   </span>
                   <div className="channel-name-line">
-                    <strong>{streamMetadata?.displayName ?? activeChannel}</strong>
+                    <strong>{activeChannelDisplayName}</strong>
                     {streamMetadata?.category && (
                       <button
                         className="toolbar-category"
@@ -3272,7 +3286,7 @@ export function App() {
                       <button
                         className="stream-card"
                         key={stream.id}
-                        onClick={() => void watchChannel(stream.login)}
+                        onClick={() => void watchChannel(stream.login, stream)}
                         onMouseEnter={() => schedulePreresolve(stream.login)}
                         onMouseLeave={cancelPreresolve}
                         title={`Watch ${stream.displayName}`}
@@ -3714,7 +3728,7 @@ export function App() {
                   <button
                     className="stream-card"
                     key={channel.id}
-                    onClick={() => void watchChannel(channel.login)}
+                    onClick={() => void watchChannel(channel.login, channel)}
                     onMouseEnter={() => schedulePreresolve(channel.login)}
                     onMouseLeave={cancelPreresolve}
                     title={`Watch ${channel.displayName}`}
