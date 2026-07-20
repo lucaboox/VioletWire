@@ -37,25 +37,36 @@
   z-index: 91;
 }
 
-.multi-chat-header {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-bottom: 1px solid #202024;
-}
-
 .multi-chat-tabs {
   display: flex;
-  flex: 1 1 auto;
   gap: 4px;
   min-width: 0;
   overflow-x: auto;
 }
 
-.multi-chat-header .chat-header-actions {
-  flex: 0 0 auto;
+.multi-chat-tabbar {
+  padding: 8px;
+  border-bottom: 1px solid #202024;
+  scrollbar-width: thin;
+}
+
+/* Cap tab width so four channels never push the row (and anything after it)
+   off screen — long names ellipsize and the row scrolls horizontally. */
+.multi-chat-tab span {
+  overflow: hidden;
+  max-width: 116px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Settings gear lives at the bottom-left of the composer; its menu opens
+   upward so it is never clipped by the window bottom. */
+.chat-overlay-settings.multi-chat-settings-menu {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 95;
 }
 
 .multi-chat-tab {
@@ -162,9 +173,9 @@
 /* Grid layouts scale to the tile count: solo, side-by-side, and 2x2. */
 .multi-grid {
   display: grid;
-  gap: 6px;
+  gap: 2px;
   min-height: 0;
-  padding: 6px;
+  padding: 2px;
 }
 
 .multi-grid.count-0 {
@@ -199,7 +210,6 @@
   min-width: 0;
   min-height: 0;
   border: 2px solid transparent;
-  border-radius: 10px;
   background: #000;
   cursor: pointer;
 }
