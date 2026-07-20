@@ -2637,7 +2637,7 @@ export function App() {
                       key={`standard-player:${activeChannel}:${standardPlayerReloadNonce}`}
                       sandbox="allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
                       src={`https://player.twitch.tv/?channel=${encodeURIComponent(activeChannel)}&parent=${encodeURIComponent(window.location.hostname)}&autoplay=true&muted=false`}
-                      title={`Official Twitch player for ${activeChannel}`}
+                      aria-label={`Official Twitch player for ${activeChannel}`}
                     />
                   )}
                   {activeMode === "native" && activeNativeBackend === "texture" && (
