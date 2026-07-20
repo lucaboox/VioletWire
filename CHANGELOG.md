@@ -50,6 +50,7 @@ All notable changes to VioletWire are documented in this file.
 - Carry the selected channel’s display name and avatar from followed, browse, and search cards into the player immediately instead of briefly showing the lowercase login.
 - Show the known viewer count and stream uptime from a selected live card immediately while Twitch metadata refreshes in the background.
 - Show the known category, language, and stream tags immediately as a live card opens; category navigation activates once its Twitch ID is refreshed.
+- Enriched live search results with viewer count, uptime, language, tags, and mature-state data using one batched Twitch stream lookup.
 - Treat a GitHub release that is temporarily missing `latest.yml` while its
   assets are still uploading as a non-error update state instead of displaying
   an alarming updater failure.

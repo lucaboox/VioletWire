@@ -105,6 +105,11 @@ export interface SearchChannelResult {
   title: string;
   category: string;
   isLive: boolean;
+  viewerCount?: number;
+  startedAt?: string;
+  language?: string;
+  tags?: string[];
+  isMature?: boolean;
 }
 
 export interface TwitchSearchResults {

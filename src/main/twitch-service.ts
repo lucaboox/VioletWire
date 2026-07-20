@@ -521,15 +521,41 @@ export class TwitchService {
         categoriesResponseSchema,
       ),
     ]);
-    const channels: SearchChannelResult[] = channelResponse.data.map((channel) => ({
+    // Search Channels deliberately omits live stream stats. Enrich only the
+    // results Twitch says are live with one batched Get Streams request (up
+    // to six user IDs here; Helix permits up to 100), rather than one request
+    // per row as the user types.
+    const liveChannelIds = channelResponse.data
+      .filter((channel) => channel.is_live)
+      .map((channel) => channel.id);
+    const liveStreamResponse = liveChannelIds.length
+      ? await this.helix(
+          `/streams?${liveChannelIds
+            .map((id) => `user_id=${encodeURIComponent(id)}`)
+            .join("&")}`,
+          streamsResponseSchema,
+        )
+      : { data: [] };
+    const liveStreamsByUserId = new Map(
+      liveStreamResponse.data.map((stream) => [stream.user_id, stream]),
+    );
+    const channels: SearchChannelResult[] = channelResponse.data.map((channel) => {
+      const stream = liveStreamsByUserId.get(channel.id);
+      return {
       id: channel.id,
       login: channel.broadcaster_login,
       displayName: channel.display_name,
       profileImageUrl: channel.thumbnail_url,
-      title: channel.title,
-      category: channel.is_live ? channel.game_name : "",
-      isLive: channel.is_live,
-    }));
+      title: stream?.title || channel.title,
+      category: stream?.game_name || (channel.is_live ? channel.game_name : ""),
+      isLive: Boolean(stream),
+      viewerCount: stream?.viewer_count,
+      startedAt: stream?.started_at,
+      language: stream?.language,
+      tags: stream?.tags,
+      isMature: stream?.is_mature,
+      };
+    });
     return {
       channels,
       categories: categoryResponse.data.map((category) => ({

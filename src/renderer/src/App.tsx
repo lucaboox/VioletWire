@@ -2306,7 +2306,19 @@ export function App() {
                                 {channel.isLive && <i>LIVE</i>}
                               </strong>
                               <small>
-                                {channel.isLive ? channel.category || "Live channel" : "Offline"}
+                                {channel.isLive
+                                  ? [
+                                      channel.category || "Live channel",
+                                      channel.viewerCount !== undefined
+                                        ? `${Intl.NumberFormat("en-US").format(channel.viewerCount)} viewers`
+                                        : undefined,
+                                      channel.startedAt
+                                        ? formatUptime(channel.startedAt, uptimeNow)
+                                        : undefined,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ")
+                                  : "Offline"}
                               </small>
                             </span>
                           </button>
