@@ -114,12 +114,19 @@ function resolveNativePaths(): {
 const RESOLVE_CACHE_LIFETIME = 60_000;
 const MAX_CONCURRENT_PRERESOLVES = 2;
 
+// Frame transfer sequence, shared across every player instance. The preload
+// drops frames whose sequence is not newer than the last one it painted for a
+// given render target. A per-instance counter would restart at 0 whenever a new
+// instance takes over a target (each multistream tile is a fresh instance),
+// making all its frames look stale until the app restarts — hence a single
+// process-wide monotonic counter that never regresses.
+let globalTransferSequence = 0;
+
 export class TextureNativePlayer {
   private session: TexturePlayerSession | null = null;
   private resolverProcess: ChildProcess | null = null;
   private lastBounds: PlayerBounds = { x: 0, y: 0, width: 1280, height: 720 };
   private resizeTimer: NodeJS.Timeout | null = null;
-  private transferSequence = 0;
   private startGeneration = 0;
   private stopping = false;
   // True between a live-session "loadfile replace" and the incoming stream's
@@ -624,7 +631,7 @@ export class TextureNativePlayer {
       return;
     }
 
-    const transferSequence = ++this.transferSequence;
+    const transferSequence = ++globalTransferSequence;
     void sharedTexture
       .sendSharedTexture(
         {

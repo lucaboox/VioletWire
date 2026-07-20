@@ -1,7 +1,9 @@
 .multi-stream-page {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  height: 100%;
+  /* Subtract the fixed 68px top bar, exactly like .player-page, so the grid
+     fits the viewport and the bottom row is not clipped. */
+  height: calc(100% - 68px);
   min-height: 0;
   background: #0b0b0e;
 }
@@ -79,8 +81,11 @@
   grid-template-columns: 1fr;
 }
 
+/* Two streams stack vertically: each keeps full width, which suits 16:9 video
+   better than two narrow side-by-side columns. */
 .multi-grid.count-2 {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
 }
 
 .multi-grid.count-3,
