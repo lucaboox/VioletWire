@@ -20,6 +20,7 @@ import {
   Maximize,
   MessageSquare,
   Minimize,
+  MoveDiagonal2,
   PanelRight,
   Pause,
   Play,
@@ -80,6 +81,65 @@ const initialState: NativePlayerState = {
   quality: "best",
 };
 const emoteProviders: EmoteProvider[] = ["7tv", "ffz", "bttv"];
+
+interface OverlayGeometry {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+interface OverlayDragState {
+  mode: "move" | "resize";
+  pointerX: number;
+  pointerY: number;
+  // Container (video surface) bounds, captured at drag start.
+  containerLeft: number;
+  containerTop: number;
+  containerWidth: number;
+  containerHeight: number;
+  // Geometry at drag start, in container-relative pixels.
+  startLeft: number;
+  startTop: number;
+  startWidth: number;
+  startHeight: number;
+}
+
+// Overlay chat size limits, in CSS pixels. Must match the preferences schema.
+const OVERLAY_MIN_WIDTH = 280;
+const OVERLAY_MAX_WIDTH = 560;
+const OVERLAY_MIN_HEIGHT = 200;
+const OVERLAY_MAX_HEIGHT = 1000;
+const OVERLAY_MARGIN = 8;
+
+function clampOverlayGeometry(
+  geometry: OverlayGeometry,
+  containerWidth: number,
+  containerHeight: number,
+): OverlayGeometry {
+  const width = Math.round(
+    Math.min(OVERLAY_MAX_WIDTH, Math.max(OVERLAY_MIN_WIDTH, geometry.width)),
+  );
+  const height = Math.round(
+    Math.min(
+      Math.min(OVERLAY_MAX_HEIGHT, Math.max(0, containerHeight - OVERLAY_MARGIN * 2)),
+      Math.max(OVERLAY_MIN_HEIGHT, geometry.height),
+    ),
+  );
+  const left = Math.round(
+    Math.min(
+      Math.max(OVERLAY_MARGIN, containerWidth - width - OVERLAY_MARGIN),
+      Math.max(OVERLAY_MARGIN, geometry.left),
+    ),
+  );
+  const top = Math.round(
+    Math.min(
+      Math.max(OVERLAY_MARGIN, containerHeight - height - OVERLAY_MARGIN),
+      Math.max(OVERLAY_MARGIN, geometry.top),
+    ),
+  );
+  return { left, top, width, height };
+}
 
 interface NativeControlsProps {
   inline?: boolean;
@@ -319,6 +379,11 @@ export function NativeControls({
     const stored = Number(window.localStorage.getItem("glint.chat.overlayOpacity"));
     return Number.isFinite(stored) && stored >= 25 && stored <= 100 ? stored : 88;
   });
+  // Overlay chat geometry (relative to the video surface). null = unplaced, so
+  // the CSS default top-right anchor is used until the first drag/resize.
+  const [overlayGeometry, setOverlayGeometry] = useState<OverlayGeometry | null>(null);
+  const overlayRef = useRef<HTMLElement>(null);
+  const overlayDrag = useRef<OverlayDragState | null>(null);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [chatTimestamps, setChatTimestamps] = useState(
     () => window.localStorage.getItem("glint.chat.timestamps") !== "false",
@@ -494,6 +559,19 @@ export function NativeControls({
     const applyPreferences = (preferences: AppPreferences) => {
       if (disposed) return;
       setChatOpacity(preferences.chatOverlayOpacity);
+      // Do not fight an in-progress drag if a preference change lands mid-gesture.
+      if (!overlayDrag.current) {
+        setOverlayGeometry(
+          preferences.chatOverlayPlaced
+            ? {
+                left: preferences.chatOverlayLeft,
+                top: preferences.chatOverlayTop,
+                width: preferences.chatOverlayWidth,
+                height: preferences.chatOverlayHeight,
+              }
+            : null,
+        );
+      }
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
       setChatFontSize(preferences.chatFontSize);
@@ -628,6 +706,117 @@ export function NativeControls({
   const nativeChatOverlay = Boolean(
     context?.chatVisible && context.chatPresentation === "overlay",
   );
+
+  // Keep a placed overlay inside the video surface when it resizes (window
+  // resize, theater, fullscreen). No-op while unplaced or mid-drag.
+  useEffect(() => {
+    if (!nativeChatOverlay) return;
+    const surface = overlayRef.current?.offsetParent as HTMLElement | null;
+    if (!surface) return;
+    const clampToSurface = () => {
+      if (overlayDrag.current) return;
+      setOverlayGeometry((current) => {
+        if (!current) return current;
+        const rect = surface.getBoundingClientRect();
+        const clamped = clampOverlayGeometry(current, rect.width, rect.height);
+        return clamped.left === current.left &&
+          clamped.top === current.top &&
+          clamped.width === current.width &&
+          clamped.height === current.height
+          ? current
+          : clamped;
+      });
+    };
+    const observer = new ResizeObserver(clampToSurface);
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [nativeChatOverlay]);
+
+  const persistOverlayGeometry = useCallback((geometry: OverlayGeometry) => {
+    void window.desktop.preferences
+      .update({
+        chatOverlayPlaced: true,
+        chatOverlayLeft: geometry.left,
+        chatOverlayTop: geometry.top,
+        chatOverlayWidth: geometry.width,
+        chatOverlayHeight: geometry.height,
+      })
+      .catch(() => undefined);
+  }, []);
+
+  function beginOverlayGesture(
+    event: React.PointerEvent<HTMLElement>,
+    mode: "move" | "resize",
+  ) {
+    if (event.button !== 0) return;
+    const overlay = overlayRef.current;
+    const surface = overlay?.offsetParent as HTMLElement | null;
+    if (!overlay || !surface) return;
+    const overlayRect = overlay.getBoundingClientRect();
+    const surfaceRect = surface.getBoundingClientRect();
+    overlayDrag.current = {
+      mode,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      containerLeft: surfaceRect.left,
+      containerTop: surfaceRect.top,
+      containerWidth: surfaceRect.width,
+      containerHeight: surfaceRect.height,
+      // Adopt the current on-screen geometry so an unplaced (CSS-anchored)
+      // overlay takes over smoothly from wherever it is.
+      startLeft: overlayRect.left - surfaceRect.left,
+      startTop: overlayRect.top - surfaceRect.top,
+      startWidth: overlayRect.width,
+      startHeight: overlayRect.height,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function updateOverlayGesture(event: React.PointerEvent<HTMLElement>) {
+    const drag = overlayDrag.current;
+    if (!drag) return;
+    const dx = event.clientX - drag.pointerX;
+    const dy = event.clientY - drag.pointerY;
+    let next: OverlayGeometry;
+    if (drag.mode === "move") {
+      next = {
+        left: drag.startLeft + dx,
+        top: drag.startTop + dy,
+        width: drag.startWidth,
+        height: drag.startHeight,
+      };
+    } else {
+      // Resize from the top-left: the bottom-right corner stays anchored.
+      const anchorRight = drag.startLeft + drag.startWidth;
+      const anchorBottom = drag.startTop + drag.startHeight;
+      const width = Math.min(OVERLAY_MAX_WIDTH, Math.max(OVERLAY_MIN_WIDTH, drag.startWidth - dx));
+      const height = Math.min(
+        OVERLAY_MAX_HEIGHT,
+        Math.max(OVERLAY_MIN_HEIGHT, drag.startHeight - dy),
+      );
+      next = { left: anchorRight - width, top: anchorBottom - height, width, height };
+    }
+    setOverlayGeometry(clampOverlayGeometry(next, drag.containerWidth, drag.containerHeight));
+  }
+
+  function endOverlayGesture(event: React.PointerEvent<HTMLElement>) {
+    if (!overlayDrag.current) return;
+    overlayDrag.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    setOverlayGeometry((current) => {
+      if (current) persistOverlayGeometry(current);
+      return current;
+    });
+  }
+
+  function resetOverlayGeometry() {
+    setOverlayGeometry(null);
+    void window.desktop.preferences
+      .update({ chatOverlayPlaced: false })
+      .catch(() => undefined);
+  }
 
   useEffect(() => {
     const composer = chatComposerHost.current;
@@ -875,15 +1064,50 @@ export function NativeControls({
       )}
       {nativeChatOverlay && (
         <aside
-          className="native-video-chat"
+          className={
+            overlayGeometry ? "native-video-chat placed" : "native-video-chat"
+          }
           onMouseEnter={revealChatComposer}
+          ref={overlayRef}
           style={{
             backgroundColor: oledMode
               ? `rgb(0 0 0 / ${chatOpacity}%)`
               : `rgb(24 24 27 / ${chatOpacity}%)`,
+            ...(overlayGeometry
+              ? {
+                  left: overlayGeometry.left,
+                  top: overlayGeometry.top,
+                  width: overlayGeometry.width,
+                  height: overlayGeometry.height,
+                  right: "auto",
+                  bottom: "auto",
+                }
+              : {}),
           }}
         >
-          <div className="native-video-chat-tools">
+          <button
+            aria-label="Resize chat overlay"
+            className="native-video-chat-resize"
+            onPointerDown={(event) => beginOverlayGesture(event, "resize")}
+            onPointerMove={updateOverlayGesture}
+            onPointerUp={endOverlayGesture}
+            onDoubleClick={resetOverlayGeometry}
+            title="Drag to resize · double-click to reset"
+            type="button"
+          >
+            <MoveDiagonal2 size={13} />
+          </button>
+          <div
+            className="native-video-chat-tools"
+            onPointerDown={(event) => {
+              // Buttons inside the tools bar keep their own behavior; empty
+              // space acts as a title bar for moving the overlay.
+              if (event.target instanceof Element && event.target.closest("button")) return;
+              beginOverlayGesture(event, "move");
+            }}
+            onPointerMove={updateOverlayGesture}
+            onPointerUp={endOverlayGesture}
+          >
             <button
               aria-label="Hide chat overlay"
               onClick={() => selectChatLayout("hide-chat")}

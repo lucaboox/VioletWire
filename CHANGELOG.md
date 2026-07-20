@@ -12,6 +12,19 @@ All notable changes to VioletWire are documented in this file.
 - Added keyless YouTube hover cards with the video thumbnail, title, and
   channel name. Full YouTube statistics intentionally remain out of scope
   because they require a separate YouTube Data API key.
+- Added a resizable side chat: drag its inner edge to set the width between
+  300 and 620 pixels, double-click the handle to reset, and the width is
+  saved and restored across sessions.
+- Added a movable, resizable overlay chat for the Native player: drag its
+  top bar to reposition it, drag the top-left grip to resize it (280–560
+  wide, 200–1000 tall), and its position and size are clamped to the video
+  area and remembered across sessions. Double-click to reset.
+
+### Improvements
+
+- Moved the Native live indicator from a fixed corner into the control bar,
+  left of the quality button, so it no longer sits underneath the overlay
+  chat, and restyled it as a transparent label with a red live dot.
 
 ### Fixes
 

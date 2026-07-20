@@ -1119,13 +1119,22 @@ input {
   bottom: var(--chat-composer-space, 57px);
 }
 
+/* Full-width top header: the empty left area is the move/drag region (a title
+   bar), the buttons cluster on the right. Sits over the messages' top padding
+   so it doesn't cover message text. */
 .native-video-chat-tools {
   position: absolute;
   z-index: 8;
-  top: 8px;
-  right: 8px;
+  top: 0;
+  right: 0;
+  left: 0;
   display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 4px;
+  height: 30px;
+  padding: 0 6px 0 26px;
+  cursor: move;
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -1133,6 +1142,41 @@ input {
 .native-video-chat:hover .native-video-chat-tools,
 .native-video-chat:focus-within .native-video-chat-tools {
   opacity: 1;
+}
+
+.native-video-chat-tools > button {
+  cursor: pointer;
+}
+
+/* Top-left corner resize handle, revealed on hover like the tools. */
+.native-video-chat-resize {
+  position: absolute;
+  z-index: 9;
+  top: 4px;
+  left: 4px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: #d4d4d8;
+  background: rgb(10 10 12 / 55%);
+  cursor: nwse-resize;
+  opacity: 0;
+  touch-action: none;
+  transition: opacity 120ms ease;
+}
+
+.native-video-chat:hover .native-video-chat-resize,
+.native-video-chat:focus-within .native-video-chat-resize {
+  opacity: 1;
+}
+
+.native-video-chat-resize:hover {
+  color: #fff;
+  background: rgb(28 28 34 / 82%);
 }
 
 .native-video-chat-tools > button {
@@ -1170,10 +1214,6 @@ input {
   background: rgb(24 24 27 / 94%);
   box-shadow: 0 8px 24px rgb(0 0 0 / 60%);
   cursor: pointer;
-}
-
-.controls-surface.chat-hidden .live-state {
-  right: 60px;
 }
 
 .native-chat-edge-restore:hover {
@@ -1439,60 +1479,39 @@ input {
   flex: 1;
 }
 
+/* Inline in the control bar, just left of the quality button. Transparent so
+   it reads as part of the bar; a red dot marks the live edge. */
 .live-state {
-  position: fixed;
-  z-index: 1001;
-  top: 12px;
-  right: 12px;
-  display: flex;
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  min-height: 25px;
-  padding: 0 9px;
-  border: 1px solid rgb(255 255 255 / 15%);
-  border-radius: 5px;
+  height: 25px;
+  padding: 0 4px;
   color: #d4d4d8;
-  background: rgb(12 12 15 / 78%);
-  box-shadow: 0 4px 15px rgb(0 0 0 / 45%);
+  background: transparent;
   font-size: 10px;
   font-weight: 750;
   text-transform: capitalize;
+  white-space: nowrap;
   pointer-events: none;
 }
 
 .live-state.playing:not(.behind-live) {
-  border-color: #ef444466;
-  color: white;
-  background: #dc2626e8;
+  color: #f4f4f5;
 }
 
 .live-state.playing:not(.behind-live)::before {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: white;
-  box-shadow: 0 0 6px #fff;
+  background: #ef4444;
+  box-shadow: 0 0 6px #ef4444;
   content: "";
 }
 
-.controls-bar .live-state {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  bottom: auto;
-  left: auto;
-  display: flex;
-  align-items: center;
-  width: auto;
-  height: 25px;
-  padding: 0 9px;
-  border-radius: 5px;
-}
-
-.controls-bar .live-state.behind-live {
-  border-color: rgb(255 255 255 / 17%);
-  color: #d4d4d8;
-  background: rgb(63 63 70 / 92%);
+.live-state.behind-live {
+  color: #a1a1aa;
 }
 
 .controls-bar button.quality-button {

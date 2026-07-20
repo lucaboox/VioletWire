@@ -488,6 +488,10 @@ export function App() {
   const [chatOnLeft, setChatOnLeft] = useState(
     () => window.localStorage.getItem("glint.chat.onLeft") === "true",
   );
+  const [chatSidebarWidth, setChatSidebarWidth] = useState(384);
+  const playerPageRef = useRef<HTMLElement>(null);
+  const chatResizeState = useRef<{ layoutLeft: number; layoutRight: number } | null>(null);
+  const [chatResizing, setChatResizing] = useState(false);
   const [chatOpacity, setChatOpacity] = useState(() => {
     const stored = Number(window.localStorage.getItem("glint.chat.overlayOpacity"));
     return Number.isFinite(stored) && stored >= 25 && stored <= 100 ? stored : 88;
@@ -810,6 +814,7 @@ export function App() {
       setChatEmoteSize(preferences.chatEmoteSize);
       setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
       setChatOnLeft(preferences.chatOnLeft);
+      setChatSidebarWidth(preferences.chatSidebarWidth);
       setChatOpacity(preferences.chatOverlayOpacity);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
       setMentionSoundVolume(preferences.mentionSoundVolume);
@@ -842,6 +847,7 @@ export function App() {
           chatEmoteSize,
           chatDeletedMessageStyle,
           chatOnLeft,
+          chatSidebarWidth,
           chatOverlayOpacity: chatOpacity,
           mentionSoundEnabled,
           mentionSoundVolume,
@@ -856,6 +862,7 @@ export function App() {
     chatEmoteSize,
     chatDeletedMessageStyle,
     chatOnLeft,
+    chatSidebarWidth,
     chatOpacity,
     chatTimestamps,
     mentionSoundEnabled,
@@ -1114,6 +1121,49 @@ export function App() {
       if (now - startedAt < 200) window.requestAnimationFrame(keepPinned);
     };
     window.requestAnimationFrame(keepPinned);
+  }
+
+  // Side-chat width drag. The width lives in a CSS variable that both the
+  // player toolbar and the viewer layout grid read, so the two stay aligned.
+  // During drag the variable is written straight to the DOM (no React render
+  // per move); state and the persisted preference update only on release.
+  function beginChatResize(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const layout = playerPageRef.current?.querySelector<HTMLElement>(".viewer-layout");
+    if (!layout) return;
+    const rect = layout.getBoundingClientRect();
+    chatResizeState.current = { layoutLeft: rect.left, layoutRight: rect.right };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    setChatResizing(true);
+  }
+
+  function clampChatWidth(desired: number, layoutWidth: number): number {
+    // Never starve the video below its 400px minimum, and keep the drag within
+    // the schema's persisted bounds.
+    const max = Math.min(620, Math.max(300, layoutWidth - 420));
+    return Math.round(Math.min(max, Math.max(300, desired)));
+  }
+
+  function updateChatResize(event: React.PointerEvent<HTMLDivElement>) {
+    const bounds = chatResizeState.current;
+    const page = playerPageRef.current;
+    if (!bounds || !page) return;
+    const layoutWidth = bounds.layoutRight - bounds.layoutLeft;
+    const desired = chatOnLeft
+      ? event.clientX - bounds.layoutLeft
+      : bounds.layoutRight - event.clientX;
+    page.style.setProperty("--chat-sidebar-width", `${clampChatWidth(desired, layoutWidth)}px`);
+  }
+
+  function endChatResize(event: React.PointerEvent<HTMLDivElement>) {
+    if (!chatResizeState.current) return;
+    chatResizeState.current = null;
+    setChatResizing(false);
+    const value = playerPageRef.current?.style.getPropertyValue("--chat-sidebar-width");
+    const parsed = value ? Number.parseInt(value, 10) : NaN;
+    if (Number.isFinite(parsed)) setChatSidebarWidth(parsed);
+    event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   useEffect(() => {
@@ -2256,7 +2306,9 @@ export function App() {
 
         {activeChannel && !miniPlayerActive ? (
           <section
-            className="player-page"
+            className={chatResizing ? "player-page chat-resizing" : "player-page"}
+            ref={playerPageRef}
+            style={{ "--chat-sidebar-width": `${chatSidebarWidth}px` } as CSSProperties}
             onMouseMove={(event) => {
               const previous = lastPlayerPointerPosition.current;
               if (previous?.x === event.clientX && previous.y === event.clientY) return;
@@ -2558,6 +2610,21 @@ export function App() {
                       : undefined
                   }
                 >
+                  {chatPresentation === "side" && (
+                    <div
+                      aria-label="Resize chat"
+                      className={
+                        chatOnLeft
+                          ? "chat-resize-handle chat-resize-handle-right"
+                          : "chat-resize-handle chat-resize-handle-left"
+                      }
+                      onDoubleClick={() => setChatSidebarWidth(384)}
+                      onPointerDown={beginChatResize}
+                      onPointerMove={updateChatResize}
+                      onPointerUp={endChatResize}
+                      role="separator"
+                    />
+                  )}
                   {chatPresentation === "overlay" && (
                     <div className="chat-overlay-tools">
                       <button
