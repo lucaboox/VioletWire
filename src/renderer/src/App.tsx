@@ -1980,6 +1980,23 @@ export function App() {
     if (result.fallbackReason) setNotice(result.fallbackReason);
   }
 
+  async function reloadPlayback() {
+    if (!activeChannel) return;
+
+    if (activeMode === "official") {
+      setStandardPlayerReloadNonce((current) => current + 1);
+      setNotice("Reloading Twitch playback.");
+      return;
+    }
+
+    try {
+      await retryNativePlayer();
+      setNotice("Reloading native playback.");
+    } catch {
+      setNotice("Unable to reload native playback.");
+    }
+  }
+
   async function setFullscreenMode(nextFullscreen: boolean) {
     try {
       const actualState = await window.desktop.player.setFullscreen(nextFullscreen);
@@ -2339,6 +2356,17 @@ export function App() {
               Standard
             </button>
           </div>
+          {activeChannel && (
+            <button
+              aria-label="Reload playback"
+              className="top-playback-reload"
+              onClick={() => void reloadPlayback()}
+              title="Reload playback"
+              type="button"
+            >
+              <RefreshCw size={15} />
+            </button>
+          )}
           <button
             className="sign-in"
             disabled={authBusy}

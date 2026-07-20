@@ -44,6 +44,7 @@ All notable changes to VioletWire are documented in this file.
 
 ### Fixes
 
+- Added a manual playback reload control for recovering either the Native or Standard player without changing the saved player preference.
 - Treat a GitHub release that is temporarily missing `latest.yml` while its
   assets are still uploading as a non-error update state instead of displaying
   an alarming updater failure.
