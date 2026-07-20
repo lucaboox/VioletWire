@@ -48,6 +48,8 @@ All notable changes to VioletWire are documented in this file.
 - Removed the stray status dot from the Native offline screen and made its loading spinner easier to see.
 - Keep the known channel avatar in the player toolbar while metadata loads, and label offline channels simply as “Offline.”
 - Carry the selected channel’s display name and avatar from followed, browse, and search cards into the player immediately instead of briefly showing the lowercase login.
+- Show the known viewer count and stream uptime from a selected live card immediately while Twitch metadata refreshes in the background.
+- Show the known category, language, and stream tags immediately as a live card opens; category navigation activates once its Twitch ID is refreshed.
 - Treat a GitHub release that is temporarily missing `latest.yml` while its
   assets are still uploading as a non-error update state instead of displaying
   an alarming updater failure.

@@ -110,6 +110,19 @@ const NATIVE_CONTROLS_HIDE_DELAY = 5_000;
 
 type AppSection = "home" | "browse" | "settings";
 type ChatLayout = "hidden" | ChatPresentation;
+type ChannelNavigationIdentity = {
+  login: string;
+  displayName: string;
+  profileImageUrl: string;
+  title?: string;
+  isLive?: boolean;
+  viewerCount?: number;
+  startedAt?: string;
+  category?: string;
+  language?: string;
+  tags?: string[];
+  isMature?: boolean;
+};
 
 const signedOutState: TwitchAuthState = { status: "signed-out", account: null };
 const anonymousPlaybackState: PlaybackSessionState = { linked: false };
@@ -416,9 +429,8 @@ export function App() {
   const [topSearchOpen, setTopSearchOpen] = useState(false);
   const [topSearchLoading, setTopSearchLoading] = useState(false);
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
-  const [activeChannelIdentity, setActiveChannelIdentity] = useState<
-    Pick<FollowedChannel, "login" | "displayName" | "profileImageUrl" | "title"> | undefined
-  >();
+  const [activeChannelIdentity, setActiveChannelIdentity] =
+    useState<ChannelNavigationIdentity>();
   const [subscriptionDrawerState, setSubscriptionDrawerState] =
     useState<ChannelActionWindowState>("closed");
   const [error, setError] = useState<string | null>(null);
@@ -1805,7 +1817,7 @@ export function App() {
 
   async function watchChannel(
     channel: string,
-    identity?: Pick<FollowedChannel, "login" | "displayName" | "profileImageUrl" | "title">,
+    identity?: ChannelNavigationIdentity,
   ) {
     // Re-clicking the channel that is already playing must not restart or
     // reset anything (metadata, chat, player) — just surface the full player.
@@ -2074,7 +2086,16 @@ export function App() {
   const toolbarTitle =
     streamMetadata?.title ??
     activeChannelIdentity?.title ??
-    (streamMetadata && !streamMetadata.isLive ? "Offline" : "Loading channel…");
+    ((streamMetadata && !streamMetadata.isLive) || activeChannelIdentity?.isLive === false
+      ? "Offline"
+      : "Loading channel…");
+  const toolbarIsLive = streamMetadata?.isLive ?? activeChannelIdentity?.isLive ?? false;
+  const toolbarViewerCount = streamMetadata?.viewerCount ?? activeChannelIdentity?.viewerCount ?? 0;
+  const toolbarStartedAt = streamMetadata?.startedAt ?? activeChannelIdentity?.startedAt;
+  const toolbarCategory = streamMetadata?.category ?? activeChannelIdentity?.category;
+  const toolbarLanguage = streamMetadata?.language ?? activeChannelIdentity?.language;
+  const toolbarTags = streamMetadata?.tags ?? activeChannelIdentity?.tags;
+  const toolbarIsMature = streamMetadata?.isMature ?? activeChannelIdentity?.isMature;
 
   function renderFollowedChannel(channel: FollowedChannel) {
     return (
@@ -2431,17 +2452,17 @@ export function App() {
               {toolbarProfileImage && (
                 <img className="stream-avatar" alt="" src={toolbarProfileImage} />
               )}
-              {streamMetadata?.isLive && (
+              {toolbarIsLive && (
                 <div className="toolbar-stream-stats">
                   <span className="toolbar-viewers" title="Current viewers">
                     <Users size={14} />
                     <strong>
-                      {Intl.NumberFormat("en-US").format(streamMetadata.viewerCount ?? 0)}
+                      {Intl.NumberFormat("en-US").format(toolbarViewerCount)}
                     </strong>
                   </span>
                   <span className="toolbar-uptime" title="Stream uptime">
                     <Clock size={13} />
-                    {formatUptime(streamMetadata.startedAt, uptimeNow)}
+                    {formatUptime(toolbarStartedAt, uptimeNow)}
                   </span>
                 </div>
               )}
@@ -2452,28 +2473,32 @@ export function App() {
                   </span>
                   <div className="channel-name-line">
                     <strong>{activeChannelDisplayName}</strong>
-                    {streamMetadata?.category && (
+                    {toolbarCategory && (
                       <button
                         className="toolbar-category"
-                        disabled={!streamMetadata.categoryId}
+                        disabled={!streamMetadata?.categoryId}
                         onClick={() => void chooseStreamCategory()}
-                        title={`Browse ${streamMetadata.category}`}
+                        title={
+                          streamMetadata?.categoryId
+                            ? `Browse ${toolbarCategory}`
+                            : toolbarCategory
+                        }
                         type="button"
                       >
-                        {streamMetadata.category}
+                        {toolbarCategory}
                       </button>
                     )}
-                    {streamMetadata?.language && (
+                    {toolbarLanguage && (
                       <span className="toolbar-stream-tag">
-                        {streamMetadata.language.toUpperCase()}
+                        {toolbarLanguage.toUpperCase()}
                       </span>
                     )}
-                    {streamMetadata?.tags?.slice(0, 2).map((tag) => (
+                    {toolbarTags?.slice(0, 2).map((tag) => (
                       <span className="toolbar-stream-tag" key={tag} title={tag}>
                         {tag}
                       </span>
                     ))}
-                    {streamMetadata?.isMature && (
+                    {toolbarIsMature && (
                       <span className="toolbar-stream-tag mature">Mature</span>
                     )}
                   </div>
