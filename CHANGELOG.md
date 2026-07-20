@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2-alpha.4] - 2026-07-20
+
 ### Additions
 
 - Added rich hover cards for Twitch Clip links using Twitch's official clip
