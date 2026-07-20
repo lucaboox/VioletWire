@@ -571,6 +571,26 @@ export function App() {
   });
   const [multiStreamActive, setMultiStreamActive] = useState(false);
   const [multiTiles, setMultiTiles] = useState<MultiStreamTileState[]>([]);
+  // Which tile's chat the tabbed Stream Chat is currently showing.
+  const [multiChatChannel, setMultiChatChannel] = useState<string | null>(null);
+  const [multiChatBroadcasterId, setMultiChatBroadcasterId] = useState<string | null>(null);
+  // The selected chat tab, falling back to the active tile (or first) when the
+  // held selection has no tile — derived rather than stored so no effect writes
+  // it. A user tab click or tile activation still sets multiChatChannel.
+  const effectiveMultiChatChannel = useMemo(() => {
+    if (!multiStreamActive) return null;
+    if (multiChatChannel && multiTiles.some((tile) => tile.channel === multiChatChannel)) {
+      return multiChatChannel;
+    }
+    const fallback = multiTiles.find((tile) => tile.active) ?? multiTiles[0];
+    return fallback ? fallback.channel : null;
+  }, [multiStreamActive, multiChatChannel, multiTiles]);
+  // The channel the chat pane (connection, emotes, badges, sending) follows:
+  // the selected tab in multistream, otherwise the single watched channel.
+  const chatChannel = multiStreamActive ? effectiveMultiChatChannel : activeChannel;
+  const chatBroadcasterId = multiStreamActive
+    ? multiChatBroadcasterId
+    : (streamMetadata?.broadcasterId ?? null);
   const chatProviderEmotes = useMemo(() => {
     const combined = new Map<string, ProviderEmote>();
     // Channel sets win over global sets in each service; provider priority
@@ -860,6 +880,24 @@ export function App() {
     };
   }, []);
 
+  // Connect the shared chat to the selected tab and load its broadcaster id for
+  // channel emotes/badges. Resetting clears the previous channel's messages.
+  useEffect(() => {
+    if (!multiStreamActive || !effectiveMultiChatChannel) return;
+    resetChatFeed();
+    window.desktop.player.multiSetChatChannel(effectiveMultiChatChannel);
+    let cancelled = false;
+    void window.desktop.twitch
+      .getStreamMetadata(effectiveMultiChatChannel)
+      .then((meta) => {
+        if (!cancelled) setMultiChatBroadcasterId(meta?.broadcasterId ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [multiStreamActive, effectiveMultiChatChannel, resetChatFeed]);
+
   useEffect(
     () => window.desktop.player.onFullscreenChanged(setFullscreen),
     [],
@@ -982,9 +1020,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!activeChannel) return;
+    if (!chatChannel) return;
     let cancelled = false;
-    const broadcasterId = streamMetadata?.broadcasterId;
+    const broadcasterId = chatBroadcasterId;
     queueMicrotask(() => {
       if (cancelled) return;
       setProviderEmoteMaps(emptyProviderEmoteMaps());
@@ -1031,12 +1069,12 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeChannel, streamMetadata?.broadcasterId]);
+  }, [chatChannel, chatBroadcasterId]);
 
   useEffect(() => {
-    if (!activeChannel || authState.status !== "signed-in") return;
+    if (!chatChannel || authState.status !== "signed-in") return;
     let cancelled = false;
-    void window.desktop.chat.getAssets(activeChannel)
+    void window.desktop.chat.getAssets(chatChannel)
       .then((assets) => {
         if (cancelled) return;
         setTwitchBadges(new Map(assets.badges.map((badge) => [badge.key, badge])));
@@ -1051,7 +1089,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeChannel, authState.status]);
+  }, [chatChannel, authState.status]);
 
   const chatHistoryBoundary = chatMessages.reduce(
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
@@ -1999,6 +2037,9 @@ export function App() {
 
   function activateMultiTile(id: number) {
     window.desktop.player.multiSetActive(id);
+    // Moving audio focus to a tile also switches its chat into view.
+    const tile = multiTiles.find((entry) => entry.id === id);
+    if (tile) setMultiChatChannel(tile.channel);
   }
 
   function nameForChannel(login: string): string {
@@ -2132,7 +2173,7 @@ export function App() {
 
   async function sendChatMessage(event: FormEvent) {
     event.preventDefault();
-    if (!activeChannel || !chatInput.trim()) return;
+    if (!chatChannel || !chatInput.trim()) return;
     if (authState.status !== "signed-in") {
       setNotice("Sign in with Twitch to send chat messages.");
       return;
@@ -2142,7 +2183,7 @@ export function App() {
     setChatInput("");
     setReplyingTo(null);
     try {
-      await window.desktop.chat.send(activeChannel, message, replyTarget?.id);
+      await window.desktop.chat.send(chatChannel, message, replyTarget?.id);
     } catch (reason) {
       setChatInput(message);
       setReplyingTo(replyTarget);
@@ -2521,15 +2562,165 @@ export function App() {
         </header>
 
         {multiStreamActive ? (
-          <MultiStreamView
-            tiles={multiTiles}
-            followedLive={liveFollowedChannels}
-            nameFor={nameForChannel}
-            onAdd={(channel) => void addMultiTile(channel)}
-            onRemove={removeMultiTile}
-            onActivate={activateMultiTile}
-            onExit={exitMultiStream}
-          />
+          <div className="multi-stream-layout">
+            <MultiStreamView
+              tiles={multiTiles}
+              followedLive={liveFollowedChannels}
+              nameFor={nameForChannel}
+              onAdd={(channel) => void addMultiTile(channel)}
+              onRemove={removeMultiTile}
+              onActivate={activateMultiTile}
+              onExit={exitMultiStream}
+            />
+            <aside className="multi-chat native-chat" aria-label="Stream chat">
+              <div className="multi-chat-tabs" role="tablist">
+                {multiTiles.length === 0 ? (
+                  <span className="multi-chat-empty-tabs">Add a stream to see its chat</span>
+                ) : (
+                  multiTiles.map((tile) => (
+                    <button
+                      aria-selected={effectiveMultiChatChannel === tile.channel}
+                      className={
+                        effectiveMultiChatChannel === tile.channel
+                          ? "multi-chat-tab active"
+                          : "multi-chat-tab"
+                      }
+                      key={tile.id}
+                      onClick={() => setMultiChatChannel(tile.channel)}
+                      role="tab"
+                      type="button"
+                    >
+                      {tile.active && <i aria-label="Audio" className="multi-chat-tab-dot" />}
+                      <span>{nameForChannel(tile.channel)}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+              <div
+                aria-live="polite"
+                className={`chat-messages${chatAutoScroll ? "" : " scroll-paused"}`}
+                onPointerDown={handleChatPointerDown}
+                onScroll={handleChatScroll}
+                onWheel={handleChatWheel}
+                ref={chatMessagesHost}
+              >
+                {effectiveMultiChatChannel && chatMessages.length === 0 && (
+                  <div className="chat-empty-state">
+                    {chatConnectionState === "connected"
+                      ? "Waiting for the next chat message…"
+                      : "Connecting to Twitch chat…"}
+                  </div>
+                )}
+                {chatMessages.map((message, index) => (
+                  <Fragment key={message.id}>
+                    <ChatMessageRow
+                      badges={twitchBadges}
+                      deletedMessageStyle={chatDeletedMessageStyle}
+                      deletedRevealed={revealedDeletedMessages.has(message.id)}
+                      mentioned={messageMentionsLogin(message, viewerLogin)}
+                      message={message}
+                      oledMode={oledMode}
+                      onOpenThread={setOpenReplyThread}
+                      onOpenUser={openChatUserCard}
+                      onReply={beginReply}
+                      onRevealDeleted={revealDeletedMessage}
+                      providerEmotes={chatProviderEmotes}
+                      showTimestamp={chatTimestamps}
+                    />
+                    {index === chatHistoryBoundary && (
+                      <div className="live-chat-divider" role="separator">
+                        <span>Live chat</span>
+                      </div>
+                    )}
+                  </Fragment>
+                ))}
+              </div>
+              {!chatAutoScroll && (
+                <button className="scroll-to-current" onClick={scrollChatToCurrent} type="button">
+                  <Pause aria-hidden="true" size={12} />
+                  <span>Chat paused due to scroll</span>
+                  <ArrowDown aria-hidden="true" size={14} />
+                </button>
+              )}
+              <form className="native-chat-input" onSubmit={sendChatMessage}>
+                {replyingTo && (
+                  <div className="chat-reply-composer">
+                    <div className="chat-reply-heading">
+                      <span>
+                        <Reply size={15} /> Replying to {replyingTo.displayName}
+                      </span>
+                      <button
+                        aria-label="Cancel reply"
+                        onClick={() => setReplyingTo(null)}
+                        title="Cancel reply"
+                        type="button"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="chat-composer-box">
+                  <ChatComposerInput
+                    aria-label="Send a chat message"
+                    disabled={authState.status !== "signed-in" || !effectiveMultiChatChannel}
+                    maxLength={500}
+                    mentionCandidates={chatMentionCandidates}
+                    onValueChange={setChatInput}
+                    placeholder={
+                      authState.status !== "signed-in"
+                        ? "Sign in to chat"
+                        : replyingTo
+                          ? "Write a reply"
+                          : `Message ${nameForChannel(effectiveMultiChatChannel ?? "")}`
+                    }
+                    ref={chatInputHost}
+                    sevenTvEmotes={chatProviderEmotes}
+                    twitchEmotes={twitchPickerEmotes}
+                    value={chatInput}
+                  />
+                  <div className="chat-composer-inline-actions">
+                    <div className="emote-picker-anchor">
+                      <button
+                        aria-expanded={emotePickerOpen}
+                        aria-label="Choose Twitch and 7TV emotes"
+                        className={
+                          emotePickerOpen ? "emote-picker-button active" : "emote-picker-button"
+                        }
+                        onClick={() => setEmotePickerOpen((current) => !current)}
+                        title="Twitch and 7TV emotes"
+                        type="button"
+                      >
+                        <Smile size={17} />
+                      </button>
+                      {emotePickerOpen && (
+                        <EmotePicker
+                          channelName={nameForChannel(effectiveMultiChatChannel ?? "Channel")}
+                          onClose={() => setEmotePickerOpen(false)}
+                          onSelect={(name) =>
+                            setChatInput(
+                              (current) =>
+                                `${current}${current && !current.endsWith(" ") ? " " : ""}${name} `,
+                            )
+                          }
+                          providerChannelEmoteNames={providerChannelNames}
+                          providerEmotes={providerEmoteMaps}
+                          twitchEmotes={twitchPickerEmotes}
+                        />
+                      )}
+                    </div>
+                    <button
+                      className="chat-send-button"
+                      disabled={authState.status !== "signed-in" || !chatInput.trim()}
+                      type="submit"
+                    >
+                      Chat
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </aside>
+          </div>
         ) : activeChannel && !miniPlayerActive ? (
           <section
             className={chatResizing ? "player-page chat-resizing" : "player-page"}

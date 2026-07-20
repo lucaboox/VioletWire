@@ -253,6 +253,7 @@ export interface DesktopApi {
     // Multistream: up to MAX_MULTISTREAM_TILES native players in a grid.
     multiStart(channels: string[]): Promise<MultiStreamTileState[]>;
     multiStop(): void;
+    multiSetChatChannel(channel: string): void;
     multiAddTile(channel: string): Promise<MultiStreamTileState | null>;
     multiRemoveTile(id: number): void;
     multiSetActive(id: number): void;

@@ -1066,7 +1066,18 @@ handleTrusted("native-multi:add-tile", async (_event, input: unknown) => {
   return multiStreamManager.addTile(result.data);
 });
 
-onTrusted("native-multi:stop", () => multiStreamManager.stop());
+onTrusted("native-multi:stop", () => {
+  multiStreamManager.stop();
+  twitchChatService.disconnect();
+});
+
+// Multistream shows one channel's chat at a time, selected by tab. Point the
+// shared chat connection at that channel; its messages flow through the normal
+// chat:* pipeline the renderer already listens to.
+onTrusted("native-multi:set-chat-channel", (_event, input: unknown) => {
+  const result = channelNameSchema.safeParse(input);
+  if (result.success) twitchChatService.connect(result.data);
+});
 
 onTrusted("native-multi:remove-tile", (_event, input: unknown) => {
   if (isMultiTileId(input)) multiStreamManager.removeTile(input);

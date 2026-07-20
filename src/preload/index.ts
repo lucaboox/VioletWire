@@ -263,6 +263,8 @@ const api: DesktopApi = {
     multiStart: (channels: string[]) =>
       ipcRenderer.invoke("native-multi:start", channels) as Promise<MultiStreamTileState[]>,
     multiStop: () => ipcRenderer.send("native-multi:stop"),
+    multiSetChatChannel: (channel: string) =>
+      ipcRenderer.send("native-multi:set-chat-channel", channel),
     multiAddTile: (channel: string) =>
       ipcRenderer.invoke("native-multi:add-tile", channel) as Promise<MultiStreamTileState | null>,
     multiRemoveTile: (id: number) => ipcRenderer.send("native-multi:remove-tile", id),

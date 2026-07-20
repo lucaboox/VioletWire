@@ -1,11 +1,82 @@
+/* Grid on the left, tabbed chat on the right — subtract the fixed 68px top bar
+   like .player-page so nothing is clipped. */
+.multi-stream-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  height: calc(100% - 68px);
+  min-height: 0;
+}
+
 .multi-stream-page {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  /* Subtract the fixed 68px top bar, exactly like .player-page, so the grid
-     fits the viewport and the bottom row is not clipped. */
-  height: calc(100% - 68px);
+  height: 100%;
+  min-width: 0;
   min-height: 0;
   background: #0b0b0e;
+}
+
+.multi-chat {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid #202024;
+  background: #0e0e10;
+}
+
+.multi-chat-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid #202024;
+}
+
+.multi-chat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid #2a2a30;
+  border-radius: 7px;
+  color: #b7b7c0;
+  background: #17171b;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.multi-chat-tab:hover {
+  color: #f4f4f5;
+  background: #222228;
+}
+
+.multi-chat-tab.active {
+  border-color: #7c3aed;
+  color: #f4f4f5;
+  background: #2c1c44;
+}
+
+.multi-chat-tab-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #a970ff;
+}
+
+.multi-chat-empty-tabs {
+  padding: 6px 8px;
+  color: #71717a;
+  font-size: 12px;
+}
+
+.oled-mode .multi-chat {
+  background: #000;
 }
 
 .multi-stream-bar {
