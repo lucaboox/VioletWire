@@ -31,6 +31,12 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      # Electron's post-install download can occasionally be incomplete on a
+      # fresh Windows runner. Complete it once, before Vitest starts workers
+      # that import Electron concurrently.
+      - name: Verify Electron runtime
+        run: npx install-electron --no
+
       - name: Verify
         run: |
           npm run lint
