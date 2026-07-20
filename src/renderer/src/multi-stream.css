@@ -103,6 +103,13 @@
   background: #a970ff;
 }
 
+/* The paused pill: keep it on one line and sit it just above the composer,
+   which the shared --chat-composer-space var doesn't cover in multistream. */
+.multi-chat .scroll-to-current {
+  bottom: 112px;
+  white-space: nowrap;
+}
+
 .multi-chat-empty-tabs {
   padding: 6px 8px;
   color: #71717a;
