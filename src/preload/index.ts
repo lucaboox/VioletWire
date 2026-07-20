@@ -263,8 +263,22 @@ const api: DesktopApi = {
     multiStart: (channels: string[]) =>
       ipcRenderer.invoke("native-multi:start", channels) as Promise<MultiStreamTileState[]>,
     multiStop: () => ipcRenderer.send("native-multi:stop"),
-    multiSetChatChannel: (channel: string) =>
-      ipcRenderer.send("native-multi:set-chat-channel", channel),
+    onMultiChatMessage: (listener: (channel: string, message: ChatMessage) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: { channel: string; message: ChatMessage },
+      ) => listener(payload.channel, payload.message);
+      ipcRenderer.on("native-multi:chat-message", handler);
+      return () => ipcRenderer.removeListener("native-multi:chat-message", handler);
+    },
+    onMultiChatState: (listener: (channel: string, state: ChatConnectionState) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: { channel: string; state: ChatConnectionState },
+      ) => listener(payload.channel, payload.state);
+      ipcRenderer.on("native-multi:chat-state", handler);
+      return () => ipcRenderer.removeListener("native-multi:chat-state", handler);
+    },
     multiAddTile: (channel: string) =>
       ipcRenderer.invoke("native-multi:add-tile", channel) as Promise<MultiStreamTileState | null>,
     multiRemoveTile: (id: number) => ipcRenderer.send("native-multi:remove-tile", id),

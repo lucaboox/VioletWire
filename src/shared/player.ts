@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { EmoteApi } from "./emotes";
-import type { ChatApi } from "./chat";
+import type { ChatApi, ChatConnectionState, ChatMessage } from "./chat";
 import type { TwitchApi } from "./twitch";
 import type { UpdateApi } from "./updates";
 import type { PreferencesApi } from "./preferences";
@@ -253,7 +253,10 @@ export interface DesktopApi {
     // Multistream: up to MAX_MULTISTREAM_TILES native players in a grid.
     multiStart(channels: string[]): Promise<MultiStreamTileState[]>;
     multiStop(): void;
-    multiSetChatChannel(channel: string): void;
+    onMultiChatMessage(listener: (channel: string, message: ChatMessage) => void): () => void;
+    onMultiChatState(
+      listener: (channel: string, state: ChatConnectionState) => void,
+    ): () => void;
     multiAddTile(channel: string): Promise<MultiStreamTileState | null>;
     multiRemoveTile(id: number): void;
     multiSetActive(id: number): void;

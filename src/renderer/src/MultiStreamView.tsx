@@ -17,6 +17,8 @@ interface MultiStreamViewProps {
   onRemove: (id: number) => void;
   onActivate: (id: number) => void;
   onToggleMute: (id: number) => void;
+  onSetVolume: (id: number, volume: number) => void;
+  onToggleCompressor: (id: number, enabled: boolean) => void;
   onSetQuality: (id: number, quality: NativeQualityValue) => void;
   onExit: () => void;
 }
@@ -29,6 +31,8 @@ export function MultiStreamView({
   onRemove,
   onActivate,
   onToggleMute,
+  onSetVolume,
+  onToggleCompressor,
   onSetQuality,
   onExit,
 }: MultiStreamViewProps) {
@@ -81,6 +85,8 @@ export function MultiStreamView({
             onRemove={onRemove}
             onActivate={onActivate}
             onToggleMute={onToggleMute}
+            onSetVolume={onSetVolume}
+            onToggleCompressor={onToggleCompressor}
             onSetQuality={onSetQuality}
           />
         ))}
@@ -103,6 +109,8 @@ interface MultiTileProps {
   onRemove: (id: number) => void;
   onActivate: (id: number) => void;
   onToggleMute: (id: number) => void;
+  onSetVolume: (id: number, volume: number) => void;
+  onToggleCompressor: (id: number, enabled: boolean) => void;
   onSetQuality: (id: number, quality: NativeQualityValue) => void;
 }
 
@@ -112,10 +120,13 @@ const MultiTile = memo(function MultiTile({
   onRemove,
   onActivate,
   onToggleMute,
+  onSetVolume,
+  onToggleCompressor,
   onSetQuality,
 }: MultiTileProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [audioMenuOpen, setAudioMenuOpen] = useState(false);
   const [qualities, setQualities] = useState<NativeQuality[]>([]);
 
   // Lazy-load the quality list the first time the menu opens for this tile.
@@ -189,15 +200,49 @@ const MultiTile = memo(function MultiTile({
       <div className="multi-tile-bar" onClick={(event) => event.stopPropagation()}>
         {tile.active && <span className="multi-tile-live-dot" title="Audio focus" />}
         <span className="multi-tile-name">{name}</span>
-        <button
-          aria-label={tile.state.muted ? `Unmute ${name}` : `Mute ${name}`}
-          className="multi-tile-btn"
-          onClick={() => onToggleMute(tile.id)}
-          title={tile.state.muted ? "Unmute" : "Mute"}
-          type="button"
-        >
-          {tile.state.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-        </button>
+        <div className="multi-tile-audio-control">
+          <button
+            aria-label="Audio"
+            className={audioMenuOpen ? "multi-tile-btn active" : "multi-tile-btn"}
+            onClick={() => setAudioMenuOpen((open) => !open)}
+            title="Volume & audio"
+            type="button"
+          >
+            {tile.state.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+          </button>
+          {audioMenuOpen && (
+            <div className="multi-tile-audio-menu">
+              <div className="multi-tile-audio-row">
+                <button
+                  aria-label={tile.state.muted ? "Unmute" : "Mute"}
+                  className="multi-tile-btn"
+                  onClick={() => onToggleMute(tile.id)}
+                  title={tile.state.muted ? "Unmute" : "Mute"}
+                  type="button"
+                >
+                  {tile.state.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                </button>
+                <input
+                  aria-label="Volume"
+                  max="100"
+                  min="0"
+                  onChange={(event) => onSetVolume(tile.id, Number(event.target.value))}
+                  type="range"
+                  value={tile.state.volume}
+                />
+                <span className="multi-tile-audio-value">{Math.round(tile.state.volume)}%</span>
+              </div>
+              <label className="multi-tile-audio-toggle">
+                <input
+                  checked={tile.state.compressorEnabled}
+                  onChange={(event) => onToggleCompressor(tile.id, event.target.checked)}
+                  type="checkbox"
+                />
+                <span>Audio compressor</span>
+              </label>
+            </div>
+          )}
+        </div>
         <div className="multi-tile-quality">
           <button
             aria-label="Quality"

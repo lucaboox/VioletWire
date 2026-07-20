@@ -47,6 +47,12 @@ export class MultiStreamManager {
       .map((tile) => this.toTileState(tile));
   }
 
+  getChannels(): string[] {
+    return [...this.tiles.values()]
+      .sort((left, right) => left.id - right.id)
+      .map((tile) => tile.channel);
+  }
+
   async start(channels: string[]): Promise<MultiStreamTileState[]> {
     this.stop();
     const unique: string[] = [];

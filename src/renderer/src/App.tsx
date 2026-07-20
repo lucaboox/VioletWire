@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -76,6 +77,7 @@ import type {
   ChatMessage,
   TwitchPickerEmote,
 } from "../../shared/chat";
+import { applyChatMessageBatch } from "../../shared/chat-messages";
 import {
   formatChatTimestamp,
   formatModerationAction,
@@ -574,6 +576,14 @@ export function App() {
   // Which tile's chat the tabbed Stream Chat is currently showing.
   const [multiChatChannel, setMultiChatChannel] = useState<string | null>(null);
   const [multiChatBroadcasterId, setMultiChatBroadcasterId] = useState<string | null>(null);
+  // All tile channels stay connected at once; each keeps its own message buffer
+  // so switching tabs is instant and nothing is missed in the background.
+  const [multiChatBuffers, setMultiChatBuffers] = useState<Map<string, ChatMessage[]>>(new Map());
+  const [multiChatStates, setMultiChatStates] = useState<
+    Map<string, ChatConnectionState>
+  >(new Map());
+  const multiChatHost = useRef<HTMLDivElement>(null);
+  const multiChatPinned = useRef(true);
   // The selected chat tab, falling back to the active tile (or first) when the
   // held selection has no tile — derived rather than stored so no effect writes
   // it. A user tab click or tile activation still sets multiChatChannel.
@@ -591,6 +601,11 @@ export function App() {
   const chatBroadcasterId = multiStreamActive
     ? multiChatBroadcasterId
     : (streamMetadata?.broadcasterId ?? null);
+  const multiDisplayMessages = useMemo(
+    () =>
+      effectiveMultiChatChannel ? (multiChatBuffers.get(effectiveMultiChatChannel) ?? []) : [],
+    [effectiveMultiChatChannel, multiChatBuffers],
+  );
   const chatProviderEmotes = useMemo(() => {
     const combined = new Map<string, ProviderEmote>();
     // Channel sets win over global sets in each service; provider priority
@@ -880,12 +895,10 @@ export function App() {
     };
   }, []);
 
-  // Connect the shared chat to the selected tab and load its broadcaster id for
-  // channel emotes/badges. Resetting clears the previous channel's messages.
+  // Load the selected tab's broadcaster id for its channel emotes/badges. The
+  // messages themselves come from the always-connected per-channel buffers.
   useEffect(() => {
     if (!multiStreamActive || !effectiveMultiChatChannel) return;
-    resetChatFeed();
-    window.desktop.player.multiSetChatChannel(effectiveMultiChatChannel);
     let cancelled = false;
     void window.desktop.twitch
       .getStreamMetadata(effectiveMultiChatChannel)
@@ -896,7 +909,53 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [multiStreamActive, effectiveMultiChatChannel, resetChatFeed]);
+  }, [multiStreamActive, effectiveMultiChatChannel]);
+
+  // Buffer every tile channel's chat. Messages are batched on a short interval
+  // so busy channels don't re-render the app per message.
+  const multiChatPending = useRef<Map<string, ChatMessage[]>>(new Map());
+  useEffect(() => {
+    const removeMessage = window.desktop.player.onMultiChatMessage((channel, message) => {
+      const pending = multiChatPending.current;
+      pending.set(channel, [...(pending.get(channel) ?? []), message]);
+    });
+    const removeState = window.desktop.player.onMultiChatState((channel, state) => {
+      setMultiChatStates((current) => {
+        const next = new Map(current);
+        next.set(channel, state);
+        return next;
+      });
+    });
+    const flush = window.setInterval(() => {
+      if (multiChatPending.current.size === 0) return;
+      const batch = multiChatPending.current;
+      multiChatPending.current = new Map();
+      setMultiChatBuffers((current) => {
+        const next = new Map(current);
+        for (const [channel, messages] of batch) {
+          next.set(channel, applyChatMessageBatch(current.get(channel) ?? [], messages));
+        }
+        return next;
+      });
+    }, 150);
+    return () => {
+      removeMessage();
+      removeState();
+      window.clearInterval(flush);
+    };
+  }, []);
+
+  // A new tab starts pinned to the newest message.
+  useEffect(() => {
+    multiChatPinned.current = true;
+  }, [effectiveMultiChatChannel]);
+
+  // Keep the multistream chat stuck to the bottom unless the reader scrolled up.
+  useLayoutEffect(() => {
+    if (!multiStreamActive) return;
+    const host = multiChatHost.current;
+    if (host && multiChatPinned.current) host.scrollTop = host.scrollHeight;
+  }, [multiDisplayMessages, effectiveMultiChatChannel, multiStreamActive]);
 
   useEffect(
     () => window.desktop.player.onFullscreenChanged(setFullscreen),
@@ -2023,6 +2082,10 @@ export function App() {
     setMultiTiles([]);
     setMultiChatChannel(null);
     setMultiStreamActive(false);
+    // Start the next session with clean chat buffers.
+    multiChatPending.current = new Map();
+    setMultiChatBuffers(new Map());
+    setMultiChatStates(new Map());
   }
 
   function exitMultiStream() {
@@ -2586,6 +2649,12 @@ export function App() {
               onToggleMute={(id) =>
                 window.desktop.player.multiControl(id, { command: "toggle-mute" })
               }
+              onSetVolume={(id, volume) =>
+                window.desktop.player.multiControl(id, { command: "set-volume", value: volume })
+              }
+              onToggleCompressor={(id, enabled) =>
+                window.desktop.player.multiControl(id, { command: "set-compressor", enabled })
+              }
               onSetQuality={(id, quality) =>
                 void window.desktop.player.multiSetQuality(id, quality)
               }
@@ -2617,50 +2686,41 @@ export function App() {
               </div>
               <div
                 aria-live="polite"
-                className={`chat-messages${chatAutoScroll ? "" : " scroll-paused"}`}
-                onPointerDown={handleChatPointerDown}
-                onScroll={handleChatScroll}
-                onWheel={handleChatWheel}
-                ref={chatMessagesHost}
+                className="chat-messages"
+                onScroll={(event) => {
+                  const element = event.currentTarget;
+                  multiChatPinned.current =
+                    element.scrollHeight - element.scrollTop - element.clientHeight < 40;
+                }}
+                ref={multiChatHost}
               >
-                {effectiveMultiChatChannel && chatMessages.length === 0 && (
+                {multiDisplayMessages.length === 0 && (
                   <div className="chat-empty-state">
-                    {chatConnectionState === "connected"
-                      ? "Waiting for the next chat message…"
-                      : "Connecting to Twitch chat…"}
+                    {!effectiveMultiChatChannel
+                      ? "Add a stream to see its chat"
+                      : multiChatStates.get(effectiveMultiChatChannel) === "connected"
+                        ? "Waiting for the next chat message…"
+                        : "Connecting to Twitch chat…"}
                   </div>
                 )}
-                {chatMessages.map((message, index) => (
-                  <Fragment key={message.id}>
-                    <ChatMessageRow
-                      badges={twitchBadges}
-                      deletedMessageStyle={chatDeletedMessageStyle}
-                      deletedRevealed={revealedDeletedMessages.has(message.id)}
-                      mentioned={messageMentionsLogin(message, viewerLogin)}
-                      message={message}
-                      oledMode={oledMode}
-                      onOpenThread={setOpenReplyThread}
-                      onOpenUser={openChatUserCard}
-                      onReply={beginReply}
-                      onRevealDeleted={revealDeletedMessage}
-                      providerEmotes={chatProviderEmotes}
-                      showTimestamp={chatTimestamps}
-                    />
-                    {index === chatHistoryBoundary && (
-                      <div className="live-chat-divider" role="separator">
-                        <span>Live chat</span>
-                      </div>
-                    )}
-                  </Fragment>
+                {multiDisplayMessages.map((message) => (
+                  <ChatMessageRow
+                    badges={twitchBadges}
+                    deletedMessageStyle={chatDeletedMessageStyle}
+                    deletedRevealed={revealedDeletedMessages.has(message.id)}
+                    key={message.id}
+                    mentioned={messageMentionsLogin(message, viewerLogin)}
+                    message={message}
+                    oledMode={oledMode}
+                    onOpenThread={setOpenReplyThread}
+                    onOpenUser={openChatUserCard}
+                    onReply={beginReply}
+                    onRevealDeleted={revealDeletedMessage}
+                    providerEmotes={chatProviderEmotes}
+                    showTimestamp={chatTimestamps}
+                  />
                 ))}
               </div>
-              {!chatAutoScroll && (
-                <button className="scroll-to-current" onClick={scrollChatToCurrent} type="button">
-                  <Pause aria-hidden="true" size={12} />
-                  <span>Chat paused due to scroll</span>
-                  <ArrowDown aria-hidden="true" size={14} />
-                </button>
-              )}
               <form className="native-chat-input" onSubmit={sendChatMessage}>
                 {replyingTo && (
                   <div className="chat-reply-composer">
@@ -2817,7 +2877,7 @@ export function App() {
               {openReplyThread && (
                 <ReplyThread
                   badges={twitchBadges}
-                  messages={chatMessages}
+                  messages={multiDisplayMessages}
                   oledMode={oledMode}
                   onClose={() => setOpenReplyThread(null)}
                   onOpenUser={openChatUserCard}
@@ -2832,7 +2892,7 @@ export function App() {
                   badges={twitchBadges}
                   channel={effectiveMultiChatChannel}
                   key={`${effectiveMultiChatChannel}:${selectedChatUser.login}`}
-                  messages={chatMessages}
+                  messages={multiDisplayMessages}
                   onClose={() => {
                     setSelectedChatUser(null);
                     setSelectedChatUserAnchor(undefined);

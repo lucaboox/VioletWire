@@ -34,6 +34,7 @@ import {
 import { NativePlayer } from "./native-player";
 import { TextureNativePlayer } from "./texture-native-player";
 import { MultiStreamManager } from "./multi-stream-manager";
+import { MultiChatService } from "./multi-chat-service";
 import { TwitchService } from "./twitch-service";
 import { PlaybackSessionService } from "./playback-session";
 import { SevenTvService } from "./seven-tv-service";
@@ -313,6 +314,11 @@ const multiStreamManager = new MultiStreamManager(
   () => playbackSessionService.getToken(),
   (tile) => sendToWindow(mainWindow, "native-multi:tile-state", tile),
   (id) => sendToWindow(mainWindow, "native-multi:tile-removed", id),
+);
+const multiChatService = new MultiChatService(
+  (channel, message) =>
+    sendToWindow(mainWindow, "native-multi:chat-message", { channel, message }),
+  (channel, state) => sendToWindow(mainWindow, "native-multi:chat-state", { channel, state }),
 );
 const twitchService = new TwitchService();
 const linkPreviewService = new LinkPreviewService(twitchService);
@@ -1057,30 +1063,30 @@ handleTrusted("native-multi:start", async (_event, input: unknown) => {
   // Multistream replaces the single full-window player; tear it down so its
   // mpv/GPU resources are free before the tiles start.
   destroyPlayer();
-  return multiStreamManager.start(channels);
+  const tiles = await multiStreamManager.start(channels);
+  // Connect every tile's chat up front so switching tabs is instant.
+  multiChatService.setChannels(multiStreamManager.getChannels());
+  return tiles;
 });
 
 handleTrusted("native-multi:add-tile", async (_event, input: unknown) => {
   const result = channelNameSchema.safeParse(input);
   if (!result.success) return null;
-  return multiStreamManager.addTile(result.data);
+  const tile = await multiStreamManager.addTile(result.data);
+  multiChatService.setChannels(multiStreamManager.getChannels());
+  return tile;
 });
 
 onTrusted("native-multi:stop", () => {
   multiStreamManager.stop();
-  twitchChatService.disconnect();
-});
-
-// Multistream shows one channel's chat at a time, selected by tab. Point the
-// shared chat connection at that channel; its messages flow through the normal
-// chat:* pipeline the renderer already listens to.
-onTrusted("native-multi:set-chat-channel", (_event, input: unknown) => {
-  const result = channelNameSchema.safeParse(input);
-  if (result.success) twitchChatService.connect(result.data);
+  multiChatService.stop();
 });
 
 onTrusted("native-multi:remove-tile", (_event, input: unknown) => {
-  if (isMultiTileId(input)) multiStreamManager.removeTile(input);
+  if (isMultiTileId(input)) {
+    multiStreamManager.removeTile(input);
+    multiChatService.setChannels(multiStreamManager.getChannels());
+  }
 });
 
 onTrusted("native-multi:set-active", (_event, input: unknown) => {
@@ -1354,7 +1360,10 @@ handleTrusted("chat:get-assets", (_event, rawChannel: unknown) =>
 );
 onTrusted("chat:set-history-limit", (_event, rawLimit: unknown) => {
   const result = chatHistoryLimitSchema.safeParse(rawLimit);
-  if (result.success) twitchChatService.setHistoryLimit(result.data);
+  if (result.success) {
+    twitchChatService.setHistoryLimit(result.data);
+    multiChatService.setHistoryLimit(result.data);
+  }
 });
 handleTrusted("updates:get-status", () => updateService.getStatus());
 handleTrusted("updates:get-release-notes", (_event, forceRefresh: unknown) => {
