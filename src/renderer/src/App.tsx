@@ -2572,7 +2572,7 @@ export function App() {
               onActivate={activateMultiTile}
               onExit={exitMultiStream}
             />
-            <aside className="multi-chat native-chat" aria-label="Stream chat">
+            <aside className="multi-chat" aria-label="Stream chat">
               <div className="multi-chat-tabs" role="tablist">
                 {multiTiles.length === 0 ? (
                   <span className="multi-chat-empty-tabs">Add a stream to see its chat</span>

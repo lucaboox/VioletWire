@@ -19,12 +19,22 @@
 .multi-chat {
   position: relative;
   display: grid;
+  /* Pinned tab bar, scrolling messages, composer. The message row owns its own
+     scroll, so this container must not clip — otherwise the emote picker, which
+     floats above the composer and out over the video, gets cut off. */
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
   border-left: 1px solid #202024;
   background: #0e0e10;
+}
+
+.multi-chat:has(.vw-emote-picker) {
+  z-index: 90;
+}
+
+.multi-chat:has(.vw-emote-picker) .native-chat-input {
+  z-index: 91;
 }
 
 .multi-chat-tabs {
