@@ -474,9 +474,8 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .native-player-placeholder strong { margin-top: 12px; font-size: 15px; }
 .native-player-placeholder p { max-width: 480px; margin: 7px 0 0; color: #85858e; font-size: 11px; line-height: 1.55; }
 .native-player-placeholder button { display: flex; align-items: center; gap: 6px; margin-top: 14px; padding: 7px 11px; border: 1px solid #554067; border-radius: 7px; color: #e9d5ff; background: #2c1c38; cursor: pointer; font-size: 11px; }
-.native-status-orb { width: 12px; height: 12px; border: 2px solid #8b5cf6; border-right-color: transparent; border-radius: 50%; animation: native-spin .8s linear infinite; }
+.native-status-orb { width: 22px; height: 22px; border: 3px solid #8b5cf6; border-right-color: transparent; border-radius: 50%; animation: native-spin .8s linear infinite; }
 .native-status-orb.error { border-color: #fb7185; animation: none; }
-.native-status-orb.offline { border-color: #71717a; border-right-color: #71717a; animation: none; }
 .chat-panel { display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; min-height: 0; max-height: 100%; overflow: hidden; contain: layout size; border-left: 1px solid #29292f; background: #0e0e10; }
 /* Drag-to-resize handle at the video/chat border, inside the chat panel (its
    overflow is hidden). A wide invisible hit area with a thin visible line at

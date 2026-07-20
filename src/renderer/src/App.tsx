@@ -2646,11 +2646,9 @@ export function App() {
                   {activeMode === "native" &&
                     (nativeState.status !== "playing" || nativeStreamOffline) && (
                     <div className="native-player-placeholder">
-                      <span
-                        className={`native-status-orb ${
-                          nativeStreamOffline ? "offline" : nativeState.status
-                        }`}
-                      />
+                      {!nativeStreamOffline && (
+                        <span className={`native-status-orb ${nativeState.status}`} />
+                      )}
                       <strong>
                         {nativeStreamOffline
                           ? `${streamMetadata?.displayName ?? activeChannel} has ended the stream`
