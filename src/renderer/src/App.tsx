@@ -2019,6 +2019,16 @@ export function App() {
     }
   }
 
+  async function openChannelInBrowser() {
+    if (!activeChannel) return;
+    try {
+      await window.desktop.twitch.openChannel(activeChannel);
+      setNotice("Opened the channel in your default browser.");
+    } catch {
+      setNotice("Unable to open the channel in your browser.");
+    }
+  }
+
   async function handleFollow() {
     if (!activeChannel) return;
     await window.desktop.player.openChannelAction(activeChannel, "channel");
@@ -2608,7 +2618,7 @@ export function App() {
                 <button
                   aria-label="Open channel on Twitch"
                   className="toolbar-icon"
-                  onClick={() => void openChannelAction("channel", "Channel")}
+                  onClick={() => void openChannelInBrowser()}
                   title="Open channel on Twitch"
                   type="button"
                 >
