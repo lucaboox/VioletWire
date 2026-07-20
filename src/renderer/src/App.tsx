@@ -1763,7 +1763,11 @@ export function App() {
   async function openChannel(event: FormEvent) {
     event.preventDefault();
     setTopSearchOpen(false);
-    await watchChannel(channelInput);
+    const normalizedLogin = channelInput.trim().toLowerCase();
+    await watchChannel(
+      channelInput,
+      topSearchResults.channels.find((channel) => channel.login.toLowerCase() === normalizedLogin),
+    );
   }
 
   function updateTopSearch(value: string) {
@@ -2334,7 +2338,13 @@ export function App() {
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => {
                         setTopSearchOpen(false);
-                        void watchChannel(channelInput);
+                        const normalizedLogin = channelInput.trim().toLowerCase();
+                        void watchChannel(
+                          channelInput,
+                          topSearchResults.channels.find(
+                            (channel) => channel.login.toLowerCase() === normalizedLogin,
+                          ),
+                        );
                       }}
                       type="button"
                     >
