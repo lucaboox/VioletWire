@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, RotateCcw, Settings, Volume2, VolumeX, X } from "lucide-react";
+import { Maximize2, Minimize2, Plus, RotateCcw, Settings, Volume2, VolumeX, X } from "lucide-react";
 import {
   MAX_MULTISTREAM_TILES,
   type MultiStreamTileState,
@@ -20,6 +20,8 @@ interface MultiStreamViewProps {
   onSetVolume: (id: number, volume: number) => void;
   onToggleCompressor: (id: number, enabled: boolean) => void;
   onSetQuality: (id: number, quality: NativeQualityValue) => void;
+  theater: boolean;
+  onToggleTheater: () => void;
   onExit: () => void;
 }
 
@@ -34,6 +36,8 @@ export function MultiStreamView({
   onSetVolume,
   onToggleCompressor,
   onSetQuality,
+  theater,
+  onToggleTheater,
   onExit,
 }: MultiStreamViewProps) {
   const [pickerOpen, setPickerOpen] = useState(tiles.length === 0);
@@ -59,6 +63,15 @@ export function MultiStreamView({
               <Plus size={16} /> Add stream
             </button>
           )}
+          <button
+            aria-pressed={theater}
+            className={theater ? "multi-theater-toggle active" : "multi-theater-toggle"}
+            onClick={onToggleTheater}
+            title={theater ? "Show app UI" : "Theater mode — hide the app UI"}
+            type="button"
+          >
+            {theater ? <Minimize2 size={16} /> : <Maximize2 size={16} />} Theater
+          </button>
           <button className="multi-exit" onClick={onExit} type="button">
             Exit multistream
           </button>

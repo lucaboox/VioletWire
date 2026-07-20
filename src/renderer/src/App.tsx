@@ -572,6 +572,7 @@ export function App() {
     quality: "best",
   });
   const [multiStreamActive, setMultiStreamActive] = useState(false);
+  const [multiTheater, setMultiTheater] = useState(false);
   const [multiTiles, setMultiTiles] = useState<MultiStreamTileState[]>([]);
   // Which tile's chat the tabbed Stream Chat is currently showing.
   const [multiChatChannel, setMultiChatChannel] = useState<string | null>(null);
@@ -2082,6 +2083,7 @@ export function App() {
     setMultiTiles([]);
     setMultiChatChannel(null);
     setMultiStreamActive(false);
+    setMultiTheater(false);
     // Start the next session with clean chat buffers.
     multiChatPending.current = new Map();
     setMultiChatBuffers(new Map());
@@ -2337,6 +2339,7 @@ export function App() {
         chatOnLeft ? "chat-left" : "",
         sidebarCollapsed ? "sidebar-collapsed" : "",
         theaterMode ? "theater-mode" : "",
+        multiStreamActive && multiTheater ? "multi-theater" : "",
         fullscreen ? "fullscreen-mode" : "",
         fullscreen && !nativeControlsVisible ? "controls-hidden" : "",
       ].join(" ")}
@@ -2658,6 +2661,8 @@ export function App() {
               onSetQuality={(id, quality) =>
                 void window.desktop.player.multiSetQuality(id, quality)
               }
+              theater={multiTheater}
+              onToggleTheater={() => setMultiTheater((current) => !current)}
               onExit={exitMultiStream}
             />
             <aside className="multi-chat" aria-label="Stream chat">

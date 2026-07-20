@@ -146,7 +146,8 @@
 }
 
 .multi-add-toggle,
-.multi-exit {
+.multi-exit,
+.multi-theater-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -161,13 +162,31 @@
 }
 
 .multi-add-toggle:hover,
-.multi-exit:hover {
+.multi-exit:hover,
+.multi-theater-toggle:hover {
   background: #26262c;
 }
 
-.multi-add-toggle.active {
+.multi-add-toggle.active,
+.multi-theater-toggle.active {
   border-color: #7c3aed;
   background: #2c1c44;
+}
+
+/* Theater mode: hide the app sidebar and top bar so the grid + chat fill the
+   window. The multistream layout then reclaims the 68px it reserves for the
+   (now hidden) top bar. */
+.app-shell.multi-theater {
+  grid-template-columns: 1fr;
+}
+
+.multi-theater .sidebar,
+.multi-theater .topbar {
+  display: none;
+}
+
+.multi-theater .multi-stream-layout {
+  height: 100%;
 }
 
 /* Grid layouts scale to the tile count: solo, side-by-side, and 2x2. */
