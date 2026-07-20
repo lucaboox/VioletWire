@@ -1,5 +1,15 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2, Minimize2, Plus, RotateCcw, Settings, Volume2, VolumeX, X } from "lucide-react";
+import {
+  AudioLines,
+  Maximize2,
+  Minimize2,
+  Plus,
+  RotateCcw,
+  Settings,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
 import {
   MAX_MULTISTREAM_TILES,
   type MultiStreamTileState,
@@ -139,7 +149,6 @@ const MultiTile = memo(function MultiTile({
 }: MultiTileProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
-  const [audioMenuOpen, setAudioMenuOpen] = useState(false);
   const [qualities, setQualities] = useState<NativeQuality[]>([]);
 
   // Lazy-load the quality list the first time the menu opens for this tile.
@@ -213,49 +222,36 @@ const MultiTile = memo(function MultiTile({
       <div className="multi-tile-bar" onClick={(event) => event.stopPropagation()}>
         {tile.active && <span className="multi-tile-live-dot" title="Audio focus" />}
         <span className="multi-tile-name">{name}</span>
-        <div className="multi-tile-audio-control">
-          <button
-            aria-label="Audio"
-            className={audioMenuOpen ? "multi-tile-btn active" : "multi-tile-btn"}
-            onClick={() => setAudioMenuOpen((open) => !open)}
-            title="Volume & audio"
-            type="button"
-          >
-            {tile.state.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-          </button>
-          {audioMenuOpen && (
-            <div className="multi-tile-audio-menu">
-              <div className="multi-tile-audio-row">
-                <button
-                  aria-label={tile.state.muted ? "Unmute" : "Mute"}
-                  className="multi-tile-btn"
-                  onClick={() => onToggleMute(tile.id)}
-                  title={tile.state.muted ? "Unmute" : "Mute"}
-                  type="button"
-                >
-                  {tile.state.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                </button>
-                <input
-                  aria-label="Volume"
-                  max="100"
-                  min="0"
-                  onChange={(event) => onSetVolume(tile.id, Number(event.target.value))}
-                  type="range"
-                  value={tile.state.volume}
-                />
-                <span className="multi-tile-audio-value">{Math.round(tile.state.volume)}%</span>
-              </div>
-              <label className="multi-tile-audio-toggle">
-                <input
-                  checked={tile.state.compressorEnabled}
-                  onChange={(event) => onToggleCompressor(tile.id, event.target.checked)}
-                  type="checkbox"
-                />
-                <span>Audio compressor</span>
-              </label>
-            </div>
-          )}
-        </div>
+        <button
+          aria-label={tile.state.muted ? "Unmute" : "Mute"}
+          className="multi-tile-btn"
+          onClick={() => onToggleMute(tile.id)}
+          title={tile.state.muted ? "Unmute" : "Mute"}
+          type="button"
+        >
+          {tile.state.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+        </button>
+        <input
+          aria-label="Volume"
+          className="multi-tile-volume"
+          max="100"
+          min="0"
+          onChange={(event) => onSetVolume(tile.id, Number(event.target.value))}
+          type="range"
+          value={tile.state.volume}
+        />
+        <button
+          aria-label={
+            tile.state.compressorEnabled ? "Disable audio compressor" : "Enable audio compressor"
+          }
+          aria-pressed={tile.state.compressorEnabled}
+          className={tile.state.compressorEnabled ? "multi-tile-btn active" : "multi-tile-btn"}
+          onClick={() => onToggleCompressor(tile.id, !tile.state.compressorEnabled)}
+          title="Audio compressor"
+          type="button"
+        >
+          <AudioLines size={14} />
+        </button>
         <div className="multi-tile-quality">
           <button
             aria-label="Quality"

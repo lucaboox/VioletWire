@@ -383,59 +383,10 @@
   font-size: 12px;
 }
 
-.multi-tile-audio-control {
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.multi-tile-audio-menu {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 6px);
-  right: 0;
-  display: grid;
-  gap: 8px;
-  width: 210px;
-  padding: 10px;
-  border: 1px solid #3a3a42;
-  border-radius: 8px;
-  background: rgb(20 20 24 / 98%);
-  box-shadow: 0 12px 30px rgb(0 0 0 / 60%);
-}
-
-.multi-tile-audio-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.multi-tile-audio-row input[type="range"] {
-  flex: 1 1 auto;
-  min-width: 0;
+.multi-tile-volume {
+  flex: 0 1 74px;
+  min-width: 40px;
   accent-color: #a78bfa;
-  cursor: pointer;
-}
-
-.multi-tile-audio-value {
-  flex: 0 0 auto;
-  min-width: 34px;
-  color: #d4d4d8;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.multi-tile-audio-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #d4d4d8;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.multi-tile-audio-toggle input {
-  accent-color: #7c3aed;
   cursor: pointer;
 }
 
