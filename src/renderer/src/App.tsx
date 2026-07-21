@@ -1024,6 +1024,13 @@ export function App() {
       setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
       setChatOnLeft(preferences.chatOnLeft);
       setControlsHideDelay(preferences.controlsHideDelay);
+      // Seed the volume slider from the saved level while nothing is actively
+      // playing, so the first stream opens showing it rather than 100%.
+      setNativeState((current) =>
+        current.status === "playing"
+          ? current
+          : { ...current, volume: preferences.playerVolume },
+      );
       setSidebarCollapsed(preferences.sidebarCollapsed);
       setChatSidebarWidth(preferences.chatSidebarWidth);
       setChatOpacity(preferences.chatOverlayOpacity);

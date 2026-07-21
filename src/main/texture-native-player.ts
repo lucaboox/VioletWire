@@ -455,7 +455,9 @@ export class TextureNativePlayer {
       status: "idle",
       paused: false,
       muted: false,
-      volume: 100,
+      // Reset to the stored volume, not 100, so the slider doesn't flash 100%
+      // before the next stream's start applies the saved level.
+      volume: Math.min(100, Math.max(0, Math.round(this.getStoredVolume()))),
       behindLive: false,
       quality: "best",
       error: undefined,
