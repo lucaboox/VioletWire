@@ -61,6 +61,23 @@ export function MultiStreamView({
   const canAdd = tiles.length < MAX_MULTISTREAM_TILES;
   const usedLogins = useMemo(() => new Set(tiles.map((tile) => tile.channel)), [tiles]);
 
+  // Close the add-stream menu when clicking anywhere outside it or its toggle.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        (target.closest(".multi-add-picker") || target.closest(".multi-add-toggle"))
+      ) {
+        return;
+      }
+      setPickerOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [pickerOpen]);
+
   return (
     <section className="multi-stream-page">
       <header className="multi-stream-bar">
@@ -82,7 +99,7 @@ export function MultiStreamView({
         <div className="multi-stream-bar-actions">
           {canAdd && (
             <button
-              className={pickerOpen ? "multi-bar-btn active" : "multi-bar-btn"}
+              className={pickerOpen ? "multi-bar-btn multi-add-toggle active" : "multi-bar-btn multi-add-toggle"}
               onClick={() => setPickerOpen((open) => !open)}
               type="button"
             >
@@ -93,7 +110,7 @@ export function MultiStreamView({
             aria-pressed={theater}
             className={theater ? "multi-bar-btn active" : "multi-bar-btn"}
             onClick={onToggleTheater}
-            title={theater ? "Show app UI" : "Theater mode — hide the app UI"}
+            title="Theater mode (T)"
             type="button"
           >
             {theater ? <Minimize2 size={16} /> : <Maximize2 size={16} />} Theater
@@ -102,7 +119,7 @@ export function MultiStreamView({
             aria-pressed={fullscreen}
             className={fullscreen ? "multi-bar-btn active" : "multi-bar-btn"}
             onClick={onToggleFullscreen}
-            title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            title={fullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)"}
             type="button"
           >
             {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />} Fullscreen

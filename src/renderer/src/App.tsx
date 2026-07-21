@@ -1674,6 +1674,37 @@ export function App() {
     theaterMode,
   ]);
 
+  // Multistream shortcuts: T = theater, F = fullscreen. Same guards as the
+  // single player — ignore modifier combos (Alt+F etc.) and keys typed into
+  // chat inputs, buttons, and other interactive controls.
+  useEffect(() => {
+    if (!multiStreamActive) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          'input, textarea, select, button, a, [contenteditable="true"], [role="textbox"], [role="menu"], [role="dialog"]',
+        )
+      ) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "t") {
+        setMultiTheater((current) => !current);
+      } else if (key === "f") {
+        void window.desktop.player.setFullscreen(!fullscreen);
+      } else if (event.key === "Escape" && fullscreen) {
+        void window.desktop.player.setFullscreen(false);
+      } else if (event.key === "Escape" && multiTheater) {
+        setMultiTheater(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [multiStreamActive, fullscreen, multiTheater]);
+
   useEffect(() => {
     if (!activeChannel || activeMode !== "native") {
       window.desktop.player.setNativeControlsVisible(false);
