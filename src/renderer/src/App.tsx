@@ -933,6 +933,8 @@ export function App() {
   // Buffer every tile channel's chat. Messages are batched on a short interval
   // so busy channels don't re-render the app per message.
   const multiChatPending = useRef<Map<string, ChatMessage[]>>(new Map());
+  // Listeners stay registered so no message is missed between starting
+  // multistream and this effect running; they're idle when main isn't sending.
   useEffect(() => {
     const removeMessage = window.desktop.player.onMultiChatMessage((channel, message) => {
       const pending = multiChatPending.current;
@@ -945,6 +947,16 @@ export function App() {
         return next;
       });
     });
+    return () => {
+      removeMessage();
+      removeState();
+    };
+  }, []);
+
+  // The batch flush only needs to tick while multistream is up — otherwise it
+  // was firing every 150ms for the life of the app doing nothing.
+  useEffect(() => {
+    if (!multiStreamActive) return;
     const flush = window.setInterval(() => {
       if (multiChatPending.current.size === 0) return;
       const batch = multiChatPending.current;
@@ -957,12 +969,8 @@ export function App() {
         return next;
       });
     }, 150);
-    return () => {
-      removeMessage();
-      removeState();
-      window.clearInterval(flush);
-    };
-  }, []);
+    return () => window.clearInterval(flush);
+  }, [multiStreamActive]);
 
   const scrollMultiChatToBottom = useCallback(() => {
     const host = multiChatHost.current;
@@ -1727,12 +1735,15 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
-  // One shared tick keeps every visible uptime label fresh without a
-  // per-card interval.
+  // One shared tick keeps every visible uptime label fresh without a per-card
+  // interval — but only while a label can actually be on screen. It re-renders
+  // the whole app, so it must not run when nothing is live and nothing is open.
+  const hasLiveFollowedChannel = followedChannels.some((channel) => channel.isLive);
   useEffect(() => {
+    if (!activeChannel && !hasLiveFollowedChannel) return;
     const timer = window.setInterval(() => setUptimeNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [activeChannel, hasLiveFollowedChannel]);
 
   useEffect(() => {
     // Player shortcuts must not fire while the player is minimized to the
