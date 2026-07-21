@@ -495,6 +495,14 @@ export function App() {
   );
   const [twitchBadges, setTwitchBadges] = useState<Map<string, ChatBadgeAsset>>(new Map());
   const [twitchPickerEmotes, setTwitchPickerEmotes] = useState<TwitchPickerEmote[]>([]);
+  // Cache each channel's loaded emotes/badges so switching chat (multistream
+  // tabs especially) reuses them instantly instead of clearing and refetching.
+  const emoteBundleCache = useRef<
+    Map<string, { maps: Map<EmoteProvider, Map<string, ProviderEmote>>; names: Map<EmoteProvider, Set<string>> }>
+  >(new Map());
+  const badgeBundleCache = useRef<
+    Map<string, { badges: Map<string, ChatBadgeAsset>; picker: TwitchPickerEmote[] }>
+  >(new Map());
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [chatTimestamps, setChatTimestamps] = useState(
@@ -1142,66 +1150,99 @@ export function App() {
     };
   }, []);
 
+  // Load a channel's emotes (global + channel sets) into the cache once and
+  // return the bundle. Keyed by channel + broadcaster id so it refreshes when
+  // the broadcaster id resolves after the login.
+  const loadEmoteBundle = useCallback(
+    async (channel: string, broadcasterId: string | null) => {
+      const key = `${channel}|${broadcasterId ?? ""}`;
+      const existing = emoteBundleCache.current.get(key);
+      if (existing) return existing;
+      const requests: Array<Promise<EmoteSetResult>> = [
+        window.desktop.emotes.getSevenTvGlobal(),
+        window.desktop.emotes.getFfzGlobal(),
+        window.desktop.emotes.getBttvGlobal(),
+      ];
+      if (broadcasterId) {
+        requests.push(
+          window.desktop.emotes.getSevenTvChannel(broadcasterId),
+          window.desktop.emotes.getFfzChannel(broadcasterId),
+          window.desktop.emotes.getBttvChannel(broadcasterId),
+        );
+      }
+      const results = await Promise.allSettled(requests);
+      const maps = emptyProviderEmoteMaps();
+      const names = emptyProviderChannelNames();
+      for (const settled of results) {
+        if (settled.status !== "fulfilled") continue;
+        const result = settled.value;
+        const providerMap = maps.get(result.provider) ?? new Map();
+        for (const emote of result.emotes) {
+          if (result.scope === "channel" || !providerMap.has(emote.name)) {
+            providerMap.set(emote.name, emote);
+          }
+        }
+        maps.set(result.provider, providerMap);
+        if (result.scope === "channel") {
+          names.set(result.provider, new Set(result.emotes.map((emote) => emote.name)));
+        }
+      }
+      const bundle = { maps, names };
+      emoteBundleCache.current.set(key, bundle);
+      return bundle;
+    },
+    [],
+  );
+
+  const loadBadgeBundle = useCallback(async (channel: string) => {
+    const existing = badgeBundleCache.current.get(channel);
+    if (existing) return existing;
+    const assets = await window.desktop.chat.getAssets(channel);
+    const bundle = {
+      badges: new Map(assets.badges.map((badge) => [badge.key, badge] as const)),
+      picker: assets.emotes,
+    };
+    badgeBundleCache.current.set(channel, bundle);
+    return bundle;
+  }, []);
+
   useEffect(() => {
     if (!chatChannel) return;
+    const cached = emoteBundleCache.current.get(`${chatChannel}|${chatBroadcasterId ?? ""}`);
+    if (cached) {
+      setProviderEmoteMaps(cached.maps);
+      setProviderChannelNames(cached.names);
+      return;
+    }
     let cancelled = false;
-    const broadcasterId = chatBroadcasterId;
-    queueMicrotask(() => {
+    // Only clear when we actually have to fetch (first time for this channel);
+    // cached channels above swap in instantly with no flash.
+    setProviderEmoteMaps(emptyProviderEmoteMaps());
+    setProviderChannelNames(emptyProviderChannelNames());
+    void loadEmoteBundle(chatChannel, chatBroadcasterId).then((bundle) => {
       if (cancelled) return;
-      setProviderEmoteMaps(emptyProviderEmoteMaps());
-      setProviderChannelNames(emptyProviderChannelNames());
+      setProviderEmoteMaps(bundle.maps);
+      setProviderChannelNames(bundle.names);
     });
-    const requests: Array<Promise<EmoteSetResult>> = [
-      window.desktop.emotes.getSevenTvGlobal(),
-      window.desktop.emotes.getFfzGlobal(),
-      window.desktop.emotes.getBttvGlobal(),
-    ];
-    if (broadcasterId) {
-      requests.push(
-        window.desktop.emotes.getSevenTvChannel(broadcasterId),
-        window.desktop.emotes.getFfzChannel(broadcasterId),
-        window.desktop.emotes.getBttvChannel(broadcasterId),
-      );
-    }
-    for (const request of requests) {
-      void request.then((result) => {
-        if (cancelled) return;
-        setProviderEmoteMaps((current) => {
-          const next = new Map(current);
-          const providerMap = new Map(next.get(result.provider));
-          for (const emote of result.emotes) {
-            if (result.scope === "channel" || !providerMap.has(emote.name)) {
-              providerMap.set(emote.name, emote);
-            }
-          }
-          next.set(result.provider, providerMap);
-          return next;
-        });
-        if (result.scope === "channel") {
-          setProviderChannelNames((current) => {
-            const next = new Map(current);
-            next.set(result.provider, new Set(result.emotes.map((emote) => emote.name)));
-            return next;
-          });
-        }
-      }).catch(() => {
-        // Providers are optional. A slow or unavailable provider must not delay
-        // emotes returned by the others.
-      });
-    }
     return () => {
       cancelled = true;
     };
-  }, [chatChannel, chatBroadcasterId]);
+  }, [chatChannel, chatBroadcasterId, loadEmoteBundle]);
 
   useEffect(() => {
     if (!chatChannel || authState.status !== "signed-in") return;
+    const cached = badgeBundleCache.current.get(chatChannel);
+    if (cached) {
+      setTwitchBadges(cached.badges);
+      setTwitchPickerEmotes(cached.picker);
+      return;
+    }
     let cancelled = false;
-    void window.desktop.chat.getAssets(chatChannel)
-      .then((assets) => {
+    void loadBadgeBundle(chatChannel)
+      .then((bundle) => {
         if (cancelled) return;
-        setTwitchBadges(new Map(assets.badges.map((badge) => [badge.key, badge])));
-        setTwitchPickerEmotes(assets.emotes);
+        setTwitchBadges(bundle.badges);
+        setTwitchPickerEmotes(bundle.picker);
       })
       .catch(() => {
         if (!cancelled) {
@@ -1212,7 +1253,33 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [chatChannel, authState.status]);
+  }, [chatChannel, authState.status, loadBadgeBundle]);
+
+  // Multistream keeps all tabs' chats up, so warm every tile channel's emotes
+  // and badges into the cache in the background. Switching tabs is then instant
+  // with the right custom emotes, never unloading and refetching. Each channel
+  // is warmed once — the effect re-runs as tiles update, but the guard skips
+  // channels already fetched.
+  const warmedChatChannels = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!multiStreamActive) return;
+    let cancelled = false;
+    for (const tile of multiTiles) {
+      if (warmedChatChannels.current.has(tile.channel)) continue;
+      warmedChatChannels.current.add(tile.channel);
+      void window.desktop.twitch
+        .getStreamMetadata(tile.channel)
+        .then((meta) => {
+          if (cancelled) return;
+          void loadEmoteBundle(tile.channel, meta?.broadcasterId ?? null);
+          if (authState.status === "signed-in") void loadBadgeBundle(tile.channel);
+        })
+        .catch(() => warmedChatChannels.current.delete(tile.channel));
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [multiStreamActive, multiTiles, authState.status, loadEmoteBundle, loadBadgeBundle]);
 
   const chatHistoryBoundary = chatMessages.reduce(
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
