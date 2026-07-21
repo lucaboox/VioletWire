@@ -120,25 +120,29 @@
   background: #000;
 }
 
+/* Match the single-player toolbar: fixed 54px height, same padding, colors,
+   and font size, so the two bars read as the same component. */
 .multi-stream-bar {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 12px 18px;
-  border-bottom: 1px solid #202024;
-  background: #0d0d10;
+  gap: 11px;
+  height: 54px;
+  padding: 0 12px;
+  border-bottom: 1px solid #28282e;
+  background: #121216;
+  font-size: 13px;
 }
 
 .multi-stream-title {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 11px;
 }
 
 .multi-stream-title strong {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .multi-stream-title span {
@@ -156,8 +160,8 @@
 .multi-back {
   display: grid;
   flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   place-items: center;
   border: 0;
