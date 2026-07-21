@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
   ChevronLeft,
@@ -26,6 +26,7 @@ interface MultiStreamViewProps {
   tiles: MultiStreamTileState[];
   followedLive: FollowedChannel[];
   nameFor: (login: string) => string;
+  controlsHideDelay: number;
   onAdd: (channel: string) => void;
   onRemove: (id: number) => void;
   onActivate: (id: number) => void;
@@ -44,6 +45,7 @@ export function MultiStreamView({
   tiles,
   followedLive,
   nameFor,
+  controlsHideDelay,
   onAdd,
   onRemove,
   onActivate,
@@ -144,6 +146,7 @@ export function MultiStreamView({
             key={tile.id}
             tile={tile}
             name={nameFor(tile.channel)}
+            controlsHideDelay={controlsHideDelay}
             onRemove={onRemove}
             onActivate={onActivate}
             onToggleMute={onToggleMute}
@@ -168,6 +171,7 @@ export function MultiStreamView({
 interface MultiTileProps {
   tile: MultiStreamTileState;
   name: string;
+  controlsHideDelay: number;
   onRemove: (id: number) => void;
   onActivate: (id: number) => void;
   onToggleMute: (id: number) => void;
@@ -179,6 +183,7 @@ interface MultiTileProps {
 const MultiTile = memo(function MultiTile({
   tile,
   name,
+  controlsHideDelay,
   onRemove,
   onActivate,
   onToggleMute,
@@ -189,6 +194,36 @@ const MultiTile = memo(function MultiTile({
   const hostRef = useRef<HTMLDivElement>(null);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [qualities, setQualities] = useState<NativeQuality[]>([]);
+  // Controls auto-hide exactly like the single player: they start visible, hide
+  // after the configured delay of no movement, reveal on pointer move, and hide
+  // immediately when the pointer leaves the tile. The cursor hides with them.
+  const [controlsShown, setControlsShown] = useState(true);
+  const hideTimer = useRef<number | null>(null);
+
+  const revealControls = useCallback(() => {
+    setControlsShown(true);
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setControlsShown(false), controlsHideDelay);
+  }, [controlsHideDelay]);
+
+  const hideControls = useCallback(() => {
+    if (hideTimer.current !== null) {
+      window.clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+    setControlsShown(false);
+  }, []);
+
+  // Start the initial hide countdown on mount, like the single player.
+  useEffect(() => {
+    hideTimer.current = window.setTimeout(() => setControlsShown(false), controlsHideDelay);
+    return () => {
+      if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
+    };
+  }, [controlsHideDelay]);
+
+  // The quality popover keeps the bar up while it's open.
+  const barVisible = controlsShown || qualityMenuOpen;
 
   // Lazy-load the quality list the first time the menu opens for this tile.
   useEffect(() => {
@@ -236,9 +271,17 @@ const MultiTile = memo(function MultiTile({
 
   return (
     <div
-      className={tile.active ? "multi-tile active" : "multi-tile"}
+      className={[
+        "multi-tile",
+        tile.active ? "active" : "",
+        barVisible ? "" : "controls-hidden",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       ref={hostRef}
       onClick={() => onActivate(tile.id)}
+      onMouseMove={revealControls}
+      onMouseLeave={hideControls}
     >
       <canvas
         className="native-texture-canvas"
@@ -337,7 +380,6 @@ const MultiTile = memo(function MultiTile({
           <X size={14} />
         </button>
       </div>
-      {!tile.active && <div className="multi-tile-focus-hint">Click video for audio</div>}
     </div>
   );
 });

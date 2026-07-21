@@ -265,6 +265,12 @@
   cursor: pointer;
 }
 
+/* Once a tile's controls auto-hide, hide its cursor too — same as the single
+   player. Any pointer move reveals the controls and restores the cursor. */
+.multi-tile.controls-hidden {
+  cursor: none;
+}
+
 .multi-tile .native-texture-canvas {
   display: block;
   width: 100%;
@@ -298,31 +304,32 @@
   line-height: 1.5;
 }
 
+/* Compact control cluster anchored to the top-right (auto width, not spanning
+   the tile). Shown while the tile's controls are revealed. */
 .multi-tile-bar {
   position: absolute;
   top: 8px;
-  left: 8px;
   right: 8px;
+  left: auto;
   display: flex;
   align-items: center;
   gap: 8px;
+  max-width: calc(100% - 16px);
   padding: 5px 6px 5px 10px;
   border-radius: 8px;
   background: rgb(9 9 11 / 72%);
-  opacity: 0;
+  opacity: 1;
   transition: opacity 120ms ease;
+}
+
+.multi-tile.controls-hidden .multi-tile-bar {
+  opacity: 0;
   pointer-events: none;
 }
 
-.multi-tile:hover .multi-tile-bar,
-.multi-tile.active .multi-tile-bar {
-  opacity: 1;
-  pointer-events: auto;
-}
-
 .multi-tile-name {
-  flex: 1 1 auto;
   overflow: hidden;
+  max-width: 150px;
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -421,26 +428,6 @@
   min-width: 40px;
   accent-color: #a78bfa;
   cursor: pointer;
-}
-
-.multi-tile-focus-hint {
-  position: absolute;
-  bottom: 10px;
-  left: 50%;
-  padding: 4px 10px;
-  border-radius: 999px;
-  color: #e4e4e7;
-  background: rgb(9 9 11 / 72%);
-  font-size: 11px;
-  font-weight: 600;
-  opacity: 0;
-  transform: translateX(-50%);
-  transition: opacity 120ms ease;
-  pointer-events: none;
-}
-
-.multi-tile:not(.active):hover .multi-tile-focus-hint {
-  opacity: 1;
 }
 
 .multi-empty {

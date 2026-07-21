@@ -2706,6 +2706,7 @@ export function App() {
               tiles={multiTiles}
               followedLive={liveFollowedChannels}
               nameFor={nameForChannel}
+              controlsHideDelay={controlsHideDelay}
               onAdd={(channel) => void addMultiTile(channel)}
               onRemove={removeMultiTile}
               onActivate={activateMultiTile}
