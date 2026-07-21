@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
+  ChevronLeft,
   Maximize,
   Maximize2,
   Minimize,
@@ -64,6 +65,15 @@ export function MultiStreamView({
     <section className="multi-stream-page">
       <header className="multi-stream-bar">
         <div className="multi-stream-title">
+          <button
+            aria-label="Exit multistream"
+            className="multi-back"
+            onClick={onExit}
+            title="Exit multistream"
+            type="button"
+          >
+            <ChevronLeft size={24} />
+          </button>
           <strong>Multistream</strong>
           <span>
             {tiles.length}/{MAX_MULTISTREAM_TILES} streams
@@ -72,7 +82,7 @@ export function MultiStreamView({
         <div className="multi-stream-bar-actions">
           {canAdd && (
             <button
-              className={pickerOpen ? "multi-add-toggle active" : "multi-add-toggle"}
+              className={pickerOpen ? "multi-bar-btn active" : "multi-bar-btn"}
               onClick={() => setPickerOpen((open) => !open)}
               type="button"
             >
@@ -81,7 +91,7 @@ export function MultiStreamView({
           )}
           <button
             aria-pressed={theater}
-            className={theater ? "multi-theater-toggle active" : "multi-theater-toggle"}
+            className={theater ? "multi-bar-btn active" : "multi-bar-btn"}
             onClick={onToggleTheater}
             title={theater ? "Show app UI" : "Theater mode — hide the app UI"}
             type="button"
@@ -90,15 +100,12 @@ export function MultiStreamView({
           </button>
           <button
             aria-pressed={fullscreen}
-            className={fullscreen ? "multi-theater-toggle active" : "multi-theater-toggle"}
+            className={fullscreen ? "multi-bar-btn active" : "multi-bar-btn"}
             onClick={onToggleFullscreen}
             title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
             type="button"
           >
             {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />} Fullscreen
-          </button>
-          <button className="multi-exit" onClick={onExit} type="button">
-            <X size={16} /> Exit
           </button>
           {pickerOpen && canAdd && (
             <AddStreamPicker

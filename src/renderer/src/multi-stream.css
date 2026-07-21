@@ -152,32 +152,52 @@
   gap: 10px;
 }
 
-.multi-add-toggle,
-.multi-exit,
-.multi-theater-toggle {
+/* Back chevron on the left, like the single player's toolbar. */
+.multi-back {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  color: #a1a1aa;
+  background: transparent;
+  cursor: pointer;
+}
+
+.multi-back:hover {
+  color: white;
+  background: #26262b;
+}
+
+/* Borderless bar buttons matching the player control bar: transparent until
+   hover/active, then a subtle rounded fill. */
+.multi-bar-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 12px;
-  border: 1px solid #3a3a42;
+  padding: 7px 11px;
+  border: 1px solid transparent;
   border-radius: 8px;
-  color: #e4e4e7;
-  background: #18181b;
+  color: #d4d4d8;
+  background: transparent;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
-.multi-add-toggle:hover,
-.multi-exit:hover,
-.multi-theater-toggle:hover {
-  background: #26262c;
+.multi-bar-btn:hover {
+  border-color: rgb(255 255 255 / 15%);
+  color: white;
+  background: rgb(35 35 42 / 88%);
 }
 
-.multi-add-toggle.active,
-.multi-theater-toggle.active {
-  border-color: #7c3aed;
-  background: #2c1c44;
+.multi-bar-btn.active {
+  border-color: rgb(255 255 255 / 15%);
+  color: #ddd6fe;
+  background: rgb(67 47 88 / 88%);
 }
 
 /* Theater mode: hide the app sidebar and top bar so the grid + chat fill the
