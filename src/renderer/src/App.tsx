@@ -39,6 +39,7 @@ import {
   Settings,
   Smile,
   Star,
+  StarOff,
   Tv,
   Users,
   Unlink,
@@ -459,6 +460,12 @@ export function App() {
     useState<TwitchDeviceAuthorization | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [followedChannels, setFollowedChannels] = useState<FollowedChannel[]>([]);
+  const [favoriteChannels, setFavoriteChannels] = useState<Set<string>>(new Set());
+  const [channelMenu, setChannelMenu] = useState<{
+    login: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [browseCategories, setBrowseCategories] = useState<BrowseCategory[]>([]);
   const [browseCategoryCursor, setBrowseCategoryCursor] = useState<string | undefined>();
   const [browseSearch, setBrowseSearch] = useState("");
@@ -1023,6 +1030,7 @@ export function App() {
       setChatEmoteSize(preferences.chatEmoteSize);
       setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
       setChatOnLeft(preferences.chatOnLeft);
+      setFavoriteChannels(new Set(preferences.favoriteChannels));
       setControlsHideDelay(preferences.controlsHideDelay);
       // Seed the volume slider from the saved level while nothing is actively
       // playing, so the first stream opens showing it rather than 100%.
@@ -2363,6 +2371,59 @@ export function App() {
     () => followedChannels.filter((channel) => !channel.isLive),
     [followedChannels],
   );
+  // Favorites are pinned above the Live/Offline groups (live favorites first)
+  // and removed from those groups so they aren't listed twice. The unfiltered
+  // live/offline lists above still feed the home page and multistream picker.
+  const favoriteFollowedChannels = useMemo(
+    () =>
+      followedChannels
+        .filter((channel) => favoriteChannels.has(channel.login))
+        .sort((left, right) => Number(right.isLive) - Number(left.isLive)),
+    [followedChannels, favoriteChannels],
+  );
+  const sidebarLiveChannels = useMemo(
+    () => liveFollowedChannels.filter((channel) => !favoriteChannels.has(channel.login)),
+    [liveFollowedChannels, favoriteChannels],
+  );
+  const sidebarOfflineChannels = useMemo(
+    () => offlineFollowedChannels.filter((channel) => !favoriteChannels.has(channel.login)),
+    [offlineFollowedChannels, favoriteChannels],
+  );
+
+  function toggleFavoriteChannel(login: string) {
+    setFavoriteChannels((current) => {
+      const next = new Set(current);
+      if (next.has(login)) next.delete(login);
+      else next.add(login);
+      void window.desktop.preferences
+        .update({ favoriteChannels: [...next] })
+        .catch(() => undefined);
+      return next;
+    });
+    setChannelMenu(null);
+  }
+
+  useEffect(() => {
+    if (!channelMenu) return;
+    const close = () => setChannelMenu(null);
+    const closeOutside = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest(".channel-context-menu")) return;
+      setChannelMenu(null);
+    };
+    const closeOnKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setChannelMenu(null);
+    };
+    window.addEventListener("pointerdown", closeOutside, true);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", closeOnKey);
+    return () => {
+      window.removeEventListener("pointerdown", closeOutside, true);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", closeOnKey);
+    };
+  }, [channelMenu]);
 
   // A live native stream that ends usually leaves mpv stalled on the HLS
   // playlist rather than emitting EOF, so the canvas freezes on the last frame
@@ -2395,6 +2456,10 @@ export function App() {
         className={channel.isLive ? "followed-channel" : "followed-channel offline"}
         key={channel.id}
         onClick={() => void watchChannel(channel.login, channel)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setChannelMenu({ login: channel.login, x: event.clientX, y: event.clientY });
+        }}
         onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
         onMouseLeave={cancelPreresolve}
         title={sidebarCollapsed ? channel.displayName : undefined}
@@ -2435,6 +2500,29 @@ export function App() {
       } as CSSProperties}
     >
       <ReactTooltipLayer />
+      {channelMenu && (
+        <div
+          className="channel-context-menu"
+          role="menu"
+          style={{ position: "fixed", left: channelMenu.x, top: channelMenu.y }}
+        >
+          <button
+            onClick={() => toggleFavoriteChannel(channelMenu.login)}
+            role="menuitem"
+            type="button"
+          >
+            {favoriteChannels.has(channelMenu.login) ? (
+              <>
+                <StarOff size={15} /> Remove from favorites
+              </>
+            ) : (
+              <>
+                <Star size={15} /> Add to favorites
+              </>
+            )}
+          </button>
+        </div>
+      )}
       {notice && (
         <div className="app-toast" key={notice} role="status" aria-live="polite">
           {notice}
@@ -2465,22 +2553,31 @@ export function App() {
             </button>
           </div>
           <div className="followed-list">
-            {liveFollowedChannels.length > 0 && (
+            {favoriteFollowedChannels.length > 0 && (
+              <>
+                <div className="followed-group-label favorites">
+                  <span>Favorites</span>
+                  <b>{favoriteFollowedChannels.length}</b>
+                </div>
+                {favoriteFollowedChannels.map(renderFollowedChannel)}
+              </>
+            )}
+            {sidebarLiveChannels.length > 0 && (
               <>
                 <div className="followed-group-label">
                   <span>Live</span>
-                  <b>{liveFollowedChannels.length}</b>
+                  <b>{sidebarLiveChannels.length}</b>
                 </div>
-                {liveFollowedChannels.map(renderFollowedChannel)}
+                {sidebarLiveChannels.map(renderFollowedChannel)}
               </>
             )}
-            {offlineFollowedChannels.length > 0 && (
+            {sidebarOfflineChannels.length > 0 && (
               <>
                 <div className="followed-group-label offline">
                   <span>Offline</span>
-                  <b>{offlineFollowedChannels.length}</b>
+                  <b>{sidebarOfflineChannels.length}</b>
                 </div>
-                {offlineFollowedChannels.map(renderFollowedChannel)}
+                {sidebarOfflineChannels.map(renderFollowedChannel)}
               </>
             )}
             {followedChannels.length === 0 && (

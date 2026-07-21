@@ -41,6 +41,8 @@ export const appPreferencesSchema = z.object({
   // origin on every launch and cannot remember anything across runs.
   lastSeenChangelogVersion: z.string().max(64),
   emoteFavorites: z.array(z.string().max(200)).max(1_000),
+  // Followed-channel logins pinned to a Favorites group above the live list.
+  favoriteChannels: z.array(z.string().max(25)).max(500),
   emotePickerWidth: z.number().int().min(330).max(600),
   emotePickerHeight: z.number().int().min(360).max(700),
 });
@@ -76,6 +78,7 @@ export const defaultAppPreferences: AppPreferences = {
   audioCompression: false,
   lastSeenChangelogVersion: "",
   emoteFavorites: [],
+  favoriteChannels: [],
   emotePickerWidth: 390,
   emotePickerHeight: 500,
 };

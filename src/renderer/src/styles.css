@@ -26,6 +26,11 @@ button { color: inherit; }
 .followed-list { min-height: 0; overflow-y: auto; margin-right: -10px; padding-right: 4px; }
 .followed-group-label { display: flex; align-items: center; justify-content: space-between; padding: 11px 12px 7px; color: #85858f; font-size: 11px; font-weight: 800; letter-spacing: .65px; text-transform: uppercase; }
 .followed-group-label.offline { margin-top: 6px; padding-top: 14px; border-top: 1px solid #242429; }
+.followed-group-label.favorites { color: #d8b4fe; }
+.channel-context-menu { z-index: 200; min-width: 184px; padding: 4px; border: 1px solid #3a3a42; border-radius: 9px; background: rgb(24 24 27 / 98%); box-shadow: 0 14px 40px rgb(0 0 0 / 60%); }
+.channel-context-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; color: #e4e4e7; background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; text-align: left; }
+.channel-context-menu button:hover { background: #2a2a31; }
+.oled-mode .channel-context-menu { background: rgb(0 0 0 / 98%); }
 .followed-channel { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 6px 8px; border: 0; border-radius: 8px; color: #d4d4d8; background: transparent; cursor: pointer; text-align: left; }
 .followed-channel:hover { background: #1c1c21; }
 .channel-avatar { position: relative; flex: 0 0 auto; width: 36px; height: 36px; }

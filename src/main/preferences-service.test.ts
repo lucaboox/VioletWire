@@ -101,6 +101,7 @@ describe("PreferencesService", () => {
       audioCompression: true,
       lastSeenChangelogVersion: "0.3.0-alpha.1",
       emoteFavorites: [],
+      favoriteChannels: [],
       emotePickerWidth: 390,
       emotePickerHeight: 500,
     });
