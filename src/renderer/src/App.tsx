@@ -2448,23 +2448,23 @@ export function App() {
     () => followedChannels.filter((channel) => !channel.isLive),
     [followedChannels],
   );
-  // Favorites are pinned above the Live/Offline groups (live favorites first)
-  // and removed from those groups so they aren't listed twice. The unfiltered
-  // live/offline lists above still feed the home page and multistream picker.
-  const favoriteFollowedChannels = useMemo(
-    () =>
-      followedChannels
-        .filter((channel) => favoriteChannels.has(channel.login))
-        .sort((left, right) => Number(right.isLive) - Number(left.isLive)),
-    [followedChannels, favoriteChannels],
+  // Favorites stay inside their Live/Offline group but sort to the top of it,
+  // so an offline favorite never outranks a channel that's actually live.
+  // Partitioning keeps each group's existing order (Twitch sorts by viewers).
+  const sortFavoritesFirst = useCallback(
+    (channels: FollowedChannel[]) => [
+      ...channels.filter((channel) => favoriteChannels.has(channel.login)),
+      ...channels.filter((channel) => !favoriteChannels.has(channel.login)),
+    ],
+    [favoriteChannels],
   );
   const sidebarLiveChannels = useMemo(
-    () => liveFollowedChannels.filter((channel) => !favoriteChannels.has(channel.login)),
-    [liveFollowedChannels, favoriteChannels],
+    () => sortFavoritesFirst(liveFollowedChannels),
+    [liveFollowedChannels, sortFavoritesFirst],
   );
   const sidebarOfflineChannels = useMemo(
-    () => offlineFollowedChannels.filter((channel) => !favoriteChannels.has(channel.login)),
-    [offlineFollowedChannels, favoriteChannels],
+    () => sortFavoritesFirst(offlineFollowedChannels),
+    [offlineFollowedChannels, sortFavoritesFirst],
   );
 
   function toggleFavoriteChannel(login: string) {
@@ -2554,6 +2554,9 @@ export function App() {
         <span className="channel-avatar">
           <img alt="" src={channel.profileImageUrl} />
           {channel.isLive && <i className="channel-live-dot" aria-hidden="true" />}
+          {favoriteChannels.has(channel.login) && (
+            <Star aria-hidden="true" className="channel-favorite-star" size={10} />
+          )}
         </span>
         <span className="followed-copy">
           <strong>{channel.displayName}</strong>
@@ -2639,15 +2642,6 @@ export function App() {
             </button>
           </div>
           <div className="followed-list">
-            {favoriteFollowedChannels.length > 0 && (
-              <>
-                <div className="followed-group-label favorites">
-                  <span>Favorites</span>
-                  <b>{favoriteFollowedChannels.length}</b>
-                </div>
-                {favoriteFollowedChannels.map(renderFollowedChannel)}
-              </>
-            )}
             {sidebarLiveChannels.length > 0 && (
               <>
                 <div className="followed-group-label">
