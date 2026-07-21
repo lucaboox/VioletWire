@@ -2487,16 +2487,25 @@ export function App() {
       if (event.target instanceof Element && event.target.closest(".channel-context-menu")) return;
       setChannelMenu(null);
     };
+    // Only the followed list scrolling matters — that's what moves the row the
+    // menu points at. A capture-phase listener sees every scroll in the app,
+    // and live chat auto-scrolls constantly, which was closing the menu on its
+    // own after a second.
+    const closeOnListScroll = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest(".followed-list")) {
+        setChannelMenu(null);
+      }
+    };
     const closeOnKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setChannelMenu(null);
     };
     window.addEventListener("pointerdown", closeOutside, true);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", closeOnListScroll, true);
     window.addEventListener("resize", close);
     window.addEventListener("keydown", closeOnKey);
     return () => {
       window.removeEventListener("pointerdown", closeOutside, true);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", closeOnListScroll, true);
       window.removeEventListener("resize", close);
       window.removeEventListener("keydown", closeOnKey);
     };
