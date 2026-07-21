@@ -3171,7 +3171,7 @@ export function App() {
               </div>
               <div className="player-chat-actions" aria-label="Chat layout controls">
                 <button
-                  aria-label={chatVisible && chatPresentation === "overlay" ? "Use side chat" : "Overlay chat"}
+                  aria-label={chatVisible && chatPresentation === "overlay" ? "Hide overlay chat" : "Overlay chat"}
                   aria-pressed={chatVisible && chatPresentation === "overlay"}
                   className={
                     chatVisible && chatPresentation === "overlay"
@@ -3179,13 +3179,15 @@ export function App() {
                       : "toolbar-icon"
                   }
                   onClick={() =>
+                    // Pure overlay toggle: turning the overlay off hides chat
+                    // rather than switching to the side layout.
                     setChatLayout(
-                      chatVisible && chatPresentation === "overlay" ? "side" : "overlay",
+                      chatVisible && chatPresentation === "overlay" ? "hidden" : "overlay",
                     )
                   }
                   title={
                     chatVisible && chatPresentation === "overlay"
-                      ? "Move chat beside the video"
+                      ? "Hide the overlay chat"
                       : "Overlay chat on the video"
                   }
                   type="button"
