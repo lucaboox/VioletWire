@@ -10,3 +10,4 @@ coverage/
 .cache/
 vendor/native/
 native/*/build/
+AGENTS.md
