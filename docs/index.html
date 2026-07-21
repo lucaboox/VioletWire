@@ -511,6 +511,12 @@
         background: #08080b;
       }
 
+      /* The multistream grid is four small tiles, so it needs the full row to
+         stay legible rather than sharing a two-up column. */
+      .shot-card.wide {
+        grid-column: 1 / -1;
+      }
+
       .shot-card figcaption {
         padding: 15px 18px;
         border-top: 1px solid var(--border);
@@ -1053,7 +1059,7 @@
           </div>
 
           <div class="gallery">
-            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/home.png">
+            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/home.jpg">
               <img
                 src="assets/home.jpg"
                 alt="VioletWire home screen listing followed live channels as cards with thumbnails, titles, categories, and viewer counts"
@@ -1067,7 +1073,7 @@
               </figcaption>
             </figure>
 
-            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/browse.png">
+            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/browse.jpg">
               <img
                 src="assets/browse.jpg"
                 alt="VioletWire browse page showing a grid of Twitch categories with box art and viewer counts"
@@ -1081,7 +1087,7 @@
               </figcaption>
             </figure>
 
-            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/standard-player.png">
+            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/standard-player.jpg">
               <img
                 src="assets/standard-player.jpg"
                 alt="VioletWire playing a stream in the standard Twitch player with chat docked beside it"
@@ -1095,7 +1101,7 @@
               </figcaption>
             </figure>
 
-            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/native-player.png">
+            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/native-player.jpg">
               <img
                 src="assets/native-player.jpg"
                 alt="VioletWire playing a stream in its experimental Native player with chat docked beside it"
@@ -1106,6 +1112,20 @@
               <figcaption>
                 <strong>Native player</strong>
                 <span>Experimental playback via Streamlink and mpv</span>
+              </figcaption>
+            </figure>
+
+            <figure class="shot-card wide" tabindex="0" role="button" data-full="screenshots/multistream.jpg">
+              <img
+                src="assets/multistream.jpg"
+                alt="VioletWire multistream showing four streams in a two-by-two grid, with tabs above the chat panel for each channel"
+                loading="lazy"
+                width="1600"
+                height="900"
+              />
+              <figcaption>
+                <strong>Multistream</strong>
+                <span>Four streams at once, with a chat tab for each</span>
               </figcaption>
             </figure>
           </div>

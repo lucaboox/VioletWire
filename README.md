@@ -43,28 +43,36 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
   <tr>
     <td width="50%">
       <strong>Followed live channels</strong><br />
-      <a href="docs/screenshots/home.png">
-        <img src="docs/screenshots/home.png" alt="VioletWire home page showing followed live channels" />
+      <a href="docs/screenshots/home.jpg">
+        <img src="docs/screenshots/home.jpg" alt="VioletWire home page showing followed live channels" />
       </a>
     </td>
     <td width="50%">
       <strong>Browse categories</strong><br />
-      <a href="docs/screenshots/browse.png">
-        <img src="docs/screenshots/browse.png" alt="VioletWire browse page showing Twitch categories" />
+      <a href="docs/screenshots/browse.jpg">
+        <img src="docs/screenshots/browse.jpg" alt="VioletWire browse page showing Twitch categories" />
       </a>
     </td>
   </tr>
   <tr>
     <td width="50%">
       <strong>Standard Twitch player</strong><br />
-      <a href="docs/screenshots/standard-player.png">
-        <img src="docs/screenshots/standard-player.png" alt="VioletWire using the standard Twitch player with native chat" />
+      <a href="docs/screenshots/standard-player.jpg">
+        <img src="docs/screenshots/standard-player.jpg" alt="VioletWire using the standard Twitch player with native chat" />
       </a>
     </td>
     <td width="50%">
       <strong>Experimental Native player</strong><br />
-      <a href="docs/screenshots/native-player.png">
-        <img src="docs/screenshots/native-player.png" alt="VioletWire using its experimental Native player with native chat" />
+      <a href="docs/screenshots/native-player.jpg">
+        <img src="docs/screenshots/native-player.jpg" alt="VioletWire using its experimental Native player with native chat" />
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2">
+      <strong>Multistream</strong><br />
+      <a href="docs/screenshots/multistream.jpg">
+        <img src="docs/screenshots/multistream.jpg" alt="VioletWire multistream showing four streams in a two-by-two grid with per-channel chat tabs" />
       </a>
     </td>
   </tr>
