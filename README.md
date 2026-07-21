@@ -5,7 +5,7 @@
 <h1 align="center">VioletWire</h1>
 
 <p align="center">
-  A native-feeling Twitch viewer for Windows with official and experimental native playback.
+  A native-feeling Twitch viewer for Windows with official and experimental native playback, plus multistream.
 </p>
 
 <p align="center">
@@ -71,10 +71,12 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
 ### Browse and discover
 
 - Followed channels separated into live and offline groups
+- Favorite channels, set from a right-click menu, marked with a star and pinned to the top of their group
 - Twitch-style live channel cards with thumbnails, titles, categories, viewers, and uptime
 - Browse popular Twitch categories
 - Open a category to view its live streams
 - Search channels and categories from the top navigation
+- Collapse the followed-channels sidebar to icons
 - Infinite pagination with loading and error states
 
 ### Playback
@@ -84,20 +86,36 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
 - Automatic and manual quality selection
 - Source quality when Twitch exposes it
 - Volume, mute, pause, fullscreen, theater mode, and picture-in-picture where available
+- Volume remembered between streams and across sessions
 - Go-live state and low-latency-oriented native playback
 - Optional dynamic audio compression
-- Resizable side chat and fullscreen chat overlay
-- Controls that hide automatically when the pointer is inactive
+- Floating mini player that keeps a stream playing while you browse, draggable and resizable
+- Create Twitch clips from the player controls
+- Resizable side chat and a movable, resizable chat overlay
+- Controls that hide automatically, with a configurable one-to-ten-second delay
+
+### Multistream
+
+- Watch up to four Native streams at once in a grid that adapts to the tile count
+- Audio focus so only the tile you pick plays sound; click another tile to move it
+- Per-tile mute, volume, audio compressor, and quality
+- Theater mode and fullscreen that hide the app chrome so the grid fills the window
+- Tabbed Stream Chat with every tile's chat connected at once, so switching tabs is instant
 
 ### Chat and emotes
 
 - Native Twitch chat reading and sending
 - Twitch badges, colors, emotes, replies, subscription notices, moderation events, and deleted messages
+- Clickable reply threads that keep their conversation context
+- Clickable usernames with an in-app profile card and that user's recent messages
+- Username and emote autocomplete
+- Mention highlighting with an optional notification sound and a choice of four alert tones
 - 7TV global and channel emotes
 - FrankerFaceZ and BetterTTV global and channel emotes
-- Channel-aware Twitch emote picker
+- Channel-aware Twitch emote picker with favorites and resizing
 - Searchable Twitch, 7TV, FrankerFaceZ, and BetterTTV emote groups
 - Rich emote tooltips with provider attribution
+- Hover cards for Twitch clip links, YouTube links, and image links
 - Configurable timestamps and recent-message history
 - Pause autoscroll while reading older messages
 - Bounded message history to prevent unbounded memory growth
@@ -118,6 +136,7 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
 - OLED true-black mode
 - High-DPI and multi-monitor support
 - Keyboard controls
+- In-app changelog viewer
 - NSIS installer
 - GitHub Releases automatic updates
 
