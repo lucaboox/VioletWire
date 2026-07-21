@@ -1619,12 +1619,14 @@ export function NativeControls({
           aria-label="Volume"
           max="100"
           min="0"
-          onChange={(event) =>
-            window.desktop.player.controlNative({
-              command: "set-volume",
-              value: Number(event.target.value),
-            })
-          }
+          onChange={(event) => {
+            const value = Number(event.target.value);
+            // Update the remount cache immediately, not via the debounced
+            // preference save — otherwise switching channels right after a
+            // change re-mounts the controls at the stale value and jumps.
+            cachedPlayerVolume = value;
+            window.desktop.player.controlNative({ command: "set-volume", value });
+          }}
           type="range"
           value={state.volume}
         />
