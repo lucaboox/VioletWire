@@ -84,6 +84,7 @@ describe("PreferencesService", () => {
       chatEmoteSize: 40,
       chatDeletedMessageStyle: "dimmed",
       chatOnLeft: true,
+      playerVolume: 100,
       controlsHideDelay: 5000,
       sidebarCollapsed: false,
       chatSidebarWidth: 384,

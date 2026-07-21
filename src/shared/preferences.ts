@@ -14,6 +14,9 @@ export const appPreferencesSchema = z.object({
   chatEmoteSize: z.number().int().min(18).max(48),
   chatDeletedMessageStyle: z.enum(["placeholder", "dimmed"]),
   chatOnLeft: z.boolean(),
+  // Last native player volume (0–100), restored when a stream opens so it
+  // doesn't reset to 100% each time.
+  playerVolume: z.number().int().min(0).max(100),
   // How long the native player controls stay visible before auto-hiding, in
   // milliseconds (1s–10s).
   controlsHideDelay: z.number().int().min(1000).max(10000),
@@ -56,6 +59,7 @@ export const defaultAppPreferences: AppPreferences = {
   chatEmoteSize: 27,
   chatDeletedMessageStyle: "placeholder",
   chatOnLeft: false,
+  playerVolume: 100,
   controlsHideDelay: 5000,
   sidebarCollapsed: false,
   chatSidebarWidth: 384,

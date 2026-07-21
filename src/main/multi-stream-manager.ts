@@ -33,6 +33,7 @@ export class MultiStreamManager {
     private readonly getMainWindow: () => BrowserWindow | null,
     private readonly getStreamlinkPath: () => string | undefined,
     private readonly getTwitchPlaybackToken: () => string | null,
+    private readonly getStoredVolume: () => number,
     private readonly onTileState: TileStateListener,
     private readonly onTileRemoved: TileRemovedListener,
   ) {}
@@ -133,6 +134,7 @@ export class MultiStreamManager {
       this.getStreamlinkPath,
       this.getTwitchPlaybackToken,
       String(id),
+      this.getStoredVolume,
     );
     const tile: Tile = { id, channel, player, state: player.getState() };
     this.tiles.set(id, tile);

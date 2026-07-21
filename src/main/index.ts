@@ -307,11 +307,14 @@ const textureNativePlayer = new TextureNativePlayer(
   },
   () => nativePlayer.getAvailability().streamlinkPath,
   () => playbackSessionService.getToken(),
+  "main",
+  () => preferencesService.get().playerVolume,
 );
 const multiStreamManager = new MultiStreamManager(
   () => mainWindow,
   () => nativePlayer.getAvailability().streamlinkPath,
   () => playbackSessionService.getToken(),
+  () => preferencesService.get().playerVolume,
   (tile) => sendToWindow(mainWindow, "native-multi:tile-state", tile),
   (id) => sendToWindow(mainWindow, "native-multi:tile-removed", id),
 );
@@ -1037,9 +1040,22 @@ handleTrusted(
   },
 );
 
+// Persist the single-player volume so a later stream opens at the same level.
+// Debounced because the slider fires many set-volume events while dragging.
+let volumePersistTimer: NodeJS.Timeout | null = null;
+function persistPlayerVolume(volume: number): void {
+  if (volumePersistTimer) clearTimeout(volumePersistTimer);
+  volumePersistTimer = setTimeout(() => {
+    void preferencesService
+      .update({ playerVolume: Math.min(100, Math.max(0, Math.round(volume))) })
+      .catch(() => undefined);
+  }, 400);
+}
+
 onTrusted("native-player:control", (_event, input: unknown) => {
   const result = nativePlayerCommandSchema.safeParse(input);
   if (!result.success || activePlayerMode !== "native") return;
+  if (result.data.command === "set-volume") persistPlayerVolume(result.data.value);
   if (activeNativeBackend === "texture") textureNativePlayer.control(result.data);
   else nativePlayer.control(result.data);
 });

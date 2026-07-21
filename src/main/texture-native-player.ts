@@ -160,6 +160,9 @@ export class TextureNativePlayer {
     // full-window player uses "main"; multistream tiles use their tile id so
     // the preload can route each stream to its own <canvas>.
     private readonly renderTarget: string = "main",
+    // The volume (0–100) a fresh session starts at, so it restores the user's
+    // last setting instead of jumping from 100% down to their level.
+    private readonly getStoredVolume: () => number = () => 100,
   ) {}
 
   getAvailability(): { available: boolean; reason?: string } {
@@ -217,11 +220,12 @@ export class TextureNativePlayer {
     }
 
     this.stopping = false;
+    const startVolume = Math.min(100, Math.max(0, Math.round(this.getStoredVolume())));
     this.updateState({
       status: "starting",
       paused: false,
       muted: false,
-      volume: 100,
+      volume: startVolume,
       behindLive: false,
       quality,
       error: undefined,
@@ -267,6 +271,9 @@ export class TextureNativePlayer {
         gpuDevice?.vendorId,
         gpuDevice?.deviceId,
       );
+      // Start mpv at the restored volume so the very first audio matches, and
+      // the level never audibly jumps from 100% down to the saved value.
+      addon.command(["set", "volume", String(startVolume)]);
       const streamUrl = await streamUrlPromise;
       if (this.stopping || generation !== this.startGeneration || this.session !== session) {
         return { ok: false, reason: "Texture playback was cancelled." };
