@@ -4,6 +4,45 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2-alpha.7] - 2026-07-21
+
+### Additions
+
+- Added multistream Theater mode and a Fullscreen button that hide the app
+  sidebar and top bar so the stream grid and chat fill the window. Both toggle
+  from the bar or with the T and F shortcuts.
+- Added a per-tile volume slider and an audio compressor toggle to each
+  multistream tile, alongside mute, matching the single player's audio
+  controls.
+- Kept every multistream tile's chat connected at once, each with its own
+  buffered history, so switching chat tabs is instant and nothing is missed
+  while a tab is in the background.
+- Saved and restored the native player volume: each stream now opens at your
+  last level instead of resetting to 100%.
+
+### Improvements
+
+- Multistream tile controls now auto-hide when idle and reveal on mouse
+  movement, using the same auto-hide delay and cursor-hiding as the single
+  player. The channel name moved to its own box at the top-left, with the
+  active-audio dot always visible.
+- Restyled the multistream top bar to match the single player toolbar — a back
+  chevron, borderless hover buttons, and matching height — laid out as Add
+  stream, Theater, Fullscreen, and Exit.
+- Clicking a tile moves audio focus and switches its chat into view; the
+  add-stream menu closes when clicking outside it.
+
+### Fixes
+
+- Fixed the multistream chat sometimes getting stuck "scrolled up" after
+  switching tabs; it now only pauses on a deliberate scroll and shows the
+  paused indicator like the main chat.
+- Formatted chat timeout durations into readable units (for example "1m 30s"
+  or "2d 2h") instead of a raw seconds count.
+- The chat overlay button now toggles the overlay on and off instead of
+  switching to the side layout when the overlay is already on.
+- The followed-channels scrollbar now sits flush against the sidebar edge.
+
 ## [0.3.2-alpha.6] - 2026-07-20
 
 ### Additions
