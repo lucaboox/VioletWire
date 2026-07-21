@@ -595,7 +595,9 @@ export function App() {
     if (multiChatChannel && multiTiles.some((tile) => tile.channel === multiChatChannel)) {
       return multiChatChannel;
     }
-    const fallback = multiTiles.find((tile) => tile.active) ?? multiTiles[0];
+    // Fall back to the first tile, not the active one, so activating a tile for
+    // audio doesn't reload chat (and lag the video). Chat follows the tabs.
+    const fallback = multiTiles[0];
     return fallback ? fallback.channel : null;
   }, [multiStreamActive, multiChatChannel, multiTiles]);
   // The channel the chat pane (connection, emotes, badges, sending) follows:
@@ -2172,10 +2174,10 @@ export function App() {
   }
 
   function activateMultiTile(id: number) {
+    // Audio focus only — deliberately does NOT switch the chat tab. Reloading
+    // the chat (emotes/badges/metadata) on the main thread stalled frame
+    // presentation for a moment; chat is switched via the tabs instead.
     window.desktop.player.multiSetActive(id);
-    // Moving audio focus to a tile also switches its chat into view.
-    const tile = multiTiles.find((entry) => entry.id === id);
-    if (tile) setMultiChatChannel(tile.channel);
   }
 
   function nameForChannel(login: string): string {

@@ -99,7 +99,8 @@ export class MultiStreamManager {
     if (!this.tiles.has(id) || this.activeId === id) return;
     this.activeId = id;
     this.applyAudioFocus();
-    // Reflect the new active flags to the renderer for every tile.
+    // Reflect the new active flags for every tile, including any not yet
+    // playing (those get no state event from applyAudioFocus).
     for (const tile of this.tiles.values()) this.onTileState(this.toTileState(tile));
   }
 

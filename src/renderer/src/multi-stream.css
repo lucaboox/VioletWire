@@ -304,25 +304,38 @@
   line-height: 1.5;
 }
 
-/* Compact control cluster anchored to the top-right (auto width, not spanning
-   the tile). Shown while the tile's controls are revealed. */
-.multi-tile-bar {
+/* Channel label in its own compact box at the top-left. Always visible so the
+   active tile's audio dot stays shown even when the controls have hidden. */
+.multi-tile-name-box {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgb(9 9 11 / 72%);
+}
+
+/* Compact control cluster at the top-right, auto-hidden with the controls. */
+.multi-tile-controls {
   position: absolute;
   top: 8px;
   right: 8px;
-  left: auto;
   display: flex;
   align-items: center;
   gap: 8px;
   max-width: calc(100% - 16px);
-  padding: 5px 6px 5px 10px;
+  padding: 5px 6px;
   border-radius: 8px;
   background: rgb(9 9 11 / 72%);
   opacity: 1;
   transition: opacity 120ms ease;
 }
 
-.multi-tile.controls-hidden .multi-tile-bar {
+.multi-tile.controls-hidden .multi-tile-controls {
   opacity: 0;
   pointer-events: none;
 }

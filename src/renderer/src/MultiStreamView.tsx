@@ -301,9 +301,11 @@ const MultiTile = memo(function MultiTile({
           {status === "error" && !offline && error && <p>{error}</p>}
         </div>
       )}
-      <div className="multi-tile-bar" onClick={(event) => event.stopPropagation()}>
-        {tile.active && <span className="multi-tile-live-dot" title="Audio focus" />}
+      <div className="multi-tile-name-box">
+        {tile.active && <span className="multi-tile-live-dot" title="Audio playing" />}
         <span className="multi-tile-name">{name}</span>
+      </div>
+      <div className="multi-tile-controls" onClick={(event) => event.stopPropagation()}>
         <button
           aria-label={tile.state.muted ? "Unmute" : "Mute"}
           className="multi-tile-btn"
