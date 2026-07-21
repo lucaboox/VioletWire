@@ -1281,6 +1281,16 @@ export function App() {
     };
   }, [multiStreamActive, multiTiles, authState.status, loadEmoteBundle, loadBadgeBundle]);
 
+  // The side chat now stays mounted while hidden. Messages that arrive while
+  // it's hidden don't move its scroll, so re-pin to the newest on re-show if it
+  // was following live.
+  useEffect(() => {
+    if (chatVisible && chatAutoScrollRef.current) {
+      const frame = requestAnimationFrame(() => scrollChatToCurrent());
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [chatVisible, chatAutoScrollRef, scrollChatToCurrent]);
+
   const chatHistoryBoundary = chatMessages.reduce(
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
     -1,
@@ -3491,9 +3501,17 @@ export function App() {
                   )}
                 </div>
               </div>
-              {chatVisible && !(activeMode === "native" && chatPresentation === "overlay") && (
+              {!(activeMode === "native" && chatPresentation === "overlay") && (
                 <aside
-                  className={chatPresentation === "overlay" ? "chat-panel overlay" : "chat-panel"}
+                  className={[
+                    "chat-panel",
+                    chatPresentation === "overlay" ? "overlay" : "",
+                    // Keep the panel mounted and just hide it, so re-showing is
+                    // instant instead of re-rendering the whole message list.
+                    chatVisible ? "" : "chat-hidden",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   aria-label={`${activeChannel} chat`}
                   onMouseEnter={revealChatComposer}
                   style={
