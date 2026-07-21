@@ -62,7 +62,11 @@ button { color: inherit; }
 .account-copy small i.connected { background: #22c55e; box-shadow: 0 0 7px #22c55e88; }
 
 main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
-.topbar { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 520px) minmax(0, 1fr); align-items: center; gap: 22px; height: 68px; padding: 0 24px; border-bottom: 1px solid #202024; background: #0d0d10f2; }
+/* The top bar creates its own stacking context, so the search dropdown's own
+   z-index only competes *inside* it. This value must therefore beat page
+   content that overlaps it — notably the sticky .browse-category-header (12) —
+   while staying under modals, the mini player, menus, and tooltips. */
+.topbar { position: relative; z-index: 50; display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 520px) minmax(0, 1fr); align-items: center; gap: 22px; height: 68px; padding: 0 24px; border-bottom: 1px solid #202024; background: #0d0d10f2; }
 .top-navigation { justify-self: start; display: flex; align-items: center; gap: 3px; }
 .top-nav-item { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 12px; border: 0; border-radius: 8px; color: #8f8f99; background: transparent; cursor: pointer; font-size: 14px; font-weight: 650; }
 .top-nav-item:hover { color: #f4f4f5; background: #1b1b20; }
