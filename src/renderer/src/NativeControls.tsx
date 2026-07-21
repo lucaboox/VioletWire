@@ -80,6 +80,17 @@ const initialState: NativePlayerState = {
   behindLive: false,
   quality: "best",
 };
+
+// The controls remount per channel, so their initial volume must already match
+// the saved level — otherwise the slider visibly flashes 100% before the
+// player state arrives. Warmed at startup and kept current on every change.
+let cachedPlayerVolume = 100;
+void window.desktop.preferences
+  .getOrMigrate()
+  .then((preferences) => {
+    cachedPlayerVolume = preferences.playerVolume;
+  })
+  .catch(() => undefined);
 const emoteProviders: EmoteProvider[] = ["7tv", "ffz", "bttv"];
 
 interface OverlayGeometry {
@@ -365,7 +376,10 @@ export function NativeControls({
 }: NativeControlsProps = {}) {
   const [windowContext, setWindowContext] = useState<NativeControlsContext | null>(null);
   const context = inline ? (inlineContext ?? null) : windowContext;
-  const [state, setState] = useState<NativePlayerState>(initialState);
+  const [state, setState] = useState<NativePlayerState>(() => ({
+    ...initialState,
+    volume: cachedPlayerVolume,
+  }));
   const [qualities, setQualities] = useState<NativeQuality[]>([
     { value: "best", label: "Auto" },
   ]);
@@ -573,6 +587,7 @@ export function NativeControls({
             : null,
         );
       }
+      cachedPlayerVolume = preferences.playerVolume;
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
       setChatFontSize(preferences.chatFontSize);
