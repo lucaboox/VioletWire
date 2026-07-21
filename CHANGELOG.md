@@ -4,6 +4,35 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.1] - 2026-07-21
+
+### Additions
+
+- Added favorite channels: right-click any followed channel to add or remove it
+  from favorites. Favorites are marked with a star on their avatar and sort to
+  the top of the Live and Offline groups, so a favorite that goes offline drops
+  out of the way of channels that are actually live. Favorites are saved across
+  launches.
+
+### Improvements
+
+- Chat emotes and badges are now cached per channel instead of being unloaded
+  and refetched on every chat switch, and all multistream tile channels are
+  warmed in the background when multistream opens. Switching a chat tab is now
+  instant with the right custom emotes already loaded.
+- Hiding chat no longer unmounts it, so bringing it back is instant instead of
+  re-rendering the whole message list. It re-pins to the newest message on
+  re-show if it was following live.
+- Stopped two timers running when there was nothing to do: the multistream chat
+  batch flush no longer ticks when multistream is closed, and the shared uptime
+  tick (which re-renders the app) only runs while a stream is open or a
+  followed channel is live.
+
+### Fixes
+
+- Fixed the followed-channel right-click menu closing itself a second after
+  opening, caused by live chat's auto-scrolling triggering its close handler.
+
 ## [0.3.2-alpha.7] - 2026-07-21
 
 ### Additions
