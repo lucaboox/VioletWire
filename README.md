@@ -9,6 +9,10 @@
 </p>
 
 <p align="center">
+  <a href="https://violetwire.lucaboox.win">violetwire.lucaboox.win</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/lucaboox/VioletWire/releases"><img alt="Release" src="https://img.shields.io/github/v/release/lucaboox/VioletWire?color=8b5cf6" /></a>
   <a href="https://github.com/lucaboox/VioletWire/actions/workflows/release.yml"><img alt="Release build" src="https://github.com/lucaboox/VioletWire/actions/workflows/release.yml/badge.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-2563eb" />
@@ -143,7 +147,8 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
 ## Installation
 
 Download the newest installer from
-[GitHub Releases](https://github.com/lucaboox/VioletWire/releases).
+[GitHub Releases](https://github.com/lucaboox/VioletWire/releases), or from
+[violetwire.lucaboox.win](https://violetwire.lucaboox.win).
 
 The alpha installer is currently unsigned, so Windows SmartScreen may show an
 unknown-publisher warning. Code signing is planned before a wider release.

@@ -1,0 +1,1428 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VioletWire — a better way to watch Twitch on Windows</title>
+    <meta
+      name="description"
+      content="VioletWire is an unofficial Twitch desktop client for Windows with followed channels, native playback, multistream, and chat with 7TV, FFZ, and BetterTTV emotes."
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0a0e" />
+
+    <link rel="icon" href="assets/icon-64.png" type="image/png" />
+    <link rel="apple-touch-icon" href="assets/icon-256.png" />
+
+    <!-- Link previews need absolute URLs, so these four are the only place the
+         site's own domain is hardcoded. Change them together if it moves.
+         The domain is also set in docs/CNAME. -->
+    <link rel="canonical" href="https://violetwire.lucaboox.win/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="VioletWire" />
+    <meta property="og:title" content="VioletWire" />
+    <meta
+      property="og:description"
+      content="A better way to watch Twitch on Windows."
+    />
+    <meta property="og:url" content="https://violetwire.lucaboox.win/" />
+    <meta
+      property="og:image"
+      content="https://violetwire.lucaboox.win/assets/home.jpg"
+    />
+    <meta
+      property="og:image:alt"
+      content="VioletWire showing followed live channels"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <style>
+      /* ---------------------------------------------------------------
+         Palette, lifted from the app's own stylesheet so the site and
+         VioletWire itself stay in sync.
+      --------------------------------------------------------------- */
+      :root {
+        --bg: #0a0a0e;
+        --bg-raised: #101016;
+        --surface: #141419;
+        --surface-hi: #1a1a21;
+        --border: #26262f;
+        --border-hi: #33333e;
+
+        --text: #ececf1;
+        --text-dim: #a6a6b2;
+        --text-faint: #7d7d8a;
+
+        --violet: #8b5cf6;
+        --violet-strong: #7c3aed;
+        --violet-light: #a78bfa;
+        --glow: #a855f7;
+
+        --radius: 14px;
+        --radius-sm: 9px;
+        --maxw: 1120px;
+        --ease: 160ms cubic-bezier(0.3, 0.7, 0.4, 1);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+        /* Keep anchored sections clear of the sticky header. */
+        scroll-padding-top: 84px;
+      }
+
+      body {
+        margin: 0;
+        color: var(--text);
+        background: var(--bg);
+        font-family:
+          "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          system-ui, sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      /* Ambient violet wash behind the whole page. Purely decorative. */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background:
+          radial-gradient(
+            760px 460px at 50% -8%,
+            #7c3aed2e,
+            transparent 70%
+          ),
+          radial-gradient(
+            560px 400px at 88% 12%,
+            #a855f71a,
+            transparent 68%
+          ),
+          radial-gradient(700px 500px at 4% 42%, #6d28d914, transparent 70%);
+      }
+
+      img {
+        max-width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      a {
+        color: var(--violet-light);
+        text-decoration-color: #a78bfa66;
+        text-underline-offset: 3px;
+      }
+
+      a:hover {
+        color: #c4b5fd;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        margin: 0;
+        text-wrap: balance;
+      }
+
+      p {
+        text-wrap: pretty;
+      }
+
+      /* Visible, consistent keyboard focus everywhere. */
+      :focus-visible {
+        outline: 2px solid var(--violet-light);
+        outline-offset: 3px;
+        border-radius: 6px;
+      }
+
+      .skip-link {
+        position: absolute;
+        left: 12px;
+        top: -60px;
+        z-index: 100;
+        padding: 10px 16px;
+        border-radius: var(--radius-sm);
+        background: var(--violet-strong);
+        color: #fff;
+        font-weight: 600;
+        text-decoration: none;
+        transition: top var(--ease);
+      }
+
+      .skip-link:focus {
+        top: 12px;
+        color: #fff;
+      }
+
+      .wrap {
+        width: 100%;
+        max-width: var(--maxw);
+        margin-inline: auto;
+        padding-inline: 24px;
+      }
+
+      /* ------------------------------ header ------------------------------ */
+
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 40;
+        border-bottom: 1px solid transparent;
+        background: #0a0a0ecc;
+        backdrop-filter: blur(14px);
+        transition:
+          border-color var(--ease),
+          background var(--ease);
+      }
+
+      .site-header.scrolled {
+        border-bottom-color: var(--border);
+        background: #0a0a0eeb;
+      }
+
+      .header-inner {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        height: 68px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 11px;
+        color: var(--text);
+        font-weight: 700;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+        text-decoration: none;
+      }
+
+      .brand img {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+      }
+
+      .site-nav {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: auto;
+      }
+
+      .site-nav a {
+        padding: 8px 12px;
+        border-radius: var(--radius-sm);
+        color: var(--text-dim);
+        font-size: 14.5px;
+        font-weight: 500;
+        text-decoration: none;
+        transition:
+          color var(--ease),
+          background var(--ease);
+      }
+
+      .site-nav a:hover {
+        color: var(--text);
+        background: #ffffff0d;
+      }
+
+      .nav-toggle {
+        display: none;
+        margin-left: auto;
+        padding: 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        color: var(--text);
+        background: var(--surface);
+        cursor: pointer;
+      }
+
+      /* ------------------------------ buttons ------------------------------ */
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        padding: 12px 20px;
+        border: 1px solid var(--border-hi);
+        border-radius: var(--radius-sm);
+        color: var(--text);
+        background: var(--surface-hi);
+        font: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+          background var(--ease),
+          border-color var(--ease),
+          transform var(--ease),
+          box-shadow var(--ease);
+      }
+
+      .btn:hover {
+        border-color: var(--border-hi);
+        background: #22222b;
+        color: var(--text);
+        transform: translateY(-1px);
+      }
+
+      .btn:active {
+        transform: translateY(0);
+      }
+
+      .btn-primary {
+        border-color: var(--violet);
+        background: linear-gradient(180deg, #8b5cf6, #7c3aed);
+        color: #fff;
+        box-shadow:
+          0 1px 0 #ffffff26 inset,
+          0 8px 26px -10px #7c3aedcc;
+      }
+
+      .btn-primary:hover {
+        border-color: var(--violet-light);
+        background: linear-gradient(180deg, #9d74f8, #8b5cf6);
+        color: #fff;
+        box-shadow:
+          0 1px 0 #ffffff33 inset,
+          0 12px 32px -10px #8b5cf6;
+      }
+
+      .btn-sm {
+        padding: 9px 15px;
+        font-size: 14px;
+      }
+
+      .btn svg {
+        flex: none;
+      }
+
+      /* ------------------------------ sections ------------------------------ */
+
+      section {
+        padding-block: 88px;
+      }
+
+      .section-head {
+        max-width: 640px;
+        margin-bottom: 44px;
+      }
+
+      .eyebrow {
+        display: inline-block;
+        margin-bottom: 12px;
+        color: var(--violet-light);
+        font-size: 13px;
+        font-weight: 650;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .section-head h2 {
+        font-size: clamp(26px, 3.6vw, 36px);
+      }
+
+      .section-head p {
+        margin: 12px 0 0;
+        color: var(--text-dim);
+        font-size: 17px;
+      }
+
+      /* ------------------------------- hero ------------------------------- */
+
+      .hero {
+        padding-block: 76px 60px;
+        text-align: center;
+      }
+
+      .hero-logo {
+        width: 96px;
+        height: 96px;
+        margin: 0 auto 26px;
+        border-radius: 22px;
+        filter: drop-shadow(0 12px 40px #7c3aed73);
+      }
+
+      .hero h1 {
+        font-size: clamp(40px, 7vw, 68px);
+        letter-spacing: -0.035em;
+        background: linear-gradient(180deg, #fff 30%, #c9c2e8);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .hero .tagline {
+        margin: 16px auto 0;
+        max-width: 620px;
+        color: var(--text);
+        font-size: clamp(18px, 2.4vw, 23px);
+        font-weight: 500;
+      }
+
+      .hero .lede {
+        margin: 16px auto 0;
+        max-width: 620px;
+        color: var(--text-dim);
+        font-size: 17px;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px;
+        margin-top: 32px;
+      }
+
+      .hero-note {
+        margin-top: 16px;
+        color: var(--text-faint);
+        font-size: 13.5px;
+      }
+
+      /* Screenshot presented in a small faux app window. */
+      .shot-frame {
+        position: relative;
+        margin-top: 56px;
+        border: 1px solid var(--border-hi);
+        border-radius: var(--radius);
+        background: var(--bg-raised);
+        overflow: hidden;
+        box-shadow:
+          0 0 0 1px #8b5cf61f,
+          0 40px 90px -30px #000,
+          0 0 90px -40px #a855f7a6;
+      }
+
+      .shot-frame::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        border-radius: inherit;
+        box-shadow: inset 0 1px 0 #ffffff0f;
+      }
+
+      .shot-bar {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--border);
+        background: #121216;
+      }
+
+      .shot-bar span {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #33333e;
+      }
+
+      .shot-bar span:first-child {
+        background: #7c3aed;
+      }
+
+      .shot-frame img {
+        width: 100%;
+      }
+
+      /* ----------------------------- features ----------------------------- */
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+      }
+
+      .feature {
+        padding: 24px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: linear-gradient(180deg, var(--surface), #101015);
+        transition:
+          border-color var(--ease),
+          transform var(--ease),
+          box-shadow var(--ease);
+      }
+
+      .feature:hover {
+        border-color: #3d3555;
+        transform: translateY(-2px);
+        box-shadow: 0 14px 34px -22px #a855f7;
+      }
+
+      .feature-icon {
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        margin-bottom: 15px;
+        border: 1px solid #6d28d959;
+        border-radius: 11px;
+        color: var(--violet-light);
+        background: linear-gradient(160deg, #7c3aed38, #7c3aed10);
+      }
+
+      .feature h3 {
+        font-size: 16.5px;
+        font-weight: 650;
+      }
+
+      .feature p {
+        margin: 8px 0 0;
+        color: var(--text-dim);
+        font-size: 14.5px;
+      }
+
+      /* ---------------------------- screenshots ---------------------------- */
+
+      .gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+        gap: 20px;
+      }
+
+      .shot-card {
+        display: block;
+        padding: 0;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        overflow: hidden;
+        text-align: left;
+        cursor: zoom-in;
+        font: inherit;
+        color: inherit;
+        transition:
+          border-color var(--ease),
+          transform var(--ease),
+          box-shadow var(--ease);
+      }
+
+      .shot-card:hover {
+        border-color: #3d3555;
+        transform: translateY(-2px);
+        box-shadow: 0 16px 40px -26px #a855f7;
+      }
+
+      .shot-card img {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        object-position: top center;
+        background: #08080b;
+      }
+
+      .shot-card figcaption {
+        padding: 15px 18px;
+        border-top: 1px solid var(--border);
+      }
+
+      .shot-card strong {
+        display: block;
+        font-size: 15px;
+        font-weight: 650;
+      }
+
+      .shot-card span {
+        display: block;
+        margin-top: 3px;
+        color: var(--text-faint);
+        font-size: 13.5px;
+      }
+
+      /* ----------------------------- lightbox ----------------------------- */
+
+      /* A closed <dialog> is display:none by default, so the display value
+         must only apply while it is open — otherwise the close button leaks
+         onto the page. */
+      .lightbox[open] {
+        display: grid;
+        place-items: center;
+      }
+
+      .lightbox {
+        position: fixed;
+        inset: 0;
+        z-index: 90;
+        /* The UA gives <dialog> a max-width/height that would clamp it below
+           the viewport and leave the image overflowing into a scrollbar. */
+        max-width: none;
+        max-height: none;
+        overflow: hidden;
+        padding: 28px;
+        border: 0;
+        background: #05050899;
+        backdrop-filter: blur(8px);
+      }
+
+      .lightbox::backdrop {
+        background: #050508cc;
+        backdrop-filter: blur(8px);
+      }
+
+      .lightbox img {
+        max-width: min(1280px, 100%);
+        max-height: 100%;
+        width: auto;
+        border: 1px solid var(--border-hi);
+        border-radius: var(--radius);
+        box-shadow: 0 40px 100px -30px #000;
+      }
+
+      .lightbox-close {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        border: 1px solid var(--border-hi);
+        border-radius: 50%;
+        color: var(--text);
+        background: var(--surface);
+        cursor: pointer;
+      }
+
+      .lightbox-close:hover {
+        background: var(--surface-hi);
+      }
+
+      /* ----------------------------- downloads ----------------------------- */
+
+      .download-card {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 22px;
+        padding: 26px;
+        border: 1px solid #3a2f57;
+        border-radius: var(--radius);
+        background:
+          radial-gradient(600px 200px at 12% 0%, #7c3aed26, transparent 70%),
+          linear-gradient(180deg, var(--surface), #101015);
+      }
+
+      .download-card img {
+        width: 62px;
+        height: 62px;
+        border-radius: 15px;
+      }
+
+      .download-card h3 {
+        font-size: 19px;
+      }
+
+      .download-card p {
+        margin: 5px 0 0;
+        color: var(--text-dim);
+        font-size: 14.5px;
+      }
+
+      .pill {
+        display: inline-block;
+        margin-left: 9px;
+        padding: 2px 9px;
+        border: 1px solid #6d28d966;
+        border-radius: 999px;
+        color: var(--violet-light);
+        background: #7c3aed1f;
+        font-size: 12.5px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        vertical-align: 2px;
+      }
+
+      .download-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      .notes {
+        margin-top: 24px;
+        padding-left: 20px;
+        color: var(--text-faint);
+        font-size: 14px;
+      }
+
+      .notes li + li {
+        margin-top: 7px;
+      }
+
+      /* ------------------------------ support ------------------------------ */
+
+      .support-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 16px;
+      }
+
+      .support-card {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 26px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: linear-gradient(180deg, var(--surface), #101015);
+      }
+
+      .support-card p {
+        margin: 0;
+        color: var(--text-dim);
+        font-size: 14.5px;
+        flex: 1;
+      }
+
+      .support-card .btn {
+        margin-top: 4px;
+      }
+
+      /* ------------------------------ footer ------------------------------ */
+
+      .site-footer {
+        margin-top: 40px;
+        padding-block: 40px 56px;
+        border-top: 1px solid var(--border);
+      }
+
+      .footer-top {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .footer-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        margin-left: auto;
+        list-style: none;
+        padding: 0;
+        margin-block: 0;
+      }
+
+      .footer-links a {
+        color: var(--text-dim);
+        font-size: 14.5px;
+        text-decoration: none;
+      }
+
+      .footer-links a:hover {
+        color: var(--text);
+        text-decoration: underline;
+      }
+
+      .disclaimer {
+        margin: 26px 0 0;
+        color: var(--text-faint);
+        font-size: 13px;
+        max-width: 760px;
+      }
+
+      /* --------------------------- responsiveness --------------------------- */
+
+      @media (max-width: 760px) {
+        section {
+          padding-block: 62px;
+        }
+
+        .wrap {
+          padding-inline: 18px;
+        }
+
+        .nav-toggle {
+          display: grid;
+        }
+
+        .site-nav {
+          display: none;
+          position: absolute;
+          left: 12px;
+          right: 12px;
+          top: 62px;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 2px;
+          padding: 8px;
+          border: 1px solid var(--border);
+          border-radius: var(--radius);
+          background: #101016f7;
+          backdrop-filter: blur(14px);
+          box-shadow: 0 20px 44px -20px #000;
+        }
+
+        .site-nav.open {
+          display: flex;
+        }
+
+        .hero {
+          padding-block: 48px 40px;
+        }
+
+        .hero-actions .btn {
+          width: 100%;
+        }
+
+        .shot-frame {
+          margin-top: 38px;
+        }
+
+        .download-card {
+          grid-template-columns: 1fr;
+          text-align: left;
+        }
+
+        .footer-links {
+          margin-left: 0;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+
+        .btn:hover,
+        .feature:hover,
+        .shot-card:hover {
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header" id="siteHeader">
+      <div class="wrap header-inner">
+        <a class="brand" href="#top">
+          <img src="assets/icon-64.png" alt="" width="32" height="32" />
+          VioletWire
+        </a>
+
+        <button
+          class="nav-toggle"
+          id="navToggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="siteNav"
+          aria-label="Open navigation menu"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+
+        <nav class="site-nav" id="siteNav" aria-label="Main">
+          <a href="#features">Features</a>
+          <a href="#screenshots">Screenshots</a>
+          <a href="#download">Download</a>
+          <a href="#support">Support</a>
+          <!-- LINK: GitHub repository -->
+          <a href="https://github.com/lucaboox/VioletWire">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ============================== HERO ============================== -->
+      <section class="hero" id="top">
+        <div class="wrap">
+          <img
+            class="hero-logo"
+            src="assets/icon-256.png"
+            alt="VioletWire app icon"
+            width="96"
+            height="96"
+          />
+
+          <h1>VioletWire</h1>
+
+          <p class="tagline">A better way to watch Twitch on Windows.</p>
+
+          <p class="lede">
+            A desktop Twitch client built with Electron and React that behaves
+            like a real Windows app instead of a browser in a box. Followed
+            channels, native playback, up to four streams at once, and chat with
+            the emotes you actually use.
+          </p>
+
+          <div class="hero-actions">
+            <!-- LINK: primary download. Points at the latest release so it
+                 never goes stale. See the Downloads section for a direct
+                 installer link. -->
+            <a
+              class="btn btn-primary"
+              href="https://github.com/lucaboox/VioletWire/releases/latest"
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v12" />
+                <path d="m7 11 5 5 5-5" />
+                <path d="M5 21h14" />
+              </svg>
+              Download for Windows
+            </a>
+
+            <!-- LINK: GitHub repository -->
+            <a class="btn" href="https://github.com/lucaboox/VioletWire">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 .5a12 12 0 0 0-3.79 23.4c.6.1.82-.26.82-.58v-2.2c-3.34.72-4.04-1.6-4.04-1.6-.55-1.4-1.34-1.77-1.34-1.77-1.1-.75.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.84 2.8 1.3 3.49 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.69.83.57A12 12 0 0 0 12 .5Z" />
+              </svg>
+              View on GitHub
+            </a>
+          </div>
+
+          <p class="hero-note">
+            Windows 10 and 11 · Free and open source ·
+            <span data-version-label>alpha</span>
+          </p>
+
+          <figure class="shot-frame">
+            <div class="shot-bar" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <img
+              src="assets/home.jpg"
+              alt="VioletWire home screen listing followed live channels as cards with thumbnails, titles, categories, and viewer counts"
+              width="1600"
+              height="882"
+              fetchpriority="high"
+            />
+          </figure>
+        </div>
+      </section>
+
+      <!-- ============================ FEATURES ============================ -->
+      <section id="features">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Features</span>
+            <h2>Everything you need, nothing you don't</h2>
+            <p>
+              Built around how people actually watch: check who's live, open a
+              stream fast, and keep chat readable.
+            </p>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 17.75 5.83 21l1.18-6.88L2 9.24l6.91-1L12 2l3.09 6.24 6.91 1-5.01 4.88L18.17 21z" />
+                </svg>
+              </div>
+              <h3>Followed and live channels</h3>
+              <p>
+                Your follows split into live and offline, with thumbnails,
+                categories, viewers, and uptime. Right-click to favorite a
+                channel and it gets a star and sits at the top of its group.
+              </p>
+            </article>
+
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2Z" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </div>
+              <h3>Sign in with Twitch, properly</h3>
+              <p>
+                Twitch's official Device Code flow, so you never type a password
+                into VioletWire. Tokens are encrypted with Windows DPAPI, and
+                signing out removes them. Public streams work without an account
+                at all.
+              </p>
+            </article>
+
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="4" width="20" height="15" rx="2" />
+                  <path d="m10 9 5 3-5 3z" />
+                </svg>
+              </div>
+              <h3>Playback that stays out of the way</h3>
+              <p>
+                Quality selection, theater mode, fullscreen, keyboard controls,
+                and a volume level that's remembered between streams. Controls
+                fade out on their own, with a delay you can set.
+              </p>
+            </article>
+
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="8" height="8" rx="1.5" />
+                  <rect x="13" y="3" width="8" height="8" rx="1.5" />
+                  <rect x="3" y="13" width="8" height="8" rx="1.5" />
+                  <rect x="13" y="13" width="8" height="8" rx="1.5" />
+                </svg>
+              </div>
+              <h3>Two player modes, plus multistream</h3>
+              <p>
+                Use Twitch's own player for maximum compatibility, or the
+                experimental Native player built on Streamlink and mpv. Native
+                mode also runs up to four streams in one grid, with audio
+                focused on whichever tile you pick.
+              </p>
+            </article>
+
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 11.5a8.38 8.38 0 0 1-9 8.32 8.5 8.5 0 0 1-3.8-.9L3 20.5l1.9-4.1A8.38 8.38 0 0 1 3.9 12a8.5 8.5 0 0 1 8.6-8.5 8.38 8.38 0 0 1 8.5 8Z" />
+                </svg>
+              </div>
+              <h3>Chat that isn't an afterthought</h3>
+              <p>
+                Read and send messages with badges, colors, reply threads, and
+                moderation events. Click a name for a profile card, get
+                autocomplete for users and emotes, and pick a sound for
+                mentions.
+              </p>
+            </article>
+
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" />
+                  <path d="M9 9.5h.01M15 9.5h.01" />
+                </svg>
+              </div>
+              <h3>7TV, FFZ, BetterTTV, and Twitch emotes</h3>
+              <p>
+                Global and channel emotes from all four, in a searchable picker
+                grouped by provider, with favorites and a size you can adjust.
+                Hover any emote to see where it came from.
+              </p>
+            </article>
+
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3 4 6v6c0 4.7 3.2 8.6 8 9.7 4.8-1.1 8-5 8-9.7V6Z" />
+                  <path d="m9 12 2 2 4-4" />
+                </svg>
+              </div>
+              <h3>Local-first, no accounts of ours</h3>
+              <p>
+                There is no VioletWire server and no VioletWire user database.
+                Settings live in a file on your PC, and the app talks to Twitch
+                and the emote providers directly — nothing is routed through us.
+              </p>
+            </article>
+
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 8v5M12 16h.01" />
+                </svg>
+              </div>
+              <h3>About ads</h3>
+              <p>
+                VioletWire does not include an ad blocker and does not route
+                playback through a third-party proxy. Twitch stitches ads into
+                the stream itself, so expect to see them in both player modes.
+                Turbo and channel subscriptions are the supported way to avoid
+                them.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== SCREENSHOTS =========================== -->
+      <section id="screenshots">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Screenshots</span>
+            <h2>A look around</h2>
+            <p>Select any shot to view it full size.</p>
+          </div>
+
+          <div class="gallery">
+            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/home.png">
+              <img
+                src="assets/home.jpg"
+                alt="VioletWire home screen listing followed live channels as cards with thumbnails, titles, categories, and viewer counts"
+                loading="lazy"
+                width="1600"
+                height="882"
+              />
+              <figcaption>
+                <strong>Followed live channels</strong>
+                <span>Everyone you follow who's live right now</span>
+              </figcaption>
+            </figure>
+
+            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/browse.png">
+              <img
+                src="assets/browse.jpg"
+                alt="VioletWire browse page showing a grid of Twitch categories with box art and viewer counts"
+                loading="lazy"
+                width="1600"
+                height="882"
+              />
+              <figcaption>
+                <strong>Browse categories</strong>
+                <span>Find something new without opening a browser</span>
+              </figcaption>
+            </figure>
+
+            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/standard-player.png">
+              <img
+                src="assets/standard-player.jpg"
+                alt="VioletWire playing a stream in the standard Twitch player with chat docked beside it"
+                loading="lazy"
+                width="1600"
+                height="882"
+              />
+              <figcaption>
+                <strong>Standard player</strong>
+                <span>Twitch's own player, with VioletWire's chat</span>
+              </figcaption>
+            </figure>
+
+            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/native-player.png">
+              <img
+                src="assets/native-player.jpg"
+                alt="VioletWire playing a stream in its experimental Native player with chat docked beside it"
+                loading="lazy"
+                width="1600"
+                height="882"
+              />
+              <figcaption>
+                <strong>Native player</strong>
+                <span>Experimental playback via Streamlink and mpv</span>
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ DOWNLOADS ============================ -->
+      <section id="download">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Download</span>
+            <h2>Get VioletWire</h2>
+            <p>
+              A standard Windows installer. VioletWire is alpha software — things
+              work, but expect rough edges.
+            </p>
+          </div>
+
+          <div class="download-card">
+            <img src="assets/icon-256.png" alt="" width="62" height="62" />
+            <div>
+              <h3>
+                VioletWire for Windows
+                <span class="pill" data-version-label>alpha</span>
+              </h3>
+              <p>
+                Windows 10 or 11, 64-bit. The installer bundles the Streamlink
+                and mpv runtimes the Native player needs, so there's nothing else
+                to set up.
+              </p>
+            </div>
+            <!-- LINK: direct installer. Rebuilt by script.js from APP_VERSION
+                 so a version bump only needs editing in one place. -->
+            <a
+              class="btn btn-primary"
+              id="directDownload"
+              href="https://github.com/lucaboox/VioletWire/releases/latest"
+            >
+              Download installer
+            </a>
+          </div>
+
+          <div class="download-links">
+            <!-- LINK: all releases -->
+            <a class="btn btn-sm" href="https://github.com/lucaboox/VioletWire/releases">
+              All releases
+            </a>
+            <!-- LINK: GitHub repository -->
+            <a class="btn btn-sm" href="https://github.com/lucaboox/VioletWire">
+              Source code
+            </a>
+            <!-- LINK: issue tracker -->
+            <a class="btn btn-sm" href="https://github.com/lucaboox/VioletWire/issues">
+              Report a bug
+            </a>
+          </div>
+
+          <ul class="notes">
+            <li>
+              The alpha installer isn't code signed yet, so Windows may show an
+              unknown-publisher warning. Signing is planned before a wider
+              release.
+            </li>
+            <li>
+              Installed builds check GitHub for updates on launch and every six
+              hours, and ask before restarting.
+            </li>
+            <li>
+              Windows only for now. Linux support may come later, but it isn't
+              being worked on yet — the Native player leans on Windows-specific
+              graphics APIs.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ============================= SUPPORT ============================= -->
+      <section id="support">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Support</span>
+            <h2>Chip in, if you want to</h2>
+            <p>
+              VioletWire is free and always will be. Support goes toward
+              development tools, code signing, hosting, and the other small costs
+              of keeping the project going. Entirely optional.
+            </p>
+          </div>
+
+          <div class="support-grid">
+            <article class="support-card">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 1 0-7.1 7.1l8.8 8.8 8.8-8.8a5 5 0 0 0 0-7.1Z" />
+                </svg>
+              </div>
+              <h3>GitHub Sponsors</h3>
+              <p>
+                One-off or monthly, handled entirely through GitHub with no extra
+                account to make.
+              </p>
+              <!-- LINK: GitHub Sponsors. Not set up yet — create it at
+                   github.com/sponsors/accounts, then swap this URL. -->
+              <a class="btn btn-sm" href="https://github.com/sponsors/lucaboox">
+                Sponsor on GitHub
+              </a>
+            </article>
+
+            <article class="support-card">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
+                  <path d="M3 8h14v6a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5Z" />
+                  <path d="M6 2v2M10 2v2M14 2v2" />
+                </svg>
+              </div>
+              <h3>Ko-fi</h3>
+              <p>
+                A one-time tip, if that's more your speed. No account needed to
+                send one.
+              </p>
+              <!-- LINK: Ko-fi (taken from the project README) -->
+              <a class="btn btn-sm" href="https://ko-fi.com/W7W3D7V7U">
+                Buy a coffee
+              </a>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============================== FOOTER ============================== -->
+    <footer class="site-footer">
+      <div class="wrap">
+        <div class="footer-top">
+          <a class="brand" href="#top">
+            <img src="assets/icon-64.png" alt="" width="32" height="32" />
+            VioletWire
+          </a>
+
+          <ul class="footer-links">
+            <!-- LINK: GitHub repository -->
+            <li><a href="https://github.com/lucaboox/VioletWire">GitHub</a></li>
+            <!-- LINK: privacy notes. Points at the README's privacy section
+                 until a dedicated PRIVACY.md exists. -->
+            <li>
+              <a href="https://github.com/lucaboox/VioletWire#account-and-privacy">
+                Privacy
+              </a>
+            </li>
+            <!-- LINK: license -->
+            <li>
+              <a href="https://github.com/lucaboox/VioletWire/blob/main/LICENSE">
+                License (GPL-3.0)
+              </a>
+            </li>
+            <!-- LINK: third-party notices -->
+            <li>
+              <a href="https://github.com/lucaboox/VioletWire/blob/main/THIRD_PARTY_NOTICES.md">
+                Third-party notices
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <p class="disclaimer">
+          VioletWire is an unofficial, third-party client. It is not affiliated
+          with, endorsed by, or sponsored by Twitch, Amazon, 7TV, FrankerFaceZ,
+          BetterTTV, Streamlink, or mpv. All trademarks belong to their
+          respective owners. VioletWire's own source is licensed under the
+          GPL-3.0-or-later; bundled third-party software keeps its own licenses.
+          © <span id="year">2026</span> lucaboox and VioletWire contributors.
+        </p>
+      </div>
+    </footer>
+
+    <dialog class="lightbox" id="lightbox" aria-label="Screenshot viewer">
+      <button class="lightbox-close" id="lightboxClose" type="button" aria-label="Close screenshot">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+      <!-- src is set when a screenshot is opened. An empty src="" would make
+           some browsers re-request the page itself, so it is left off. -->
+      <img id="lightboxImage" alt="" />
+    </dialog>
+
+    <script>
+      /* =================================================================
+         EDIT THESE. Everything else on the page uses plain <a href> tags
+         that you can change directly in the HTML — search for "LINK:".
+      ================================================================= */
+      const GITHUB_USER = "lucaboox";
+      const GITHUB_REPO = "VioletWire";
+      const APP_VERSION = "0.3.3-alpha.1";
+      // Matches electron-builder's artifactName:
+      // VioletWire-Setup-${version}-${arch}.${ext}
+      const INSTALLER_NAME = `VioletWire-Setup-${APP_VERSION}-x64.exe`;
+      /* ================================================================= */
+
+      const REPO_URL = `https://github.com/${GITHUB_USER}/${GITHUB_REPO}`;
+      const DIRECT_INSTALLER_URL = `${REPO_URL}/releases/download/v${APP_VERSION}/${INSTALLER_NAME}`;
+
+      // Version label, shown in the hero note and next to the download button.
+      for (const el of document.querySelectorAll("[data-version-label]")) {
+        el.textContent = `v${APP_VERSION}`;
+      }
+
+      // Point the download button straight at the installer. Falls back to the
+      // "latest release" href already in the HTML if this script never runs.
+      const directDownload = document.getElementById("directDownload");
+      if (directDownload) {
+        directDownload.href = DIRECT_INSTALLER_URL;
+        directDownload.setAttribute(
+          "aria-label",
+          `Download VioletWire ${APP_VERSION} installer for Windows`,
+        );
+      }
+
+      document.getElementById("year").textContent = String(
+        new Date().getFullYear(),
+      );
+
+      // Header gets a border once the page scrolls away from the top.
+      const header = document.getElementById("siteHeader");
+      const onScroll = () => {
+        header.classList.toggle("scrolled", window.scrollY > 8);
+      };
+      onScroll();
+      addEventListener("scroll", onScroll, { passive: true });
+
+      // Mobile navigation.
+      const navToggle = document.getElementById("navToggle");
+      const siteNav = document.getElementById("siteNav");
+
+      const setNavOpen = (open) => {
+        siteNav.classList.toggle("open", open);
+        navToggle.setAttribute("aria-expanded", String(open));
+        navToggle.setAttribute(
+          "aria-label",
+          open ? "Close navigation menu" : "Open navigation menu",
+        );
+      };
+
+      navToggle.addEventListener("click", () => {
+        setNavOpen(!siteNav.classList.contains("open"));
+      });
+
+      siteNav.addEventListener("click", (event) => {
+        if (event.target.closest("a")) setNavOpen(false);
+      });
+
+      // Screenshot lightbox.
+      const lightbox = document.getElementById("lightbox");
+      const lightboxImage = document.getElementById("lightboxImage");
+      let lastFocused = null;
+
+      const openLightbox = (card) => {
+        const full = card.dataset.full;
+        const thumb = card.querySelector("img");
+        if (!full || !lightbox.showModal) return;
+
+        lastFocused = card;
+        lightboxImage.src = full;
+        lightboxImage.alt = thumb ? thumb.alt : "";
+        lightbox.showModal();
+      };
+
+      const closeLightbox = () => {
+        if (lightbox.open) lightbox.close();
+      };
+
+      for (const card of document.querySelectorAll(".shot-card")) {
+        card.addEventListener("click", () => openLightbox(card));
+        card.addEventListener("keydown", (event) => {
+          // Cards are role="button", so match a button's keyboard behaviour.
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openLightbox(card);
+          }
+        });
+      }
+
+      document.getElementById("lightboxClose").addEventListener("click", closeLightbox);
+
+      // Clicking the backdrop (anywhere outside the image) closes it too.
+      lightbox.addEventListener("click", (event) => {
+        if (!event.target.closest("img, button")) closeLightbox();
+      });
+
+      lightbox.addEventListener("close", () => {
+        lightboxImage.removeAttribute("src");
+        if (lastFocused) lastFocused.focus();
+      });
+    </script>
+  </body>
+</html>
