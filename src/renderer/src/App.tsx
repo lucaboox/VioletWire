@@ -586,6 +586,7 @@ export function App() {
   const multiChatHost = useRef<HTMLDivElement>(null);
   const multiChatContent = useRef<HTMLDivElement>(null);
   const multiChatPinned = useRef(true);
+  const multiChatUserScrollAt = useRef(0);
   const [multiChatPaused, setMultiChatPaused] = useState(false);
   // The selected chat tab, falling back to the active tile (or first) when the
   // held selection has no tile — derived rather than stored so no effect writes
@@ -595,9 +596,7 @@ export function App() {
     if (multiChatChannel && multiTiles.some((tile) => tile.channel === multiChatChannel)) {
       return multiChatChannel;
     }
-    // Fall back to the first tile, not the active one, so activating a tile for
-    // audio doesn't reload chat (and lag the video). Chat follows the tabs.
-    const fallback = multiTiles[0];
+    const fallback = multiTiles.find((tile) => tile.active) ?? multiTiles[0];
     return fallback ? fallback.channel : null;
   }, [multiStreamActive, multiChatChannel, multiTiles]);
   // The channel the chat pane (connection, emotes, badges, sending) follows:
@@ -957,20 +956,38 @@ export function App() {
     setMultiChatPaused(false);
   }, []);
 
+  // Only a real wheel/pointer scroll pauses the feed. Programmatic scrolls (tab
+  // switches, jump-to-bottom) and content-driven reflow (emote images loading)
+  // must not — otherwise switching chats can leave it stuck "scrolled up".
   const handleMultiChatScroll = useCallback(() => {
     const host = multiChatHost.current;
     if (!host) return;
     const atBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 40;
-    multiChatPinned.current = atBottom;
-    setMultiChatPaused(!atBottom);
+    if (atBottom) {
+      multiChatPinned.current = true;
+      setMultiChatPaused(false);
+      return;
+    }
+    if (Date.now() - multiChatUserScrollAt.current < 700) {
+      multiChatPinned.current = false;
+      setMultiChatPaused(true);
+    }
   }, []);
 
-  // A new tab starts pinned to the newest message. The programmatic scroll
-  // fires a scroll event, which clears the paused state via handleMultiChatScroll.
+  const noteMultiChatUserScroll = useCallback(() => {
+    multiChatUserScrollAt.current = Date.now();
+  }, []);
+
+  // A new tab starts pinned to the newest message. Clear the paused state
+  // directly (a short new chat may not fire a scroll event to clear it) and
+  // drop any stale scroll intent so the first reflow can't re-pause it.
   useLayoutEffect(() => {
     multiChatPinned.current = true;
+    multiChatUserScrollAt.current = 0;
     const host = multiChatHost.current;
     if (host) host.scrollTop = host.scrollHeight;
+    const frame = requestAnimationFrame(() => setMultiChatPaused(false));
+    return () => cancelAnimationFrame(frame);
   }, [effectiveMultiChatChannel]);
 
   // Keep the chat glued to the bottom while pinned even as content grows — new
@@ -2174,10 +2191,10 @@ export function App() {
   }
 
   function activateMultiTile(id: number) {
-    // Audio focus only — deliberately does NOT switch the chat tab. Reloading
-    // the chat (emotes/badges/metadata) on the main thread stalled frame
-    // presentation for a moment; chat is switched via the tabs instead.
     window.desktop.player.multiSetActive(id);
+    // Moving audio focus to a tile also switches its chat into view.
+    const tile = multiTiles.find((entry) => entry.id === id);
+    if (tile) setMultiChatChannel(tile.channel);
   }
 
   function nameForChannel(login: string): string {
@@ -2757,7 +2774,9 @@ export function App() {
               <div
                 aria-live="polite"
                 className={`chat-messages${multiChatPaused ? " scroll-paused" : ""}`}
+                onPointerDown={noteMultiChatUserScroll}
                 onScroll={handleMultiChatScroll}
+                onWheel={noteMultiChatUserScroll}
                 ref={multiChatHost}
               >
                 <div ref={multiChatContent}>
