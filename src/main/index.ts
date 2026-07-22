@@ -32,7 +32,7 @@ import {
   type NativeRenderBackend,
   type PlayerMode,
 } from "../shared/player";
-import { channelKeySchema } from "../shared/platform";
+import { channelKeySchema, parseChannelKey } from "../shared/platform";
 import { NativePlayer } from "./native-player";
 import { TextureNativePlayer } from "./texture-native-player";
 import { MultiStreamManager } from "./multi-stream-manager";
@@ -999,7 +999,10 @@ handleTrusted(
 
   chatPresentation = "side";
   chatVisible = true;
-  twitchChatService.connect(channel);
+  // Twitch IRC has no room for a channel on another service; joining one would
+  // fail and then retry on a backoff for as long as the stream is open.
+  if (parseChannelKey(channel).platform === "twitch") twitchChatService.connect(channel);
+  else twitchChatService.disconnect();
 
   return { channel, mode, nativeBackend, fallbackReason };
   },

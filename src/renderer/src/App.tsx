@@ -98,6 +98,7 @@ import { ChatEmote } from "./ChatEmote";
 import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
+import { channelKey, parseChannelKey } from "../../shared/platform";
 import { NativeControls } from "./NativeControls";
 import {
   ChatToggleSetting,
@@ -738,7 +739,11 @@ export function App() {
   }, []);
 
   const activeChannelDisplayName =
-    streamMetadata?.displayName ?? activeChannelIdentity?.displayName ?? activeChannel;
+    streamMetadata?.displayName ??
+    activeChannelIdentity?.displayName ??
+    // Fall back to the bare channel name rather than the key, so a channel on
+    // another service is not shown with its prefix.
+    (activeChannel ? parseChannelKey(activeChannel).login : activeChannel);
 
   // Where the user currently is, shown in the title bar and the window title.
   // Ordered by how specific each place is: a stream beats the section it was
@@ -1699,6 +1704,8 @@ export function App() {
 
   useEffect(() => {
     if (!activeChannel || authState.status !== "signed-in") return;
+    // Helix has nothing to say about a channel on another service.
+    if (parseChannelKey(activeChannel).platform !== "twitch") return;
     let cancelled = false;
     void window.desktop.twitch
       .getStreamMetadata(activeChannel)
@@ -2848,6 +2855,22 @@ export function App() {
                     >
                       <Search size={16} />
                       Go to <strong>{channelInput.trim()}</strong>
+                    </button>
+                    {/* Kick has no search or followed list wired up yet, so this
+                        is how a Kick channel is opened for now. */}
+                    <button
+                      className="top-search-direct"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setTopSearchOpen(false);
+                        void watchChannel(
+                          channelKey("kick", channelInput.trim().toLowerCase()),
+                        );
+                      }}
+                      type="button"
+                    >
+                      <Search size={16} />
+                      Open <strong>{channelInput.trim()}</strong> on Kick
                     </button>
                   </>
                 )}
