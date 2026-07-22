@@ -384,14 +384,16 @@
 }
 
 /* Matches the single player: an "off" toggle is shown by slashing its icon
-   rather than tinting the button. */
-.multi-tile-btn .icon-slashed {
+   rather than tinting the button. The wrapper is always present so the icon
+   does not shift between states. */
+.multi-tile-btn .icon-toggle {
   position: relative;
   display: grid;
   place-items: center;
+  line-height: 0;
 }
 
-.multi-tile-btn .icon-slashed::after {
+.multi-tile-btn .icon-toggle.off::after {
   position: absolute;
   width: 18px;
   height: 2px;

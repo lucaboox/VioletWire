@@ -19,7 +19,6 @@ import {
   Info,
   Layers,
   Maximize,
-  MessageSquare,
   Minimize,
   MoveDiagonal2,
   PanelRight,
@@ -30,7 +29,6 @@ import {
   Settings,
   Smile,
   Star,
-  Tv,
   Volume2,
   VolumeX,
   X,
@@ -384,7 +382,7 @@ export function NativeControls({
   const [qualities, setQualities] = useState<NativeQuality[]>([
     { value: "best", label: "Auto" },
   ]);
-  const [openMenu, setOpenMenu] = useState<"quality" | "chat" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"quality" | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
   const [stats, setStats] = useState<Record<string, string> | null>(null);
   const [chatInput, setChatInput] = useState("");
@@ -1044,7 +1042,7 @@ export function NativeControls({
     reportActivity();
   }
 
-  function toggleMenu(menu: "quality" | "chat") {
+  function toggleMenu(menu: "quality") {
     const nextMenu = openMenu === menu ? null : menu;
     setOpenMenu(nextMenu);
     if (!inline) window.desktop.player.setNativeControlsExpanded(nextMenu !== null);
@@ -1138,13 +1136,7 @@ export function NativeControls({
     -1,
   );
   const chatMentionCandidates = getChatMentionCandidates(chatMessages, "", 100);
-  const chatIcon = !context.chatVisible ? (
-    <MessageSquare size={18} />
-  ) : context.chatPresentation === "overlay" ? (
-    <Layers size={18} />
-  ) : (
-    <PanelRight size={18} />
-  );
+  const chatOverlayActive = context.chatVisible && context.chatPresentation === "overlay";
 
   return (
     <div
@@ -1672,53 +1664,6 @@ export function NativeControls({
           )}
         </div>
       )}
-      {openMenu === "chat" && (
-        <div
-          className={`control-popover chat-popover ${
-            context.chatVisible && context.chatPresentation === "overlay" ? "avoid-chat" : ""
-          }`}
-          onPointerDown={(event) => event.stopPropagation()}
-          role="menu"
-        >
-          <header>
-            <strong>Chat layout</strong>
-            <small>Choose how chat appears beside the video.</small>
-          </header>
-          <div className="popover-options chat-options">
-            <button
-              className={!context.chatVisible ? "selected" : ""}
-              onClick={() => selectChatLayout("hide-chat")}
-              type="button"
-            >
-              <MessageSquare size={16} />
-              <span><b>Hidden</b><small>Video only</small></span>
-              {!context.chatVisible && <Check size={15} />}
-            </button>
-            <button
-              className={
-                context.chatVisible && context.chatPresentation === "side" ? "selected" : ""
-              }
-              onClick={() => selectChatLayout("side-chat")}
-              type="button"
-            >
-              <PanelRight size={16} />
-              <span><b>Side by side</b><small>Chat beside the video</small></span>
-              {context.chatVisible && context.chatPresentation === "side" && <Check size={15} />}
-            </button>
-            <button
-              className={
-                context.chatVisible && context.chatPresentation === "overlay" ? "selected" : ""
-              }
-              onClick={() => selectChatLayout("overlay-chat")}
-              type="button"
-            >
-              <Layers size={16} />
-              <span><b>Overlay</b><small>Chat floats over the video</small></span>
-              {context.chatVisible && context.chatPresentation === "overlay" && <Check size={15} />}
-            </button>
-          </div>
-        </div>
-      )}
       {state.paused && (
         <button
           aria-label="Play and return to live"
@@ -1780,7 +1725,7 @@ export function NativeControls({
           }}
           type="button"
         >
-          <span className={state.compressorEnabled ? undefined : "icon-slashed"}>
+          <span className={`icon-toggle${state.compressorEnabled ? "" : " off"}`}>
             <AudioLines size={18} />
           </span>
         </button>
@@ -1828,14 +1773,15 @@ export function NativeControls({
           <span>{qualityLabel}</span>
         </button>
         <button
-          aria-label="Chat layout"
-          aria-expanded={openMenu === "chat"}
-          className={openMenu === "chat" ? "active" : ""}
-          data-tooltip={openMenu === "chat" ? undefined : "Chat layout"}
-          onClick={() => toggleMenu("chat")}
+          aria-label={chatOverlayActive ? "Dock chat beside the video" : "Overlay chat on the video"}
+          aria-pressed={chatOverlayActive}
+          data-tooltip={chatOverlayActive ? "Chat overlay on" : "Chat overlay off"}
+          onClick={() => selectChatLayout(chatOverlayActive ? "side-chat" : "overlay-chat")}
           type="button"
         >
-          {chatIcon}
+          <span className={`icon-toggle${chatOverlayActive ? "" : " off"}`}>
+            <Layers size={18} />
+          </span>
         </button>
         <button
           aria-label="Theater mode"
@@ -1844,7 +1790,9 @@ export function NativeControls({
           onClick={() => window.desktop.player.sendNativeControlAction("toggle-theater")}
           type="button"
         >
-          <Tv fill={context.theaterMode ? "currentColor" : "none"} size={18} />
+          <span className={`icon-toggle${context.theaterMode ? " filled" : ""}`}>
+            <PanelRight size={18} />
+          </span>
         </button>
         <button
           aria-label={context.fullscreen ? "Exit fullscreen" : "Fullscreen"}

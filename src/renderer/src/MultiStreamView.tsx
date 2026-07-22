@@ -335,7 +335,7 @@ const MultiTile = memo(function MultiTile({
           title="Audio compressor"
           type="button"
         >
-          <span className={tile.state.compressorEnabled ? undefined : "icon-slashed"}>
+          <span className={`icon-toggle${tile.state.compressorEnabled ? "" : " off"}`}>
             <AudioLines size={14} />
           </span>
         </button>

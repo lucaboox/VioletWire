@@ -1348,11 +1348,6 @@ input {
   flex: 1;
 }
 
-.chat-popover {
-  right: 78px;
-  width: 244px;
-}
-
 /* Video stats. Anchored to the top-left the way Twitch's own panel is, so it
    stays clear of the control bar and the overlay chat on the right. */
 .stats-panel {
@@ -1439,22 +1434,6 @@ input {
   font-size: 12px;
 }
 
-.chat-options button > span b,
-.chat-options button > span small {
-  display: block;
-}
-
-.chat-options button > span b {
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.chat-options button > span small {
-  margin-top: 2px;
-  color: #868690;
-  font-size: 9px;
-}
-
 @keyframes popover-in {
   from {
     opacity: 0;
@@ -1506,14 +1485,17 @@ input {
    icon cannot show it, which is only the ones holding a menu open. */
 
 /* Stands in for the "off" icons lucide does not ship, e.g. AudioLines. The
-   dark edge keeps the stroke readable where it crosses the icon. */
-.controls-bar button .icon-slashed {
+   wrapper is always present and only the slash toggles, so the icon cannot
+   shift as the state changes. The dark edge keeps the stroke readable where it
+   crosses the icon. */
+.icon-toggle {
   position: relative;
   display: grid;
   place-items: center;
+  line-height: 0;
 }
 
-.controls-bar button .icon-slashed::after {
+.icon-toggle.off::after {
   position: absolute;
   width: 23px;
   height: 2px;
@@ -1522,6 +1504,12 @@ input {
   box-shadow: 0 -2px 0 rgb(10 10 12 / 88%);
   content: "";
   transform: rotate(-45deg);
+}
+
+/* Fill only the glyph's screen rect. Filling the whole SVG would also solidify
+   the strokes drawn around it, which is what made the Tv antenna fill in. */
+.icon-toggle.filled svg rect {
+  fill: currentColor;
 }
 
 .controls-bar button[data-tooltip]::after {
