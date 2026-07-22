@@ -51,6 +51,7 @@ import {
   chatHistoryLimitSchema,
   chatReplyParentIdSchema,
   outgoingChatMessageSchema,
+  type TwitchChatAssets,
 } from "../shared/chat";
 import { PreferencesService } from "./preferences-service";
 import {
@@ -1424,9 +1425,16 @@ handleTrusted("chat:send", (
       : chatReplyParentIdSchema.parse(rawReplyParentMessageId);
   return twitchService.sendChatMessage(channel, message, replyParentMessageId);
 });
-handleTrusted("chat:get-assets", (_event, rawChannel: unknown) =>
-  twitchService.getChatAssets(channelNameSchema.parse(rawChannel)),
-);
+handleTrusted("chat:get-assets", (_event, rawChannel: unknown) => {
+  // These come from Helix and are keyed by a Twitch login. A channel on another
+  // service has none, and parsing it as a Twitch name would throw.
+  const channel = channelKeySchema.safeParse(rawChannel);
+  if (!channel.success || parseChannelKey(channel.data).platform !== "twitch") {
+    const empty: TwitchChatAssets = { broadcasterId: "", badges: [], emotes: [] };
+    return empty;
+  }
+  return twitchService.getChatAssets(channel.data);
+});
 onTrusted("chat:set-history-limit", (_event, rawLimit: unknown) => {
   const result = chatHistoryLimitSchema.safeParse(rawLimit);
   if (result.success) {

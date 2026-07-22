@@ -1235,7 +1235,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!chatChannel) return;
+    if (!chatChannel || parseChannelKey(chatChannel).platform !== "twitch") return;
     const cached = emoteBundleCache.current.get(`${chatChannel}|${chatBroadcasterId ?? ""}`);
     if (cached) {
       setProviderEmoteMaps(cached.maps);
@@ -1259,6 +1259,7 @@ export function App() {
 
   useEffect(() => {
     if (!chatChannel || authState.status !== "signed-in") return;
+    if (parseChannelKey(chatChannel).platform !== "twitch") return;
     const cached = badgeBundleCache.current.get(chatChannel);
     if (cached) {
       setTwitchBadges(cached.badges);
@@ -3791,9 +3792,11 @@ export function App() {
                     >
                       {chatMessages.length === 0 && (
                         <div className="chat-empty-state">
-                          {chatConnectionState === "connected"
-                            ? "Waiting for the next chat message…"
-                            : "Connecting to Twitch chat…"}
+                          {activeChannel && parseChannelKey(activeChannel).platform === "kick"
+                            ? "Kick chat is not connected yet."
+                            : chatConnectionState === "connected"
+                              ? "Waiting for the next chat message…"
+                              : "Connecting to Twitch chat…"}
                         </div>
                       )}
                       {chatMessages.map((message, index) => (

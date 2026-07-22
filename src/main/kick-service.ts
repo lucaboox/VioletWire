@@ -183,6 +183,11 @@ export class KickService {
       },
     });
 
+    // The page runs bot-detection that opens WebRTC connections to hosts which
+    // often do not resolve, filling the console with P2P errors while it is
+    // alive. Nothing here needs peer connections, so keep them off the wire.
+    window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+
     try {
       await Promise.race([
         window.loadURL(KICK_ORIGIN),
