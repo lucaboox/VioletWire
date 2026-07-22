@@ -2856,7 +2856,33 @@ export function App() {
               )}
             </button>
           </div>
+          <div className="followed-platforms" role="group" aria-label="Services to show">
+            {(["twitch", "kick", "both"] as const).map((option) => (
+              <button
+                aria-pressed={platformFilter === option}
+                className={platformFilter === option ? "active" : ""}
+                key={option}
+                onClick={() => {
+                  setPlatformFilter(option);
+                  if (option === "kick") setTopSearchResults(emptySearchResults);
+                  if (option === "twitch") setKickSearchResults([]);
+                  void window.desktop.preferences.update({ platformFilter: option });
+                }}
+                type="button"
+              >
+                {option === "twitch" ? "Twitch" : option === "kick" ? "Kick" : "Both"}
+              </button>
+            ))}
+          </div>
           <div className="followed-list">
+            {sidebarLiveChannels.length + sidebarOfflineChannels.length === 0 &&
+              platformFilter === "kick" &&
+              kickAccount === null && (
+                <div className="followed-empty">
+                  <strong>Not signed in to Kick</strong>
+                  <span>Sign in from Settings to see the channels you follow.</span>
+                </div>
+              )}
             {sidebarLiveChannels.length > 0 && (
               <>
                 <div className="followed-group-label">
@@ -4536,35 +4562,6 @@ export function App() {
             <div className="settings-stack">
               <div className="settings-card">
                 <div>
-                  <strong>Kick account</strong>
-                  <span>
-                    {kickAccount
-                      ? `Connected as ${kickAccount.username}`
-                      : "Not signed in. Sign in to see the channels you follow."}
-                  </span>
-                </div>
-                {kickAccount ? (
-                  <button
-                    className="secondary-button"
-                    disabled={kickAuthBusy}
-                    onClick={() => void signOutOfKick()}
-                    type="button"
-                  >
-                    Sign out
-                  </button>
-                ) : (
-                  <button
-                    className="primary-button"
-                    disabled={kickAuthBusy}
-                    onClick={() => void signInToKick()}
-                    type="button"
-                  >
-                    <LogIn size={15} /> Sign in
-                  </button>
-                )}
-              </div>
-              <div className="settings-card">
-                <div>
                   <strong>Twitch account</strong>
                   <span>
                     {authState.status === "signed-in"
@@ -4980,6 +4977,35 @@ export function App() {
                         <LogIn size={15} /> Sign in
                       </button>
                     ) : null}
+                  </div>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Kick account</strong>
+                      <span>
+                        {kickAccount
+                          ? `Connected as ${kickAccount.username}`
+                          : "Not signed in. Sign in to see the channels you follow on Kick."}
+                      </span>
+                    </div>
+                    {kickAccount ? (
+                      <button
+                        className="secondary-button"
+                        disabled={kickAuthBusy}
+                        onClick={() => void signOutOfKick()}
+                        type="button"
+                      >
+                        Sign out
+                      </button>
+                    ) : (
+                      <button
+                        className="primary-button"
+                        disabled={kickAuthBusy}
+                        onClick={() => void signInToKick()}
+                        type="button"
+                      >
+                        <LogIn size={15} /> Sign in
+                      </button>
+                    )}
                   </div>
                   <div className="settings-card">
                     <div>
