@@ -693,8 +693,13 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
   7%, 88% { opacity: 1; transform: translate(-50%, 0) scale(1); }
   100% { opacity: 0; transform: translate(-50%, -4px) scale(.99); }
 }
-.modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506bb; backdrop-filter: blur(8px); }
-.settings-modal-backdrop { position: fixed; z-index: 950; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506b8; backdrop-filter: blur(10px); }
+/* These two cover the whole window, including the title bar strip. The caption
+   buttons are drawn by the system above the page, so backdrop-filter cannot
+   reach them and a blur leaves them sitting in a sharp rectangle in the middle
+   of the blurred field. Dim instead, a little deeper to make up for the lost
+   blur, which the undimmed buttons sit against far less noticeably. */
+.modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506d0; }
+.settings-modal-backdrop { position: fixed; z-index: 950; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506d0; }
 .settings-modal-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(820px, calc(100vw - 48px)); max-height: min(780px, calc(100vh - 48px)); overflow: hidden; border: 1px solid #44364f; border-radius: 16px; background: #111114f8; box-shadow: 0 34px 100px #000e; }
 .settings-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px 24px 18px; border-bottom: 1px solid #2e2a33; background: linear-gradient(100deg, #23152e, #131217 65%); }
 .settings-modal-header span { color: #a78bfa; font-size: 9px; font-weight: 850; letter-spacing: 1.5px; }
