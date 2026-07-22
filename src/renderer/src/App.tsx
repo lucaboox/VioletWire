@@ -101,7 +101,9 @@ import { ChatUserCard } from "./ChatUserCard";
 import {
   channelKey,
   parseChannelKey,
+  type KickChannelDetails,
   type KickChannelResult,
+  type KickUserAccount,
 } from "../../shared/platform";
 import { NativeControls } from "./NativeControls";
 import {
@@ -438,6 +440,9 @@ export function App() {
   const [playerReturnSection, setPlayerReturnSection] = useState<AppSection>("home");
   const [channelInput, setChannelInput] = useState("");
   const [kickSearchResults, setKickSearchResults] = useState<KickChannelResult[]>([]);
+  const [kickAccount, setKickAccount] = useState<KickUserAccount | null>(null);
+  const [kickAuthBusy, setKickAuthBusy] = useState(false);
+  const [kickFollowedChannels, setKickFollowedChannels] = useState<KickChannelDetails[]>([]);
   const [platformFilter, setPlatformFilter] = useState<"twitch" | "kick" | "both">("twitch");
   const [topSearchResults, setTopSearchResults] =
     useState<TwitchSearchResults>(emptySearchResults);
@@ -1744,6 +1749,37 @@ export function App() {
     selectedBrowseCategory,
   ]);
 
+  // Kick's session persists in its own partition, so a previous sign-in is
+  // still valid on launch and the list can load without prompting.
+  useEffect(() => {
+    if (platformFilter === "twitch") return;
+    let cancelled = false;
+
+    const load = () => {
+      void window.desktop.kick
+        .getUser()
+        .then((account) => {
+          if (cancelled) return;
+          setKickAccount(account);
+          if (account === null) {
+            setKickFollowedChannels([]);
+            return;
+          }
+          return window.desktop.kick.getFollowedChannels().then((channels) => {
+            if (!cancelled) setKickFollowedChannels(channels);
+          });
+        })
+        .catch(() => undefined);
+    };
+    load();
+    // Matches the Twitch followed-list cadence so live states stay in step.
+    const refresh = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(refresh);
+    };
+  }, [platformFilter]);
+
   // Kick's own metadata, shaped into the same record the header already reads
   // so the title, avatar, viewers, and uptime render without special cases.
   useEffect(() => {
@@ -2096,6 +2132,32 @@ export function App() {
     await window.desktop.twitch.cancelSignIn();
     setDeviceAuthorization(null);
     setAuthBusy(false);
+  }
+
+  async function signInToKick() {
+    setKickAuthBusy(true);
+    try {
+      const account = await window.desktop.kick.signIn();
+      setKickAccount(account);
+      if (account !== null) {
+        setKickFollowedChannels(await window.desktop.kick.getFollowedChannels());
+      }
+    } catch {
+      setNotice("Could not sign in to Kick.");
+    } finally {
+      setKickAuthBusy(false);
+    }
+  }
+
+  async function signOutOfKick() {
+    setKickAuthBusy(true);
+    try {
+      await window.desktop.kick.signOut();
+      setKickAccount(null);
+      setKickFollowedChannels([]);
+    } finally {
+      setKickAuthBusy(false);
+    }
   }
 
   async function signOut() {
@@ -2560,13 +2622,39 @@ export function App() {
     }
   }
 
+  // Both services in one list, in scope order, keyed by channel key so a Kick
+  // and a Twitch channel sharing a name stay distinct.
+  const combinedFollowedChannels = useMemo(() => {
+    const twitch = platformFilter === "kick" ? [] : followedChannels;
+    const kick =
+      platformFilter === "twitch"
+        ? []
+        : kickFollowedChannels.map<FollowedChannel>((channel) => ({
+            id: channel.id,
+            login: channelKey("kick", channel.slug),
+            displayName: channel.displayName,
+            category: channel.category ?? "",
+            title: channel.title,
+            profileImageUrl: channel.profileImageUrl,
+            viewerCount: channel.viewerCount,
+            startedAt: channel.startedAt,
+            isLive: channel.isLive,
+          }));
+    return [...twitch, ...kick];
+  }, [followedChannels, kickFollowedChannels, platformFilter]);
+
   const liveFollowedChannels = useMemo(
-    () => followedChannels.filter((channel) => channel.isLive),
-    [followedChannels],
+    // Live channels sort together across services rather than by service, so
+    // the list reads as one set of people who are on right now.
+    () =>
+      combinedFollowedChannels
+        .filter((channel) => channel.isLive)
+        .sort((left, right) => right.viewerCount - left.viewerCount),
+    [combinedFollowedChannels],
   );
   const offlineFollowedChannels = useMemo(
-    () => followedChannels.filter((channel) => !channel.isLive),
-    [followedChannels],
+    () => combinedFollowedChannels.filter((channel) => !channel.isLive),
+    [combinedFollowedChannels],
   );
   // Favorites stay inside their Live/Offline group but sort to the top of it,
   // so an offline favorite never outranks a channel that's actually live.
@@ -4446,6 +4534,35 @@ export function App() {
             <h2>Make VioletWire yours</h2>
             <p>Connect Twitch securely, choose playback, and control optional chat providers.</p>
             <div className="settings-stack">
+              <div className="settings-card">
+                <div>
+                  <strong>Kick account</strong>
+                  <span>
+                    {kickAccount
+                      ? `Connected as ${kickAccount.username}`
+                      : "Not signed in. Sign in to see the channels you follow."}
+                  </span>
+                </div>
+                {kickAccount ? (
+                  <button
+                    className="secondary-button"
+                    disabled={kickAuthBusy}
+                    onClick={() => void signOutOfKick()}
+                    type="button"
+                  >
+                    Sign out
+                  </button>
+                ) : (
+                  <button
+                    className="primary-button"
+                    disabled={kickAuthBusy}
+                    onClick={() => void signInToKick()}
+                    type="button"
+                  >
+                    <LogIn size={15} /> Sign in
+                  </button>
+                )}
+              </div>
               <div className="settings-card">
                 <div>
                   <strong>Twitch account</strong>
