@@ -463,6 +463,7 @@ export class KickService {
           typeof entry.data.category === "string"
             ? entry.data.category
             : entry.data.category?.name;
+        const isLive = Boolean(entry.data.is_live ?? entry.data.isLive);
         channels.push({
           id: entry.data.id === null || entry.data.id === undefined ? slug : String(entry.data.id),
           slug,
@@ -472,9 +473,9 @@ export class KickService {
             entry.data.profilePic ??
             entry.data.profile_pic ??
             "",
-          isLive: Boolean(entry.data.is_live ?? entry.data.isLive),
+          isLive,
           title: entry.data.session_title ?? undefined,
-          category: entry.data.category_name ?? category ?? undefined,
+          category: isLive ? (entry.data.category_name ?? category ?? "") : "Offline",
           viewerCount: entry.data.viewer_count ?? entry.data.viewers ?? 0,
           startedAt: entry.data.start_time ?? entry.data.created_at ?? undefined,
         });
@@ -615,7 +616,9 @@ export class KickService {
       // A null livestream is how Kick reports an offline channel.
       isLive: Boolean(livestream?.is_live),
       title: livestream?.session_title ?? undefined,
-      category: livestream?.categories?.[0]?.name ?? undefined,
+      category: livestream?.is_live
+        ? (livestream.categories?.[0]?.name ?? undefined)
+        : "Offline",
       viewerCount: livestream?.viewer_count ?? 0,
       startedAt: livestream?.start_time ?? livestream?.created_at ?? undefined,
       thumbnailUrl: livestream === null ? undefined : readThumbnail(livestream),
