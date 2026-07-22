@@ -4,6 +4,24 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.2] - 2026-07-21
+
+### Additions
+
+- Added a VioletWire project website and refreshed the README with current
+  screenshots, including the Multistream view, so new users can see the app
+  before installing it.
+
+### Improvements
+
+- The global search field now keeps the text you entered when you open a
+  stream, rather than replacing it with the selected channel's username.
+
+### Fixes
+
+- Kept the top app bar above sticky category headers while browsing, preventing
+  category content from drawing over the navigation controls.
+
 ## [0.3.3-alpha.1] - 2026-07-21
 
 ### Additions
