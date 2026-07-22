@@ -439,7 +439,9 @@ export function App() {
   const [topSearchResults, setTopSearchResults] =
     useState<TwitchSearchResults>(emptySearchResults);
   const [topSearchOpen, setTopSearchOpen] = useState(false);
-  const [topSearchLoading, setTopSearchLoading] = useState(false);
+  const [twitchSearchLoading, setTwitchSearchLoading] = useState(false);
+  const [kickSearchLoading, setKickSearchLoading] = useState(false);
+  const topSearchLoading = twitchSearchLoading || kickSearchLoading;
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [activeChannelIdentity, setActiveChannelIdentity] =
     useState<ChannelNavigationIdentity>();
@@ -1602,6 +1604,9 @@ export function App() {
         .catch(() => {
           // Kick's API is unofficial; a failure leaves the Twitch group intact.
           if (!cancelled) setKickSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setKickSearchLoading(false);
         });
       // Longer than Twitch's: this request is slower and less reliable, and
       // typing should not queue up a burst of them.
@@ -1627,7 +1632,7 @@ export function App() {
           if (!cancelled) setTopSearchResults(emptySearchResults);
         })
         .finally(() => {
-          if (!cancelled) setTopSearchLoading(false);
+          if (!cancelled) setTwitchSearchLoading(false);
         });
     }, 250);
     return () => {
@@ -2133,10 +2138,19 @@ export function App() {
 
   function updateTopSearch(value: string) {
     setChannelInput(value);
-    const canSearch = authState.status === "signed-in" && value.trim().length >= 2;
+    const longEnough = value.trim().length >= 2;
+    // Twitch search needs its sign-in; Kick's does not, so a signed-out user
+    // can still search Kick.
+    const searchesTwitch = platformFilter !== "kick" && authState.status === "signed-in";
+    const searchesKick = platformFilter !== "twitch";
+    const canSearch = longEnough && (searchesTwitch || searchesKick);
     setTopSearchOpen(canSearch);
-    setTopSearchLoading(canSearch);
-    if (!canSearch) setTopSearchResults(emptySearchResults);
+    setTwitchSearchLoading(canSearch && searchesTwitch);
+    setKickSearchLoading(canSearch && searchesKick);
+    if (!canSearch) {
+      setTopSearchResults(emptySearchResults);
+      setKickSearchResults([]);
+    }
   }
 
   async function chooseSearchCategory(category: BrowseCategory) {
@@ -2816,7 +2830,12 @@ export function App() {
                 </div>
                 {topSearchLoading ? (
                   <div className="top-search-state">
-                    <RefreshCw className="spin" size={16} /> Searching Twitch…
+                    <RefreshCw className="spin" size={16} />{" "}
+                    {platformFilter === "kick"
+                      ? "Searching Kick…"
+                      : platformFilter === "both"
+                        ? "Searching…"
+                        : "Searching Twitch…"}
                   </div>
                 ) : (
                   <>
@@ -2922,7 +2941,8 @@ export function App() {
                       </section>
                     )}
                     {topSearchResults.categories.length === 0 &&
-                      topSearchResults.channels.length === 0 && (
+                      topSearchResults.channels.length === 0 &&
+                      kickSearchResults.length === 0 && (
                         <div className="top-search-state">No channels or categories found.</div>
                       )}
                     <button
