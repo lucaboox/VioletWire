@@ -21,7 +21,7 @@ import {
   Maximize,
   Minimize,
   MoveDiagonal2,
-  PanelRight,
+  RectangleHorizontal,
   Pause,
   Play,
   Reply,
@@ -1791,7 +1791,7 @@ export function NativeControls({
           type="button"
         >
           <span className={`icon-toggle${context.theaterMode ? " filled" : ""}`}>
-            <PanelRight size={18} />
+            <RectangleHorizontal size={18} />
           </span>
         </button>
         <button
