@@ -741,6 +741,19 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 @keyframes auth-pulse { 50% { opacity: .35; } }
 .app-shell.theater-mode, .app-shell.fullscreen-mode { grid-template-columns: 1fr; }
 .theater-mode .sidebar, .fullscreen-mode .sidebar, .theater-mode .topbar, .fullscreen-mode .topbar, .theater-mode .brand, .fullscreen-mode .brand { display: none; }
+/* Theater floats the stream info over the video instead of reserving a row for
+   it, the way Twitch does, so the picture gets the full height. */
+.theater-mode .player-page { grid-template-rows: minmax(0, 1fr); }
+.theater-mode .player-toolbar { position: absolute; z-index: 12; top: 0; right: 0; left: 0; border-bottom: 0; background: transparent; transition: opacity 160ms ease; }
+/* Only the stream-info half sits over the picture, so only it needs to fade
+   out into the video. */
+.theater-mode .player-toolbar-main { background: linear-gradient(180deg, rgb(5 5 6 / 82%) 0%, rgb(5 5 6 / 62%) 55%, rgb(5 5 6 / 0%) 100%); }
+/* The chat half sits over the chat column, where it reads as its header, so it
+   keeps a solid background and chat starts below it. */
+.theater-mode .player-chat-actions { background: #121216; }
+.theater-mode .chat-panel { padding-top: 54px; }
+/* Fades with the player controls rather than covering the video permanently. */
+.theater-mode .player-page.controls-hidden .player-toolbar { opacity: 0; pointer-events: none; }
 .theater-mode .player-page, .fullscreen-mode .player-page { height: 100%; }
 .fullscreen-mode .player-page { grid-template-rows: 1fr; }
 .fullscreen-mode .player-toolbar { display: none; }

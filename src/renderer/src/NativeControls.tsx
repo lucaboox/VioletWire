@@ -1716,7 +1716,7 @@ export function NativeControls({
           }
           aria-pressed={state.compressorEnabled}
           data-tooltip={
-            state.compressorEnabled ? "Audio compression on" : "Audio compression off"
+            state.compressorEnabled ? "Disable audio compression" : "Enable audio compression"
           }
           onClick={() => {
             const enabled = !state.compressorEnabled;

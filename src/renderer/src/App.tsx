@@ -3220,7 +3220,15 @@ export function App() {
           </div>
         ) : activeChannel && !miniPlayerActive ? (
           <section
-            className={chatResizing ? "player-page chat-resizing" : "player-page"}
+            className={[
+              "player-page",
+              chatResizing ? "chat-resizing" : "",
+              // In theater the toolbar floats over the video, so it fades with
+              // the player controls rather than sitting on top permanently.
+              activeMode === "native" && !nativeControlsVisible ? "controls-hidden" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             ref={playerPageRef}
             style={{ "--chat-sidebar-width": `${chatSidebarWidth}px` } as CSSProperties}
             onMouseMove={(event) => {
