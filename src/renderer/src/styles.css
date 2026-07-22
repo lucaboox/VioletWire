@@ -27,11 +27,15 @@ button { color: inherit; }
 /* Service scope for the followed list, shown here because this is where its
    effect is visible. It shares the search preference, so changing it in either
    place moves both. */
-/* Which service a followed channel is on. Only shown while both are listed,
-   where it distinguishes them; with one selected it would be noise. */
-.service-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; }
-.service-dot.twitch { background: #a970ff; }
-.service-dot.kick { background: #53fc18; }
+/* Which service a followed channel is on. Ringing the avatar rather than
+   marking the name keeps it readable with the sidebar collapsed, where the
+   avatar is all that is left. Only shown while both services are listed; with
+   one selected every row would carry the same ring. */
+.service-ring img { box-shadow: 0 0 0 2px #0e0e10, 0 0 0 4px var(--service-color); }
+.service-ring.twitch { --service-color: #a970ff; }
+.service-ring.kick { --service-color: #53fc18; }
+/* The live dot sits on the avatar's edge, so it moves out past the ring. */
+.service-ring .channel-live-dot { transform: translate(2px, 2px); }
 .service-both { display: inline-flex; align-items: center; gap: 2px; }
 .followed-platforms button, .top-search-platforms button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
 .followed-platforms { display: flex; gap: 3px; margin: 0 9px 8px; padding: 3px; border-radius: 8px; background: #17171b; }

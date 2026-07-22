@@ -2798,7 +2798,13 @@ export function App() {
         title={sidebarCollapsed ? channel.displayName : undefined}
         type="button"
       >
-        <span className="channel-avatar">
+        <span
+          className={
+            platformFilter === "both"
+              ? `channel-avatar service-ring ${parseChannelKey(channel.login).platform}`
+              : "channel-avatar"
+          }
+        >
           <img alt="" src={channel.profileImageUrl} />
           {channel.isLive && <i className="channel-live-dot" aria-hidden="true" />}
           {favoriteChannels.has(channel.login) && (
@@ -2806,15 +2812,7 @@ export function App() {
           )}
         </span>
         <span className="followed-copy">
-          <strong>
-            {platformFilter === "both" && (
-              <i
-                aria-hidden="true"
-                className={`service-dot ${parseChannelKey(channel.login).platform}`}
-              />
-            )}
-            {channel.displayName}
-          </strong>
+          <strong>{channel.displayName}</strong>
           <small>{channel.category}</small>
         </span>
         {channel.isLive && (
