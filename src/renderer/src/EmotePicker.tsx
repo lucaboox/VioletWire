@@ -282,7 +282,14 @@ export function EmotePicker({
   twitchEmotes,
   platformLabel = "Twitch",
 }: EmotePickerProps) {
-  const [provider, setProvider] = useState<Provider>("7tv");
+  const platformProviders = platformLabel === "Kick";
+  const [selectedProvider, setProvider] = useState<Provider>("7tv");
+  // FFZ and BTTV do not exist on Kick, so a lingering selection of one falls
+  // back to 7TV without a round trip through state.
+  const provider =
+    platformProviders && (selectedProvider === "ffz" || selectedProvider === "bttv")
+      ? "7tv"
+      : selectedProvider;
   const [query, setQuery] = useState("");
   const [searchAllProviders, setSearchAllProviders] = useState(false);
   const [favorites, setFavorites] = useState(readFavorites);
@@ -717,11 +724,15 @@ export function EmotePicker({
   }> = [
     { id: "favorites", icon: Star, mark: "" },
     { id: "7tv", logo: "7tv", mark: "7TV" },
-    { id: "ffz", logo: "ffz", mark: "FFZ" },
-    { id: "bttv", logo: "bttv", mark: "BTTV" },
+    ...(platformLabel === "Kick"
+      ? []
+      : ([
+          { id: "ffz", logo: "ffz", mark: "FFZ" },
+          { id: "bttv", logo: "bttv", mark: "BTTV" },
+        ] as const)),
     {
       id: "twitch",
-      logo: platformLabel === "Kick" ? "kick" : "twitch",
+      logo: platformLabel === "Kick" ? ("kick" as const) : ("twitch" as const),
       mark: platformLabel,
     },
     { id: "emoji", icon: Smile, mark: "" },

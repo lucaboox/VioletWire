@@ -47,7 +47,7 @@ const kickLivestreamSchema = z.object({
   start_time: z.string().nullish(),
   thumbnail: z
     .union([z.string(), z.object({ url: z.string().nullish() })])
-    .optional(),
+    .nullish(),
   categories: z
     .array(z.object({ name: z.string().nullish() }))
     .optional(),
@@ -187,6 +187,21 @@ export interface KickChannel {
   viewerCount: number;
   startedAt?: string;
   thumbnailUrl?: string;
+}
+
+/**
+ * Kick timestamps look like "2026-07-22 18:06:16": no T, no zone, and the
+ * value is UTC. Parsed as-is they are read as local time, which is why uptime
+ * showed as zero. Normalised to ISO so the renderer's duration is right.
+ */
+function toIsoTimestamp(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const match = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(value);
+  if (!match) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+  }
+  return `${match[1]}T${match[2]}Z`;
 }
 
 function readThumbnail(livestream: z.infer<typeof kickLivestreamSchema>): string | undefined {
@@ -488,7 +503,7 @@ export class KickService {
           title: entry.data.session_title ?? undefined,
           category: isLive ? (entry.data.category_name ?? category ?? "") : "Offline",
           viewerCount: entry.data.viewer_count ?? entry.data.viewers ?? 0,
-          startedAt: entry.data.start_time ?? entry.data.created_at ?? undefined,
+          startedAt: toIsoTimestamp(entry.data.start_time ?? entry.data.created_at),
         });
       }
       if (rejected > 0) {
@@ -711,7 +726,7 @@ export class KickService {
         ? (livestream.categories?.[0]?.name ?? undefined)
         : "Offline",
       viewerCount: livestream?.viewer_count ?? 0,
-      startedAt: livestream?.start_time ?? livestream?.created_at ?? undefined,
+      startedAt: toIsoTimestamp(livestream?.start_time ?? livestream?.created_at),
       thumbnailUrl: livestream === null ? undefined : readThumbnail(livestream),
     };
   }

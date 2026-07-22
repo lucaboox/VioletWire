@@ -36,6 +36,8 @@ button { color: inherit; }
 .service-ring.kick { --service-color: #53fc18; }
 /* The live dot sits on the avatar's edge, so it moves out past the ring. */
 .service-ring .channel-live-dot { transform: translate(2px, 2px); }
+.followed-platforms svg, .top-search-platforms svg, .top-search-result small svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.top-search-result small svg { vertical-align: -2px; margin-right: 2px; }
 .service-both { display: inline-flex; align-items: center; gap: 2px; }
 .followed-platforms button, .top-search-platforms button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
 .followed-platforms { display: flex; gap: 3px; margin: 0 9px 8px; padding: 3px; border-radius: 8px; background: #17171b; }
