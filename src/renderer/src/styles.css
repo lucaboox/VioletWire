@@ -461,9 +461,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-left .sidebar::before { content: ""; box-sizing: border-box; position: absolute; z-index: 1; top: 0; left: 0; right: 0; height: 68px; border-bottom: 1px solid #202024; background: #0d0d10f2; pointer-events: none; }
 .chat-left .sidebar::after { content: ""; position: absolute; z-index: 1; top: 68px; bottom: 0; left: 0; width: 1px; background: #242429; pointer-events: none; }
 .oled-mode.chat-left .sidebar::before { background: #000; }
-.chat-left .player-toolbar:not(.chat-collapsed) { grid-template-columns: var(--chat-sidebar-width, 384px) minmax(400px, 1fr); }
-.chat-left .player-toolbar:not(.chat-collapsed) .player-toolbar-main { order: 2; }
-.chat-left .player-toolbar:not(.chat-collapsed) .chat-left .viewer-layout:not(.chat-collapsed):not(.chat-overlay-mode) { grid-template-columns: var(--chat-sidebar-width, 384px) minmax(400px, 1fr); }
+/* Chat first, then the video. This previously hung off a selector that nested
+   .chat-left inside .player-toolbar and so never matched, leaving chat in the
+   1fr column and the video squeezed into the chat-width one. */
+.chat-left .viewer-layout:not(.chat-collapsed):not(.chat-overlay-mode) { grid-template-columns: var(--chat-sidebar-width, 384px) minmax(400px, 1fr); }
 .chat-left .viewer-layout:not(.chat-overlay-mode) .video-column { order: 2; }
 .chat-left .viewer-layout:not(.chat-overlay-mode) .chat-panel { order: 1; border-right: 1px solid #29292f; border-left: 0; }
 .chat-left .chat-edge-restore { right: auto; left: 0; border-right: 1px solid #3a3a42; border-left: 0; border-radius: 0 8px 8px 0; }
@@ -813,9 +814,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
   .channel-identity strong { max-width: 110px; }
   /* Honor the resized width but cap it so the video keeps room on narrow
      windows (the drag handler also clamps against the live layout width). */
-  .player-toolbar:not(.chat-collapsed) { grid-template-columns: minmax(400px, 1fr) min(var(--chat-sidebar-width, 384px), 42vw); }
   .viewer-layout:not(.chat-collapsed):not(.chat-overlay-mode) { grid-template-columns: minmax(400px, 1fr) min(var(--chat-sidebar-width, 384px), 42vw); }
-  .chat-left .player-toolbar:not(.chat-collapsed) { grid-template-columns: min(var(--chat-sidebar-width, 384px), 42vw) minmax(400px, 1fr); }
   .chat-left .viewer-layout:not(.chat-collapsed):not(.chat-overlay-mode) { grid-template-columns: min(var(--chat-sidebar-width, 384px), 42vw) minmax(400px, 1fr); }
   .mode-switch.compact { display: none; }
 }
