@@ -214,7 +214,10 @@ function renderOverlayText(
     output.push(
       <ChatEmote
         className="native-overlay-emote"
-        imageUrl={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`}
+        imageUrl={
+          range.imageUrl ??
+          `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`
+        }
         key={`${message.id}-twitch-${index}`}
         name={name}
         provider="twitch"

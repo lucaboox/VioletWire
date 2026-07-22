@@ -1394,6 +1394,11 @@ handleTrusted(
     return twitchService.getCategoryStreams(rawGameId, after);
   },
 );
+handleTrusted("kick:get-channel", (_event, rawSlug: unknown) => {
+  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
+  return slug.length === 0 ? null : kickService.getChannel(slug);
+});
+
 handleTrusted("kick:search", (_event, rawQuery: unknown) => {
   const query = typeof rawQuery === "string" ? rawQuery.slice(0, 100) : "";
   // Returns an empty list rather than throwing: Kick's API is unofficial, so a

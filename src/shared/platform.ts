@@ -115,6 +115,14 @@ export interface KickChannelResult {
   viewerCount: number;
 }
 
+export interface KickChannelDetails extends KickChannelResult {
+  chatroomId?: string;
+  title?: string;
+  startedAt?: string;
+  thumbnailUrl?: string;
+}
+
 export interface KickApi {
   search(query: string): Promise<KickChannelResult[]>;
+  getChannel(slug: string): Promise<KickChannelDetails | null>;
 }

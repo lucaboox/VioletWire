@@ -1,4 +1,8 @@
-import type { ChatConnectionState, ChatMessage } from "../shared/chat";
+import type {
+  ChatConnectionState,
+  ChatMessage,
+  TwitchChatEmoteRange,
+} from "../shared/chat";
 import type { KickService } from "./kick-service";
 
 type MessageListener = (message: ChatMessage) => void;
@@ -21,6 +25,46 @@ const PUSHER_URL =
 const WATCHDOG_INTERVAL = 30_000;
 const DEAD_AFTER_SILENCE = 180_000;
 const MAX_RECONNECT_DELAY = 30_000;
+
+// Kick sends emotes inline as [emote:id:name] rather than as ranges alongside
+// the text. Both parts are in the markup, so nothing else has to be fetched to
+// render one.
+const EMOTE_MARKUP = /\[emote:(\d+):([^\]]+)\]/g;
+const EMOTE_IMAGE = (id: string) => `https://files.kick.com/emotes/${id}/fullsize`;
+
+/**
+ * Replaces the markup with the emote's name and reports where each landed, so
+ * the renderer can swap those spans for images exactly as it does for Twitch.
+ * Positions are measured in code points, matching how Twitch indexes its own
+ * ranges, so emoji earlier in a message do not shift them.
+ */
+export function parseKickEmotes(raw: string): {
+  text: string;
+  emotes: TwitchChatEmoteRange[];
+} {
+  EMOTE_MARKUP.lastIndex = 0;
+  const emotes: TwitchChatEmoteRange[] = [];
+  let text = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = EMOTE_MARKUP.exec(raw)) !== null) {
+    text += raw.slice(cursor, match.index);
+    const start = [...text].length;
+    const name = match[2];
+    text += name;
+    emotes.push({
+      id: match[1],
+      start,
+      end: start + [...name].length - 1,
+      imageUrl: EMOTE_IMAGE(match[1]),
+      provider: "kick",
+    });
+    cursor = match.index + match[0].length;
+  }
+  text += raw.slice(cursor);
+  return { text, emotes };
+}
 
 interface KickChatIdentity {
   color?: string;
@@ -174,6 +218,7 @@ export class KickChatService {
     const login = sender.slug ?? sender.username ?? "";
     if (login.length === 0) return null;
 
+    const { text: rendered, emotes } = parseKickEmotes(text);
     const sentAt = payload.created_at ? Date.parse(payload.created_at) : Number.NaN;
     return {
       id: payload.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -181,15 +226,13 @@ export class KickChatService {
       login,
       displayName: sender.username ?? login,
       color: sender.identity?.color ?? "",
-      text,
+      text: rendered,
       // Kick's badges are its own set with no Twitch equivalent, and the
       // renderer resolves badge art from Twitch's assets, so they are dropped
       // rather than rendered as broken images.
       badges: [],
       sentAt: Number.isFinite(sentAt) ? sentAt : Date.now(),
-      // Kick emotes use [emote:id:name] markup in the text rather than the
-      // ranges Twitch sends; they render as their names until parsed.
-      twitchEmotes: [],
+      twitchEmotes: emotes,
     };
   }
 

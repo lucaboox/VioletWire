@@ -225,7 +225,10 @@ function renderChatMessageText(
     output.push(
       <ChatEmote
         className="chat-emote"
-        imageUrl={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`}
+        imageUrl={
+          range.imageUrl ??
+          `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`
+        }
         key={`${message.id}-twitch-${index}`}
         name={name}
         provider="twitch"
@@ -1740,6 +1743,43 @@ export function App() {
     loadNextCategoryStreams,
     selectedBrowseCategory,
   ]);
+
+  // Kick's own metadata, shaped into the same record the header already reads
+  // so the title, avatar, viewers, and uptime render without special cases.
+  useEffect(() => {
+    if (!activeChannel) return;
+    const target = parseChannelKey(activeChannel);
+    if (target.platform !== "kick") return;
+
+    let cancelled = false;
+    const load = () => {
+      void window.desktop.kick
+        .getChannel(target.login)
+        .then((channel) => {
+          if (cancelled || channel === null) return;
+          setStreamMetadata({
+            broadcasterId: channel.id,
+            login: channel.slug,
+            displayName: channel.displayName,
+            profileImageUrl: channel.profileImageUrl,
+            isLive: channel.isLive,
+            title: channel.title,
+            category: channel.category,
+            viewerCount: channel.viewerCount,
+            startedAt: channel.startedAt,
+          });
+        })
+        .catch(() => undefined);
+    };
+    load();
+    // Matches the Twitch refresh cadence so viewer counts and the offline
+    // transition stay about as current.
+    const refresh = window.setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(refresh);
+    };
+  }, [activeChannel]);
 
   useEffect(() => {
     if (!activeChannel || authState.status !== "signed-in") return;

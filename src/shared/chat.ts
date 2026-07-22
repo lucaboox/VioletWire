@@ -8,6 +8,13 @@ export interface TwitchChatEmoteRange {
   id: string;
   start: number;
   end: number;
+  /**
+   * Where the image lives, when it is not Twitch's. Twitch sends only an id and
+   * the renderer builds its CDN URL from it; other services host their emotes
+   * elsewhere, so they supply the URL directly.
+   */
+  imageUrl?: string;
+  provider?: "twitch" | "kick";
 }
 
 export interface ChatMessage {

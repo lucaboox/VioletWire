@@ -41,6 +41,7 @@ const kickLivestreamSchema = z.object({
   viewer_count: z.number().optional(),
   session_title: z.string().optional(),
   created_at: z.string().optional(),
+  start_time: z.string().optional(),
   thumbnail: z
     .union([z.string(), z.object({ url: z.string().optional() })])
     .optional(),
@@ -75,6 +76,7 @@ const kickSearchSchema = z.object({
         user: z
           .object({
             username: z.string().optional(),
+            profilePic: z.string().nullable().optional(),
             profile_pic: z.string().nullable().optional(),
           })
           .optional(),
@@ -290,7 +292,7 @@ export class KickService {
         id: entry.id === undefined ? slug : String(entry.id),
         slug,
         displayName: entry.user?.username ?? slug,
-        profileImageUrl: entry.user?.profile_pic ?? "",
+        profileImageUrl: entry.user?.profilePic ?? entry.user?.profile_pic ?? "",
         // Search does not include the chatroom, so opening a result looks the
         // channel up before connecting chat.
         chatroomId: undefined,
@@ -327,7 +329,7 @@ export class KickService {
       title: livestream?.session_title,
       category: livestream?.categories?.[0]?.name,
       viewerCount: livestream?.viewer_count ?? 0,
-      startedAt: livestream?.created_at,
+      startedAt: livestream?.start_time ?? livestream?.created_at,
       thumbnailUrl: livestream === null ? undefined : readThumbnail(livestream),
     };
   }

@@ -15,7 +15,7 @@ import type {
   PlayerMode,
 } from "../shared/player";
 import type { TwitchApi } from "../shared/twitch";
-import type { KickChannelResult } from "../shared/platform";
+import type { KickChannelDetails, KickChannelResult } from "../shared/platform";
 import type { EmoteApi } from "../shared/emotes";
 import type { ChatApi, ChatConnectionState, ChatMessage } from "../shared/chat";
 import type { AppUpdateStatus, UpdateApi } from "../shared/updates";
@@ -132,6 +132,8 @@ const api: DesktopApi = {
   kick: {
     search: (query: string): Promise<KickChannelResult[]> =>
       ipcRenderer.invoke("kick:search", query),
+    getChannel: (slug: string): Promise<KickChannelDetails | null> =>
+      ipcRenderer.invoke("kick:get-channel", slug),
   },
   chat: {
     send: (channel: string, message: string, replyParentMessageId?: string) =>
