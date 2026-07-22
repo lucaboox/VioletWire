@@ -45,12 +45,22 @@ const kickLivestreamSchema = z.object({
   session_title: z.string().nullish(),
   created_at: z.string().nullish(),
   start_time: z.string().nullish(),
-  thumbnail: z
-    .union([z.string(), z.object({ url: z.string().nullish() })])
-    .nullish(),
   categories: z
     .array(z.object({ name: z.string().nullish() }))
     .optional(),
+});
+
+// The dedicated livestream route, whose thumbnail actually loads. The channel
+// endpoint returns one on stream.kick.com that answers 403, while this returns
+// an images.kick.com URL that the site itself uses.
+const kickLivestreamRouteSchema = z.object({
+  data: z
+    .object({
+      created_at: z.string().nullish(),
+      start_time: z.string().nullish(),
+      thumbnail: z.object({ src: z.string().nullish() }).nullish(),
+    })
+    .nullish(),
 });
 
 const kickChannelSchema = z.object({
@@ -202,12 +212,6 @@ function toIsoTimestamp(value: string | null | undefined): string | undefined {
     return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
   }
   return `${match[1]}T${match[2]}Z`;
-}
-
-function readThumbnail(livestream: z.infer<typeof kickLivestreamSchema>): string | undefined {
-  const { thumbnail } = livestream;
-  if (typeof thumbnail === "string") return thumbnail;
-  return thumbnail?.url ?? undefined;
 }
 
 export class KickService {
@@ -537,7 +541,7 @@ export class KickService {
         channel.startedAt = cached.startedAt;
         continue;
       }
-      const details = await this.getChannel(channel.slug);
+      const details = await this.getLivestream(channel.slug);
       if (details === null) continue;
       channel.thumbnailUrl = details.thumbnailUrl;
       channel.startedAt = details.startedAt;
@@ -547,6 +551,28 @@ export class KickService {
         startedAt: details.startedAt,
       });
     }
+  }
+
+  /**
+   * The live thumbnail and start time from the dedicated livestream route. Its
+   * thumbnail is the one that actually loads, unlike the channel endpoint's.
+   * Returns null when the channel is offline.
+   */
+  async getLivestream(
+    slug: string,
+  ): Promise<{ thumbnailUrl?: string; startedAt?: string } | null> {
+    const payload = await this.requestJson(
+      `/api/v2/channels/${encodeURIComponent(slug)}/livestream`,
+    );
+    if (payload === null) return null;
+    const parsed = kickLivestreamRouteSchema.safeParse(payload);
+    if (!parsed.success || !parsed.data.data) return null;
+    return {
+      thumbnailUrl: parsed.data.data.thumbnail?.src ?? undefined,
+      startedAt: toIsoTimestamp(
+        parsed.data.data.start_time ?? parsed.data.data.created_at,
+      ),
+    };
   }
 
   /**
@@ -727,7 +753,9 @@ export class KickService {
         : "Offline",
       viewerCount: livestream?.viewer_count ?? 0,
       startedAt: toIsoTimestamp(livestream?.start_time ?? livestream?.created_at),
-      thumbnailUrl: livestream === null ? undefined : readThumbnail(livestream),
+      // Deliberately omitted: this endpoint's thumbnail host answers 403.
+      // getLivestream carries the one that loads.
+      thumbnailUrl: undefined,
     };
   }
 
