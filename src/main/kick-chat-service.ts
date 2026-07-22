@@ -125,6 +125,11 @@ export class KickChatService {
     this.openSocket();
   }
 
+  /** The room the live connection is subscribed to, if any. */
+  getChatroomId(): string | null {
+    return this.chatroomId;
+  }
+
   disconnect(): void {
     this.manuallyClosed = true;
     this.connectGeneration += 1;

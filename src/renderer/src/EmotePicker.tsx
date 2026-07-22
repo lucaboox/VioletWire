@@ -122,7 +122,7 @@ interface PickerEmote {
   name: string;
   imageUrl?: string;
   unicode?: string;
-  provider: "7TV" | "FrankerFaceZ" | "BetterTTV" | "Twitch" | "Emoji";
+  provider: "7TV" | "FrankerFaceZ" | "BetterTTV" | "Twitch" | "Kick" | "Emoji";
   providerId: EmoteProvider | "twitch" | "emoji";
   scope: "channel" | "global";
   subscriptionOnly: boolean;
@@ -143,6 +143,12 @@ interface EmotePickerProps {
   providerChannelEmoteNames: Map<EmoteProvider, Set<string>>;
   providerEmotes: Map<EmoteProvider, Map<string, ProviderEmote>>;
   twitchEmotes: TwitchPickerEmote[];
+  /**
+   * Names the service whose own emotes fill the platform tab. Kick has no
+   * FrankerFaceZ or BetterTTV, and its emotes come from its own API, but they
+   * sit in exactly the same place as Twitch's.
+   */
+  platformLabel?: "Twitch" | "Kick";
 }
 
 interface Section {
@@ -274,6 +280,7 @@ export function EmotePicker({
   providerChannelEmoteNames,
   providerEmotes,
   twitchEmotes,
+  platformLabel = "Twitch",
 }: EmotePickerProps) {
   const [provider, setProvider] = useState<Provider>("7tv");
   const [query, setQuery] = useState("");
@@ -426,7 +433,7 @@ export function EmotePicker({
       key: `twitch:${emote.id}`,
       name: emote.name,
       imageUrl: emote.imageUrl,
-      provider: "Twitch",
+      provider: platformLabel,
       providerId: "twitch",
       scope: emote.scope,
       subscriptionOnly: emote.subscriptionOnly,
@@ -472,7 +479,7 @@ export function EmotePicker({
       unicode: unicodePickerEmotes,
       combined: [...thirdParty, ...twitch, ...unicodePickerEmotes],
     };
-  }, [providerChannelEmoteNames, providerEmotes, twitchEmotes, unicodePickerEmotes]);
+  }, [platformLabel, providerChannelEmoteNames, providerEmotes, twitchEmotes, unicodePickerEmotes]);
 
   const sections = useMemo<Section[]>(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -712,7 +719,7 @@ export function EmotePicker({
     { id: "7tv", logo: "7tv", mark: "7TV" },
     { id: "ffz", logo: "ffz", mark: "FFZ" },
     { id: "bttv", logo: "bttv", mark: "BTTV" },
-    { id: "twitch", logo: "twitch", mark: "Twitch" },
+    { id: "twitch", logo: "twitch", mark: platformLabel },
     { id: "emoji", icon: Smile, mark: "" },
   ];
 

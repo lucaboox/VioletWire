@@ -511,6 +511,7 @@ export function App() {
   );
   const [twitchBadges, setTwitchBadges] = useState<Map<string, ChatBadgeAsset>>(new Map());
   const [twitchPickerEmotes, setTwitchPickerEmotes] = useState<TwitchPickerEmote[]>([]);
+  const [kickPickerEmotes, setKickPickerEmotes] = useState<TwitchPickerEmote[]>([]);
   // Cache each channel's loaded emotes/badges so switching chat (multistream
   // tabs especially) reuses them instantly instead of clearing and refetching.
   const emoteBundleCache = useRef<
@@ -633,6 +634,11 @@ export function App() {
   // The channel the chat pane (connection, emotes, badges, sending) follows:
   // the selected tab in multistream, otherwise the single watched channel.
   const chatChannel = multiStreamActive ? effectiveMultiChatChannel : activeChannel;
+  const chatIsKick =
+    chatChannel !== null && parseChannelKey(chatChannel).platform === "kick";
+  const pickerEmotes = chatIsKick ? kickPickerEmotes : twitchPickerEmotes;
+  const pickerPlatformLabel = chatIsKick ? ("Kick" as const) : ("Twitch" as const);
+  const pickerProviderEmotes = chatIsKick ? emptyProviderEmoteMaps() : providerEmoteMaps;
   const chatBroadcasterId = multiStreamActive
     ? multiChatBroadcasterId
     : (streamMetadata?.broadcasterId ?? null);
@@ -1779,6 +1785,38 @@ export function App() {
       window.clearInterval(refresh);
     };
   }, [platformFilter]);
+
+  useEffect(() => {
+    if (!chatChannel) return;
+    const target = parseChannelKey(chatChannel);
+    if (target.platform !== "kick") {
+      return;
+    }
+    let cancelled = false;
+    void window.desktop.kick
+      .getEmoteSets(target.login)
+      .then((sets) => {
+        if (cancelled) return;
+        setKickPickerEmotes(
+          sets.flatMap((set) =>
+            set.emotes.map((emote) => ({
+              id: emote.id,
+              name: emote.name,
+              imageUrl: emote.imageUrl,
+              // Kick names the channel's own set after the channel; anything
+              // else is one of its shared sets.
+              scope: set.name.toLowerCase() === target.login ? ("channel" as const) : ("global" as const),
+              subscriptionOnly: emote.subscribersOnly,
+              ownerName: set.name,
+            })),
+          ),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [chatChannel]);
 
   // Kick's own metadata, shaped into the same record the header already reads
   // so the title, avatar, viewers, and uptime render without special cases.
@@ -3358,7 +3396,7 @@ export function App() {
                     }
                     ref={chatInputHost}
                     sevenTvEmotes={chatProviderEmotes}
-                    twitchEmotes={twitchPickerEmotes}
+                    twitchEmotes={pickerEmotes}
                     value={chatInput}
                   />
                   <div className="chat-composer-inline-actions">
@@ -3386,8 +3424,9 @@ export function App() {
                             )
                           }
                           providerChannelEmoteNames={providerChannelNames}
-                          providerEmotes={providerEmoteMaps}
-                          twitchEmotes={twitchPickerEmotes}
+                          providerEmotes={pickerProviderEmotes}
+                          twitchEmotes={pickerEmotes}
+                    platformLabel={pickerPlatformLabel}
                         />
                       )}
                     </div>
@@ -4184,7 +4223,7 @@ export function App() {
                           }
                           ref={chatInputHost}
                           sevenTvEmotes={chatProviderEmotes}
-                          twitchEmotes={twitchPickerEmotes}
+                          twitchEmotes={pickerEmotes}
                           value={chatInput}
                         />
                         <div className="chat-composer-inline-actions">
@@ -4224,8 +4263,9 @@ export function App() {
                                     )
                                   }
                                   providerChannelEmoteNames={providerChannelNames}
-                                  providerEmotes={providerEmoteMaps}
-                                  twitchEmotes={twitchPickerEmotes}
+                                  providerEmotes={pickerProviderEmotes}
+                                  twitchEmotes={pickerEmotes}
+                    platformLabel={pickerPlatformLabel}
                                 />
                               {/*
                               <div className="emote-picker">

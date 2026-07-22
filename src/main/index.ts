@@ -1356,12 +1356,6 @@ handleTrusted("system:open-external", async (_event, input: unknown) => {
 });
 
 handleTrusted("channel:open-action", async (_event, rawChannel: unknown, rawAction: unknown) => {
-  // Sending on Kick needs its OAuth flow, which is not wired up yet. Reject it
-  // here rather than letting the Twitch name check throw an opaque error.
-  const target = channelKeySchema.safeParse(rawChannel);
-  if (target.success && parseChannelKey(target.data).platform !== "twitch") {
-    throw new Error("Sending messages is not available on this service yet.");
-  }
   const channel = channelNameSchema.parse(rawChannel);
   const action = channelActionSchema.parse(rawAction);
   await openChannelActionWindow(channel, action);
@@ -1463,6 +1457,14 @@ handleTrusted("chat:send", (
   rawMessage: unknown,
   rawReplyParentMessageId: unknown,
 ) => {
+  const target = channelKeySchema.safeParse(rawChannel);
+  if (target.success && parseChannelKey(target.data).platform === "kick") {
+    // The room is whatever the live chat connection is subscribed to, so a
+    // message cannot be posted to a channel that is not the one on screen.
+    const chatroomId = kickChatService.getChatroomId();
+    if (chatroomId === null) throw new Error("Kick chat is not connected.");
+    return kickService.sendMessage(chatroomId, outgoingChatMessageSchema.parse(rawMessage));
+  }
   const channel = channelNameSchema.parse(rawChannel);
   const message = outgoingChatMessageSchema.parse(rawMessage);
   const replyParentMessageId =

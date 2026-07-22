@@ -494,6 +494,55 @@ export class KickService {
     return channels;
   }
 
+  /**
+   * Posts a chat message. Kick is a Laravel app, so the request needs the CSRF
+   * token it issued alongside the session; without it the API answers 419
+   * regardless of who is signed in.
+   */
+  async sendMessage(chatroomId: string, content: string): Promise<void> {
+    const token = await this.readXsrfToken();
+    if (token === null) throw new Error("Not signed in to Kick.");
+
+    const response = await this.kickSession().fetch(
+      `${KICK_ORIGIN}/api/v2/messages/send/${encodeURIComponent(chatroomId)}`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": this.userAgent(),
+          Referer: `${KICK_ORIGIN}/`,
+          "X-XSRF-TOKEN": token,
+        },
+        body: JSON.stringify({ content, type: "message" }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      },
+    );
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("Sign in to Kick to send messages.");
+    }
+    if (response.status === 419) {
+      throw new Error("Kick rejected the session. Sign in again.");
+    }
+    if (!response.ok) {
+      throw new Error("Kick would not accept the message.");
+    }
+  }
+
+  private async readXsrfToken(): Promise<string | null> {
+    try {
+      const [cookie] = await this.kickSession().cookies.get({
+        url: KICK_ORIGIN,
+        name: "XSRF-TOKEN",
+      });
+      // Laravel stores it percent-encoded; the header wants the raw value.
+      return cookie ? decodeURIComponent(cookie.value) : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** The channel's emote sets, plus Kick's global and emoji sets. */
   async getEmoteSets(slug: string): Promise<KickEmoteSet[]> {
     const payload = await this.requestJson(`/emotes/${encodeURIComponent(slug)}`);
