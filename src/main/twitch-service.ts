@@ -202,6 +202,7 @@ const userEmoteResponseSchema = z.object({
       id: z.string(),
       name: z.string(),
       owner_id: z.string(),
+      emote_set_id: z.string().default(""),
       format: z.array(z.string()).default(["static"]),
       scale: z.array(z.string()).default(["1.0"]),
       theme_mode: z.array(z.string()).default(["dark"]),
@@ -910,16 +911,36 @@ export class TwitchService {
       cursor = response.pagination.cursor;
     } while (cursor);
 
+    const channelOwnedTypes = new Set([
+      "bitstier",
+      "follower",
+      "subscriptions",
+      "channelpoints",
+    ]);
     const ownerIds = [...new Set(
       data
+        .filter((emote) => channelOwnedTypes.has(emote.emote_type))
         .map((emote) => emote.owner_id)
         .filter((id): id is string => /^\d+$/.test(id) && id !== "0"),
     )];
     const owners = new Map(
       (await this.getUsersByIds(ownerIds)).map((owner) => [owner.id, owner]),
     );
+    const categoryNames: Record<string, string> = {
+      rewards: "Rewards",
+      hypetrain: "Hype Train",
+      prime: "Prime",
+      turbo: "Turbo",
+      owl2019: "Overwatch League",
+      twofactor: "Two-factor rewards",
+      limitedtime: "Limited-time emotes",
+    };
     return data.map((emote) => {
       const owner = owners.get(emote.owner_id);
+      const channelOwned = channelOwnedTypes.has(emote.emote_type);
+      const eventCategory = !channelOwned && categoryNames[emote.emote_type]
+        ? emote.emote_type
+        : undefined;
       const format = emote.format.includes("animated") ? "animated" : "static";
       const theme = emote.theme_mode.includes("dark") ? "dark" : emote.theme_mode[0] ?? "dark";
       const scale = emote.scale.includes("2.0") ? "2.0" : emote.scale.at(-1) ?? "1.0";
@@ -931,11 +952,16 @@ export class TwitchService {
           .replace("{{format}}", format)
           .replace("{{theme_mode}}", theme)
           .replace("{{scale}}", scale),
-        scope: !emote.owner_id || emote.owner_id === "0" ? "global" : "channel",
+        // Get User Emotes includes account-wide Twitch/event emotes too. They
+        // may carry an owner ID (for example Hype Train or rewards), but they
+        // are not a channel collection and should stay with Global emotes.
+        scope: channelOwned ? "channel" : "global",
         subscriptionOnly: emote.emote_type === "subscriptions" || Boolean(emote.tier),
-        ownerId: emote.owner_id,
-        ownerName: owner?.display_name,
-        ownerImageUrl: owner?.profile_image_url,
+        ownerId: channelOwned ? emote.owner_id : undefined,
+        ownerName: channelOwned ? owner?.display_name : undefined,
+        ownerImageUrl: channelOwned ? owner?.profile_image_url : undefined,
+        categoryId: eventCategory,
+        categoryName: eventCategory ? categoryNames[eventCategory] : undefined,
       };
     });
   }

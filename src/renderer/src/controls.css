@@ -726,9 +726,9 @@ input {
 .chat-composer-editor .composer-emote {
   display: inline-block;
   width: auto;
-  height: 20px;
-  max-width: 80px;
-  margin: -2px 1px 0;
+  height: var(--chat-emote-size, 27px);
+  max-width: calc(var(--chat-emote-size, 27px) * 6);
+  margin: -5px 1px;
   vertical-align: middle;
   object-fit: contain;
 }

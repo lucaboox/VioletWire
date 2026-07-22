@@ -122,6 +122,8 @@ export interface TwitchPickerEmote {
   ownerId?: string;
   ownerName?: string;
   ownerImageUrl?: string;
+  categoryId?: string;
+  categoryName?: string;
 }
 
 export interface TwitchChatAssets {

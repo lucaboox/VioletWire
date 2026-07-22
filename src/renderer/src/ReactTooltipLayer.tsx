@@ -58,13 +58,14 @@ function tooltipTarget(eventTarget: EventTarget | null): HTMLElement | null {
 
 function positionTooltip(tooltip: TooltipState): CSSProperties {
   const targetBounds = tooltip.target.getBoundingClientRect();
+  const longestTextLine = Math.max(...tooltip.text.split("\n").map((line) => line.length));
   const estimatedWidth = tooltip.linkPreview
     ? 340
     : tooltip.imageUrl
     ? tooltip.large
       ? 340
       : 120
-    : Math.min(320, Math.max(70, tooltip.text.length * 7.2 + 22));
+    : Math.min(320, Math.max(70, longestTextLine * 7.2 + 22));
   const left = Math.min(
     window.innerWidth - VIEWPORT_MARGIN - estimatedWidth / 2,
     Math.max(VIEWPORT_MARGIN + estimatedWidth / 2, targetBounds.left + targetBounds.width / 2),
@@ -259,7 +260,13 @@ export function ReactTooltipLayer() {
               style={tooltip.imageHeight ? { height: tooltip.imageHeight } : undefined}
             />
           )}
-          {tooltip.text}
+          {tooltip.text.includes("\n") ? (
+            <span className="violetwire-tooltip-lines">
+              {tooltip.text.split("\n").map((line, index) =>
+                index === 0 ? <strong key={line}>{line}</strong> : <span key={line}>{line}</span>,
+              )}
+            </span>
+          ) : tooltip.text}
         </div>,
         document.body,
       )

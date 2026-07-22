@@ -3,6 +3,7 @@ import {
   BaseWindow,
   BrowserWindow,
   ipcMain,
+  Menu,
   powerMonitor,
   shell,
   WebContentsView,
@@ -1407,6 +1408,10 @@ handleTrusted("preferences:update", async (_event, patch: unknown) => {
 
 app.whenReady().then(async () => {
   app.setAppUserModelId("app.violetwire.viewer");
+  // VioletWire provides its own application UI. Removing Electron's default
+  // menu also prevents Windows from revealing File/Edit/View when Alt is used
+  // for emote-picker shortcuts.
+  Menu.setApplicationMenu(null);
   powerMonitor.on("resume", () => {
     textureNativePlayer.recoverGraphics();
     multiStreamManager.recoverGraphics();

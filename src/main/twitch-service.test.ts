@@ -639,6 +639,10 @@ describe("TwitchService chat assets", () => {
       expect.objectContaining({
         id: "event-emote",
         scope: "global",
+        categoryId: "limitedtime",
+        categoryName: "Limited-time emotes",
+        ownerId: undefined,
+        ownerImageUrl: undefined,
       }),
     ]);
   });
@@ -670,7 +674,12 @@ describe("TwitchService chat assets", () => {
 
     expect(result.badges).toHaveLength(1);
     expect(result.emotes).toEqual([
-      expect.objectContaining({ id: "event-emote", name: "EventHype" }),
+      expect.objectContaining({
+        id: "event-emote",
+        name: "EventHype",
+        scope: "global",
+        categoryId: "limitedtime",
+      }),
     ]);
     expect(requestCount("/helix/users?id=twitch")).toBe(0);
   });

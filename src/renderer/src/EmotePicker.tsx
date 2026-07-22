@@ -1,7 +1,9 @@
 import {
   Globe2,
   MoveDiagonal2,
+  Palette,
   Search,
+  Smile,
   Sparkles,
   Star,
   type LucideIcon,
@@ -13,6 +15,8 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import type EmojiDatabase from "emoji-picker-element/database";
+import type { NativeEmoji, SkinTone } from "emoji-picker-element/shared";
 import type { TwitchPickerEmote } from "../../shared/chat";
 import type {
   EmoteProvider,
@@ -29,14 +33,97 @@ import {
   type ProviderLogoName,
 } from "./ProviderLogo";
 
-type Provider = "favorites" | "7tv" | "twitch" | "ffz" | "bttv";
+type Provider = "favorites" | "emoji" | "7tv" | "twitch" | "ffz" | "bttv";
+
+const UNICODE_EMOJI_GROUPS = [
+  { id: 0, label: "Smileys & emotion", icon: "😀" },
+  { id: 1, label: "People & body", icon: "👋" },
+  { id: 3, label: "Animals & nature", icon: "🐱" },
+  { id: 4, label: "Food & drink", icon: "🍎" },
+  { id: 5, label: "Travel & places", icon: "🏠" },
+  { id: 6, label: "Activities", icon: "⚽" },
+  { id: 7, label: "Objects", icon: "📝" },
+  { id: 8, label: "Symbols", icon: "⛔" },
+  { id: 9, label: "Flags", icon: "🏁" },
+] as const;
+
+// Windows updates its color emoji font independently from Chromium. Probe a
+// representative emoji from each Unicode release once, then avoid offering
+// newer characters that would otherwise render as empty boxes in the picker.
+const EMOJI_SUPPORT_TESTS = [
+  { emoji: "🫪", version: 17 },
+  { emoji: "🫩", version: 16 },
+  { emoji: "🫨", version: 15.1 },
+  { emoji: "🫠", version: 14 },
+  { emoji: "🥲", version: 13.1 },
+  { emoji: "🥻", version: 12.1 },
+  { emoji: "🥰", version: 11 },
+  { emoji: "🤩", version: 5 },
+  { emoji: "👱‍♀️", version: 4 },
+  { emoji: "🤣", version: 3 },
+  { emoji: "👁️‍🗨️", version: 2 },
+  { emoji: "😀", version: 1 },
+  { emoji: "😐️", version: 0.7 },
+  { emoji: "😃", version: 0.6 },
+] as const;
+
+function nativeEmojiSupportVersion(): number {
+  try {
+    const featureFor = (emoji: string, color: string) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return "";
+      context.textBaseline = "top";
+      context.font = '100px "Segoe UI Emoji", "Segoe UI Symbol", sans-serif';
+      context.fillStyle = color;
+      context.scale(0.01, 0.01);
+      context.fillText(emoji, 0, 0);
+      return [...context.getImageData(0, 0, 1, 1).data].join(",");
+    };
+    for (const test of EMOJI_SUPPORT_TESTS) {
+      const dark = featureFor(test.emoji, "#000");
+      const light = featureFor(test.emoji, "#fff");
+      if (dark === light && !dark.startsWith("0,0,0,")) return test.version;
+    }
+  } catch {
+    // Canvas can be unavailable in unusual hardened environments. In that
+    // case, showing the full set is more useful than hiding valid emoji.
+  }
+  return EMOJI_SUPPORT_TESTS[0].version;
+}
+
+const zwjSupportCache = new Map<string, boolean>();
+
+function nativeEmojiSequenceSupported(unicode: string): boolean {
+  if (!unicode.includes("\u200d")) return true;
+  const cached = zwjSupportCache.get(unicode);
+  if (cached !== undefined) return cached;
+  try {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) return true;
+    context.font = '100px "Segoe UI Emoji", "Segoe UI Symbol", sans-serif';
+    const baselineWidth = context.measureText("😀").width;
+    const sequenceWidth = context.measureText(unicode).width;
+    // Unsupported Windows ZWJ emoji render as two or more separate glyphs.
+    // Supported sequences can be wider than a normal face, hence the same
+    // deliberately generous 1.8x threshold used by emoji-picker-element.
+    const supported = sequenceWidth / 1.8 < baselineWidth;
+    zwjSupportCache.set(unicode, supported);
+    return supported;
+  } catch {
+    return true;
+  }
+}
 
 interface PickerEmote {
   key: string;
   name: string;
-  imageUrl: string;
-  provider: "7TV" | "FrankerFaceZ" | "BetterTTV" | "Twitch";
-  providerId: EmoteProvider | "twitch";
+  imageUrl?: string;
+  unicode?: string;
+  provider: "7TV" | "FrankerFaceZ" | "BetterTTV" | "Twitch" | "Emoji";
+  providerId: EmoteProvider | "twitch" | "emoji";
   scope: "channel" | "global";
   subscriptionOnly: boolean;
   modifier: boolean;
@@ -44,6 +131,8 @@ interface PickerEmote {
   ownerId?: string;
   ownerName?: string;
   ownerImageUrl?: string;
+  categoryId?: string;
+  categoryName?: string;
 }
 
 interface EmotePickerProps {
@@ -60,8 +149,9 @@ interface Section {
   id: string;
   label: string;
   emotes: PickerEmote[];
-  scope?: "channel" | "global" | "effect";
+  scope?: "channel" | "global" | "effect" | "emoji" | "twitch-set";
   avatarUrl?: string;
+  glyph?: string;
 }
 
 const FAVORITES_KEY = "violetwire.emotes.favorites";
@@ -110,6 +200,13 @@ let cachedPickerSize = {
   width: defaultAppPreferences.emotePickerWidth,
   height: defaultAppPreferences.emotePickerHeight,
 };
+let cachedUnicodeEmojiGroups = new Map<number, NativeEmoji[]>();
+let cachedUnicodeSkinTone: SkinTone = 0;
+let cachedUnicodeDatabase: EmojiDatabase | null = null;
+
+function rememberUnicodeSkinTone(skinTone: SkinTone) {
+  cachedUnicodeSkinTone = skinTone;
+}
 
 void window.desktop.preferences
   .getOrMigrate()
@@ -123,6 +220,7 @@ void window.desktop.preferences
 
 function providerLabel(provider: Provider): string {
   if (provider === "favorites") return "Favorites";
+  if (provider === "emoji") return "Emoji";
   if (provider === "twitch") return "Twitch";
   if (provider === "7tv") return "7TV";
   return provider.toUpperCase();
@@ -142,6 +240,32 @@ function ProviderMark({
   return <span>{label}</span>;
 }
 
+function searchSectionFor(emote: PickerEmote): { id: string; label: string } {
+  if (emote.provider === "Emoji") {
+    const group = UNICODE_EMOJI_GROUPS.find(({ id }) => String(id) === emote.ownerId);
+    return {
+      id: `emoji-${emote.ownerId ?? "all"}`,
+      label: `Emoji · ${group?.label ?? "Emoji"}`,
+    };
+  }
+  if (emote.provider === "Twitch") {
+    const label = emote.categoryName ?? (emote.scope === "global"
+      ? "Global emotes"
+      : emote.ownerName ?? "Channel emotes");
+    const categoryId = emote.categoryId ?? emote.ownerId ?? "global";
+    return { id: `twitch-${emote.scope}-${categoryId}`, label: `Twitch · ${label}` };
+  }
+  const label = emote.modifier
+    ? "Effects"
+    : emote.scope === "channel"
+      ? "Channel emotes"
+      : "Global emotes";
+  return {
+    id: `${emote.providerId}-${label.toLowerCase().replaceAll(" ", "-")}`,
+    label: `${emote.provider} · ${label}`,
+  };
+}
+
 export function EmotePicker({
   channelAvatarUrl,
   channelName,
@@ -153,11 +277,25 @@ export function EmotePicker({
 }: EmotePickerProps) {
   const [provider, setProvider] = useState<Provider>("7tv");
   const [query, setQuery] = useState("");
+  const [searchAllProviders, setSearchAllProviders] = useState(false);
   const [favorites, setFavorites] = useState(readFavorites);
   const [size, setSize] = useState(() => clampSize(cachedPickerSize));
+  const [unicodeEmoji, setUnicodeEmoji] = useState<Map<number, NativeEmoji[]>>(
+    () => new Map(cachedUnicodeEmojiGroups),
+  );
+  const [unicodeLoading, setUnicodeLoading] = useState(false);
+  const [unicodeLoadFailed, setUnicodeLoadFailed] = useState(false);
+  const [skinTone, setSkinTone] = useState<SkinTone>(cachedUnicodeSkinTone);
+  const [skinTonePickerOpen, setSkinTonePickerOpen] = useState(false);
+  const [visibleEmojiSections, setVisibleEmojiSections] = useState<Set<string>>(new Set());
+  const [emojiSectionHeights, setEmojiSectionHeights] = useState<Map<string, number>>(new Map());
+  const [emojiSupportVersion] = useState(nativeEmojiSupportVersion);
   const scrollHost = useRef<HTMLDivElement>(null);
   const sectionHosts = useRef(new Map<string, HTMLElement>());
   const resizing = useRef(false);
+  const unicodeDatabase = useRef<EmojiDatabase | null>(cachedUnicodeDatabase);
+  const unicodeLoadStarted = useRef(false);
+  const pickerMounted = useRef(true);
 
   // Favorites and size persist in the main-process preferences file: the
   // packaged renderer sits on a random-port origin, so its localStorage is
@@ -169,6 +307,7 @@ export function EmotePicker({
     const apply = (preferences: AppPreferences) => {
       if (disposed) return;
       setFavorites(new Set(preferences.emoteFavorites));
+      setSearchAllProviders(preferences.emoteSearchAllProviders);
       if (!resizing.current) {
         cachedPickerSize = {
           width: preferences.emotePickerWidth,
@@ -210,6 +349,78 @@ export function EmotePicker({
     };
   }, []);
 
+  useEffect(() => {
+    pickerMounted.current = true;
+    return () => {
+      pickerMounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (unicodeEmoji.size > 0 || unicodeLoadFailed || unicodeLoadStarted.current) return;
+    unicodeLoadStarted.current = true;
+
+    void Promise.resolve()
+      .then(() => {
+        if (!pickerMounted.current) return null;
+        setUnicodeLoading(true);
+        return import("emoji-picker-element/database");
+      })
+      .then(async (module) => {
+        if (!module) return;
+        const { default: Database } = module;
+        const database = new Database();
+        cachedUnicodeDatabase = database;
+        unicodeDatabase.current = database;
+        await database.ready();
+        const [storedSkinTone, groups] = await Promise.all([
+          database.getPreferredSkinTone(),
+          Promise.all(
+            UNICODE_EMOJI_GROUPS.map(async ({ id }) => [
+              id,
+              await database.getEmojiByGroup(id),
+            ] as const),
+          ),
+        ]);
+        cachedUnicodeSkinTone = storedSkinTone;
+        cachedUnicodeEmojiGroups = new Map(groups);
+        if (!pickerMounted.current) return;
+        setSkinTone(storedSkinTone);
+        setUnicodeEmoji(new Map(groups));
+      })
+      .catch(() => {
+        unicodeLoadStarted.current = false;
+        if (pickerMounted.current) setUnicodeLoadFailed(true);
+      })
+      .finally(() => {
+        if (pickerMounted.current) setUnicodeLoading(false);
+      });
+  }, [unicodeEmoji.size, unicodeLoadFailed]);
+
+  const unicodePickerEmotes = useMemo(() => {
+    const preferredUnicode = (emoji: NativeEmoji) =>
+      skinTone === 0
+        ? emoji.unicode
+        : emoji.skins?.find((skin) => skin.tone === skinTone)?.unicode ?? emoji.unicode;
+    return UNICODE_EMOJI_GROUPS.flatMap(({ id }) =>
+      (unicodeEmoji.get(id) ?? [])
+        .filter((emoji) => emoji.version <= emojiSupportVersion)
+        .filter((emoji) => nativeEmojiSequenceSupported(preferredUnicode(emoji)))
+        .map((emoji) => ({
+        key: `emoji:${emoji.unicode}`,
+        name: emoji.annotation ?? emoji.name,
+        unicode: preferredUnicode(emoji),
+        provider: "Emoji" as const,
+        providerId: "emoji" as const,
+        scope: "global" as const,
+        subscriptionOnly: false,
+        modifier: false,
+        wide: false,
+        ownerId: String(id),
+      })),
+    );
+  }, [emojiSupportVersion, skinTone, unicodeEmoji]);
+
   const allEmotes = useMemo(() => {
     const twitch: PickerEmote[] = twitchEmotes.map((emote) => ({
       key: `twitch:${emote.id}`,
@@ -224,6 +435,8 @@ export function EmotePicker({
       ownerId: emote.ownerId,
       ownerName: emote.ownerName,
       ownerImageUrl: emote.ownerImageUrl,
+      categoryId: emote.categoryId,
+      categoryName: emote.categoryName,
     }));
     const thirdParty: PickerEmote[] = (["7tv", "ffz", "bttv"] as const).map((providerId) => {
       const channelNames = providerChannelEmoteNames.get(providerId) ?? new Set<string>();
@@ -256,20 +469,36 @@ export function EmotePicker({
     return {
       twitch,
       thirdParty,
-      combined: [...thirdParty, ...twitch],
+      unicode: unicodePickerEmotes,
+      combined: [...thirdParty, ...twitch, ...unicodePickerEmotes],
     };
-  }, [providerChannelEmoteNames, providerEmotes, twitchEmotes]);
+  }, [providerChannelEmoteNames, providerEmotes, twitchEmotes, unicodePickerEmotes]);
 
   const sections = useMemo<Section[]>(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (normalizedQuery) {
-      return [{
-        id: "search-results",
-        label: "Search results",
-        emotes: allEmotes.combined.filter((emote) =>
-          emote.name.toLowerCase().includes(normalizedQuery),
-        ),
-      }];
+      const selectedEmotes = provider === "favorites"
+        ? allEmotes.combined.filter((emote) => favorites.has(emote.key))
+        : provider === "emoji"
+          ? allEmotes.unicode
+          : provider === "twitch"
+            ? allEmotes.twitch
+            : allEmotes.thirdParty.filter((emote) => emote.providerId === provider);
+      const matches = (searchAllProviders ? allEmotes.combined : selectedEmotes).filter((emote) =>
+        emote.name.toLowerCase().includes(normalizedQuery),
+      );
+      const grouped = new Map<string, { label: string; emotes: PickerEmote[] }>();
+      for (const emote of matches) {
+        const group = searchSectionFor(emote);
+        const existing = grouped.get(group.id);
+        if (existing) existing.emotes.push(emote);
+        else grouped.set(group.id, { label: group.label, emotes: [emote] });
+      }
+      return [...grouped.entries()].map(([id, group]) => ({
+        id: `search-${id}`,
+        label: group.label,
+        emotes: group.emotes,
+      }));
     }
     if (provider === "favorites") {
       return [{
@@ -277,6 +506,15 @@ export function EmotePicker({
         label: "Favorites",
         emotes: allEmotes.combined.filter((emote) => favorites.has(emote.key)),
       }];
+    }
+    if (provider === "emoji") {
+      return UNICODE_EMOJI_GROUPS.map(({ id, label, icon }) => ({
+        id: `emoji-${id}`,
+        label,
+        glyph: icon,
+        scope: "emoji" as const,
+        emotes: allEmotes.unicode.filter((emote) => emote.ownerId === String(id)),
+      })).filter((section) => section.emotes.length > 0);
     }
     const source = provider === "7tv" || provider === "ffz" || provider === "bttv"
       ? allEmotes.thirdParty.filter((emote) => emote.providerId === provider)
@@ -286,9 +524,11 @@ export function EmotePicker({
     if (provider === "twitch") {
       const grouped = new Map<string, Section>();
       for (const emote of source) {
-        const groupId = emote.scope === "global"
-          ? "global"
-          : emote.ownerId ?? "channel";
+        const groupId = emote.categoryId
+          ? `set-${emote.categoryId}`
+          : emote.scope === "global"
+            ? "global"
+            : emote.ownerId ?? "channel";
         const existing = grouped.get(groupId);
         if (existing) {
           existing.emotes.push(emote);
@@ -296,11 +536,11 @@ export function EmotePicker({
         }
         grouped.set(groupId, {
           id: `twitch-${groupId}`,
-          label: emote.scope === "global"
+          label: emote.categoryName ?? (emote.scope === "global"
             ? "Global emotes"
-            : emote.ownerName ?? (groupId === "channel" ? channelName : "Twitch emotes"),
-          scope: emote.scope,
-          avatarUrl: emote.ownerImageUrl,
+            : emote.ownerName ?? (groupId === "channel" ? channelName : "Twitch emotes")),
+          scope: emote.categoryId ? "twitch-set" : emote.scope,
+          avatarUrl: emote.categoryId ? emote.imageUrl : emote.ownerImageUrl,
           emotes: [emote],
         });
       }
@@ -329,7 +569,62 @@ export function EmotePicker({
     return providerSections.filter(
       (section) => section.scope !== "effect" || section.emotes.length > 0,
     );
-  }, [allEmotes, channelName, favorites, provider, query]);
+  }, [allEmotes, channelName, favorites, provider, query, searchAllProviders]);
+
+  useEffect(() => {
+    if (provider !== "emoji" || query.trim()) return;
+    const root = scrollHost.current;
+    const emojiSections = sections.filter((section) => section.scope === "emoji");
+    if (!root || typeof IntersectionObserver !== "function") {
+      void Promise.resolve().then(() => {
+        setVisibleEmojiSections(new Set(emojiSections.map((section) => section.id)));
+      });
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      setVisibleEmojiSections((current) => {
+        const next = new Set(current);
+        let changed = false;
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).dataset.sectionId;
+          if (!id) continue;
+          if (!entry.isIntersecting && entry.boundingClientRect.height > 0) {
+            const measuredHeight = entry.boundingClientRect.height;
+            setEmojiSectionHeights((current) => {
+              if (Math.abs((current.get(id) ?? 0) - measuredHeight) < 1) return current;
+              const next = new Map(current);
+              next.set(id, measuredHeight);
+              return next;
+            });
+          }
+          if (entry.isIntersecting && !next.has(id)) {
+            next.add(id);
+            changed = true;
+          } else if (!entry.isIntersecting && next.delete(id)) {
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+    }, {
+      root,
+      // Mount the next category before it scrolls into view, but keep distant
+      // grids out of React's DOM and layout work.
+      rootMargin: "320px 0px",
+    });
+    for (const section of emojiSections) {
+      const node = sectionHosts.current.get(section.id);
+      if (node) observer.observe(node);
+    }
+    return () => observer.disconnect();
+  }, [provider, query, sections]);
+
+  function estimatedEmojiSectionHeight(emoteCount: number): number {
+    const availableWidth = Math.max(43, size.width - 86);
+    const columns = Math.max(1, Math.floor((availableWidth + 4) / 47));
+    const rows = Math.max(1, Math.ceil(emoteCount / columns));
+    return 52 + rows * 47;
+  }
 
   function toggleFavorite(emote: PickerEmote) {
     const next = new Set(favorites);
@@ -346,8 +641,11 @@ export function EmotePicker({
       toggleFavorite(emote);
       return;
     }
-    onSelect(emote.name);
-    if (!emote.modifier) onClose();
+    if (emote.unicode) {
+      void unicodeDatabase.current?.incrementFavoriteEmojiCount(emote.unicode).catch(() => undefined);
+    }
+    onSelect(emote.unicode ?? emote.name);
+    if (!emote.modifier && !event.ctrlKey) onClose();
   }
 
   function beginResize(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -370,6 +668,7 @@ export function EmotePicker({
           maximumHeight,
         ),
       };
+      setEmojiSectionHeights((current) => current.size > 0 ? new Map() : current);
       setSize(next);
     };
     const stop = () => {
@@ -395,6 +694,13 @@ export function EmotePicker({
     sectionHosts.current.get(sectionId)?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
+  function setPreferredSkinTone(nextSkinTone: SkinTone) {
+    rememberUnicodeSkinTone(nextSkinTone);
+    setSkinTone(nextSkinTone);
+    setSkinTonePickerOpen(false);
+    void unicodeDatabase.current?.setPreferredSkinTone(nextSkinTone).catch(() => undefined);
+  }
+
   const providers: Array<{
     id: Provider;
     icon?: LucideIcon;
@@ -407,12 +713,16 @@ export function EmotePicker({
     { id: "ffz", logo: "ffz", mark: "FFZ" },
     { id: "bttv", logo: "bttv", mark: "BTTV" },
     { id: "twitch", logo: "twitch", mark: "Twitch" },
+    { id: "emoji", icon: Smile, mark: "" },
   ];
 
   return (
     <div
       className="vw-emote-picker"
-      style={{ width: size.width, height: size.height }}
+      style={{
+        width: size.width,
+        height: size.height,
+      }}
     >
       <button
         aria-label="Resize emote picker"
@@ -426,10 +736,20 @@ export function EmotePicker({
 
       <div className="vw-emote-body">
         <div className="vw-emote-scroll" ref={scrollHost}>
-            {sections.map((section, sectionIndex) => (
+            {sections.map((section, sectionIndex) => {
+              const virtualized = provider === "emoji" && !query.trim() && section.scope === "emoji";
+              const renderGrid = !virtualized || visibleEmojiSections.has(section.id);
+              return (
               <section
-                className="vw-emote-section"
+                className={`vw-emote-section${virtualized ? " virtualized" : ""}`}
+                data-section-id={section.id}
                 key={section.id}
+                style={virtualized && !renderGrid
+                  ? {
+                      minHeight: emojiSectionHeights.get(section.id) ??
+                        estimatedEmojiSectionHeight(section.emotes.length),
+                    }
+                  : undefined}
                 ref={(node) => {
                   if (node) sectionHosts.current.set(section.id, node);
                   else sectionHosts.current.delete(section.id);
@@ -439,7 +759,7 @@ export function EmotePicker({
                   <strong>{section.label}</strong>
                   <span>{section.emotes.length}</span>
                 </header>
-                <div className="vw-emote-grid">
+                {renderGrid && <div className="vw-emote-grid">
                   {section.emotes.map((emote, index) => (
                     <button
                       aria-label={`${emote.name}, ${emote.provider}${favorites.has(emote.key) ? ", favorited" : ""}`}
@@ -454,7 +774,7 @@ export function EmotePicker({
                       title={
                         emote.modifier
                           ? `${emote.name} · ${emote.provider} effect · Applies to an adjacent emote`
-                          : `${emote.name} · ${emote.provider} · Alt-click to ${favorites.has(emote.key) ? "unfavorite" : "favorite"}`
+                          : `${emote.name}  ·  ${emote.provider}\nCtrl-Click  ·  Keep open\nAlt-Click  ·  ${favorites.has(emote.key) ? "Unfavorite" : "Favorite"}`
                       }
                       type="button"
                     >
@@ -463,6 +783,8 @@ export function EmotePicker({
                           <Sparkles size={14} />
                           <small>{emote.name}</small>
                         </span>
+                      ) : emote.unicode ? (
+                        <span aria-hidden="true" className="native-emoji">{emote.unicode}</span>
                       ) : (
                         <img
                           alt=""
@@ -482,9 +804,10 @@ export function EmotePicker({
                         : "No emotes in this section."}
                     </span>
                   )}
-                </div>
+                </div>}
               </section>
-            ))}
+              );
+            })}
         </div>
 
         {!query.trim() && sections.some((section) => section.scope) && (
@@ -497,7 +820,11 @@ export function EmotePicker({
                 title={section.label}
                 type="button"
               >
-                {section.scope === "channel" && (section.avatarUrl || channelAvatarUrl) ? (
+                {section.scope === "emoji" ? (
+                  <span className="vw-emote-emoji-rail-mark">{section.glyph}</span>
+                ) : section.scope === "twitch-set" && section.avatarUrl ? (
+                  <img alt="" src={section.avatarUrl} />
+                ) : section.scope === "channel" && (section.avatarUrl || channelAvatarUrl) ? (
                   <img alt="" src={section.avatarUrl ?? channelAvatarUrl} />
                 ) : section.scope === "channel" ? (
                   <span>{section.label.slice(0, 1).toUpperCase()}</span>
@@ -512,6 +839,13 @@ export function EmotePicker({
         )}
       </div>
 
+        {provider === "emoji" && unicodeLoading && (
+          <div className="vw-emote-loading">Loading native emoji…</div>
+        )}
+        {provider === "emoji" && unicodeLoadFailed && (
+          <div className="vw-emote-loading">Native emoji could not load. Check your connection and try again.</div>
+        )}
+
       <nav aria-label="Emote providers" className="vw-emote-providers">
         {providers.map((item) => (
           <button
@@ -522,6 +856,7 @@ export function EmotePicker({
             key={item.id}
             onClick={() => {
               setProvider(item.id);
+              if (item.id === "emoji") setUnicodeLoadFailed(false);
               setQuery("");
               scrollHost.current?.scrollTo({ top: 0 });
             }}
@@ -533,16 +868,63 @@ export function EmotePicker({
         ))}
       </nav>
 
-      <label className="vw-emote-search">
+      <div className="vw-emote-search">
         <Search size={17} />
         <input
-          aria-label="Search all available emotes"
+          aria-label={searchAllProviders ? "Search all available emotes" : `Search ${providerLabel(provider)} emotes`}
           autoFocus
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search emotes…"
           value={query}
         />
-      </label>
+        <button
+          aria-label={searchAllProviders ? "Search selected provider only" : "Search all emote providers"}
+          aria-pressed={searchAllProviders}
+          className={searchAllProviders ? "active" : ""}
+          onClick={() => {
+            const next = !searchAllProviders;
+            setSearchAllProviders(next);
+            void window.desktop.preferences
+              .update({ emoteSearchAllProviders: next })
+              .catch(() => undefined);
+          }}
+          title={searchAllProviders ? "Searching all providers" : "Search all providers"}
+          type="button"
+        >
+          <Globe2 size={16} />
+        </button>
+      </div>
+
+      {provider === "emoji" && (
+        <>
+          <button
+            aria-expanded={skinTonePickerOpen}
+            aria-label="Choose emoji skin tone"
+            className="vw-emoji-tone-trigger"
+            onClick={() => setSkinTonePickerOpen((open) => !open)}
+            title="Choose emoji skin tone"
+            type="button"
+          >
+            {skinTone === 0 ? <Palette size={15} /> : ["🏻", "🏼", "🏽", "🏾", "🏿"][skinTone - 1]}
+          </button>
+          {skinTonePickerOpen && (
+            <div className="vw-emoji-tone-popover" aria-label="Preferred skin tone">
+              {([0, 1, 2, 3, 4, 5] as SkinTone[]).map((tone) => (
+                <button
+                  aria-label={tone === 0 ? "Default skin tone" : `Skin tone ${tone}`}
+                  aria-pressed={skinTone === tone}
+                  className={skinTone === tone ? "active" : ""}
+                  key={tone}
+                  onClick={() => setPreferredSkinTone(tone)}
+                  type="button"
+                >
+                  {tone === 0 ? "👋" : ["🏻", "🏼", "🏽", "🏾", "🏿"][tone - 1]}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

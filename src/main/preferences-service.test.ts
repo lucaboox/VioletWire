@@ -104,6 +104,7 @@ describe("PreferencesService", () => {
       favoriteChannels: [],
       emotePickerWidth: 390,
       emotePickerHeight: 500,
+      emoteSearchAllProviders: false,
     });
   });
 

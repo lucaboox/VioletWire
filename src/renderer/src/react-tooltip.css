@@ -22,6 +22,7 @@
   overflow-wrap: anywhere;
   pointer-events: none;
   text-align: center;
+  white-space: pre-line;
   animation: violetwire-tooltip-in 110ms ease-out;
 }
 
@@ -29,6 +30,23 @@
   display: block;
   max-width: 100%;
   object-fit: contain;
+}
+
+.violetwire-tooltip-lines {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  white-space: pre;
+}
+
+.violetwire-tooltip-lines strong {
+  color: white;
+  font-weight: 750;
+}
+
+.violetwire-tooltip-lines > span {
+  color: #c5c5cc;
+  font-weight: 550;
 }
 
 /* Link image previews: "fairly large", capped to stay on screen. */

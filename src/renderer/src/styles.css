@@ -610,7 +610,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-composer-editor:focus { border-color: #8b5cf6; }
 .chat-composer-editor[data-empty="true"]::before { color: #92929d; content: attr(data-placeholder); pointer-events: none; }
 .chat-composer-editor[aria-disabled="true"] { cursor: default; opacity: .65; }
-.chat-composer-editor .composer-emote { display: inline-block; width: auto; height: 20px; max-width: 80px; margin: -2px 1px 0; vertical-align: middle; object-fit: contain; }
+.chat-composer-editor .composer-emote { display: inline-block; width: auto; height: var(--chat-emote-size, 27px); max-width: calc(var(--chat-emote-size, 27px) * 6); margin: -5px 1px; vertical-align: middle; object-fit: contain; }
 .native-chat-input textarea { display: block; width: 100%; min-width: 0; min-height: 43px; max-height: 130px; padding: 10px 53px 9px 11px; border: 2px solid #45454d; border-radius: 8px; outline: 0; resize: none; color: #f4f4f5; background: #0e0e10; font: inherit; font-size: 13px; line-height: 19px; overflow-wrap: anywhere; transition: border-color 120ms ease; }
 .native-chat-input .emote-aware-input textarea { background: transparent; }
 .native-chat-input textarea:focus { border-color: #8b5cf6; }

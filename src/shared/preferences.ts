@@ -45,6 +45,7 @@ export const appPreferencesSchema = z.object({
   favoriteChannels: z.array(z.string().max(25)).max(500),
   emotePickerWidth: z.number().int().min(330).max(600),
   emotePickerHeight: z.number().int().min(360).max(700),
+  emoteSearchAllProviders: z.boolean(),
 });
 
 export const appPreferencesPatchSchema = appPreferencesSchema.partial().strict();
@@ -81,6 +82,7 @@ export const defaultAppPreferences: AppPreferences = {
   favoriteChannels: [],
   emotePickerWidth: 390,
   emotePickerHeight: 500,
+  emoteSearchAllProviders: false,
 };
 
 export interface PreferencesApi {
