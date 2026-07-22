@@ -1392,6 +1392,12 @@ handleTrusted("kick:get-user", () => kickService.getUser());
 handleTrusted("kick:sign-in", () => kickService.signIn());
 handleTrusted("kick:sign-out", () => kickService.signOut());
 handleTrusted("kick:get-followed", () => kickService.getFollowedChannels());
+handleTrusted("kick:set-following", (_event, rawSlug: unknown, rawFollow: unknown) => {
+  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
+  if (slug.length === 0) throw new Error("A channel is required.");
+  return kickService.setFollowing(slug, rawFollow === true);
+});
+
 handleTrusted("kick:get-emote-sets", (_event, rawSlug: unknown) => {
   const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
   return slug.length === 0 ? [] : kickService.getEmoteSets(slug);

@@ -1863,6 +1863,7 @@ export function App() {
             category: channel.category,
             viewerCount: channel.viewerCount,
             startedAt: channel.startedAt,
+            isFollowed: channel.following,
           });
         })
         .catch(() => undefined);
@@ -2636,6 +2637,33 @@ export function App() {
 
   async function handleFollow() {
     if (!activeChannel) return;
+    const target = parseChannelKey(activeChannel);
+    if (target.platform === "kick") {
+      if (kickAccount === null) {
+        setNotice("Sign in to Kick from Settings to follow channels.");
+        return;
+      }
+      const nextFollow = !streamMetadata?.isFollowed;
+      // Reflect the change at once; the detail refresh confirms it.
+      setStreamMetadata((current) =>
+        current ? { ...current, isFollowed: nextFollow } : current,
+      );
+      try {
+        await window.desktop.kick.setFollowing(target.login, nextFollow);
+        const channel = await window.desktop.kick.getChannel(target.login);
+        setStreamMetadata((current) =>
+          current ? { ...current, isFollowed: channel?.following ?? nextFollow } : current,
+        );
+        // The sidebar list changed, so refresh it.
+        setKickFollowedChannels(await window.desktop.kick.getFollowedChannels());
+      } catch (reason) {
+        setStreamMetadata((current) =>
+          current ? { ...current, isFollowed: !nextFollow } : current,
+        );
+        setNotice(reason instanceof Error ? reason.message : "Could not update follow.");
+      }
+      return;
+    }
     await window.desktop.player.openChannelAction(activeChannel, "channel");
     if (authState.status === "signed-in") {
       setStreamMetadata(await window.desktop.twitch.getStreamMetadata(activeChannel));
@@ -3707,7 +3735,13 @@ export function App() {
                   aria-pressed={Boolean(streamMetadata?.isFollowed)}
                   className={streamMetadata?.isFollowed ? "toolbar-icon follow-action active" : "toolbar-icon follow-action"}
                   onClick={() => void handleFollow()}
-                  title={streamMetadata?.isFollowed ? "You follow this channel" : "Follow on Twitch"}
+                  title={
+                    streamMetadata?.isFollowed
+                      ? "You follow this channel"
+                      : activeChannel && parseChannelKey(activeChannel).platform === "kick"
+                        ? "Follow on Kick"
+                        : "Follow on Twitch"
+                  }
                   type="button"
                 >
                   <Heart fill={streamMetadata?.isFollowed ? "currentColor" : "none"} size={17} />

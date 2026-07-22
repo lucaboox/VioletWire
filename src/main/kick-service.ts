@@ -76,6 +76,8 @@ const kickChannelSchema = z.object({
     .optional(),
   chatroom: z.object({ id: z.number().nullish() }).optional(),
   livestream: kickLivestreamSchema.nullable().optional(),
+  // Only returned to a signed-in caller; absent otherwise.
+  following: z.boolean().nullish(),
 });
 
 // Search entries are a different, thinner shape than the channel endpoint's:
@@ -191,6 +193,8 @@ export interface KickChannel {
   profileImageUrl: string;
   /** Needed to subscribe to the channel's chat; absent means chat is unavailable. */
   chatroomId?: string;
+  /** Whether the signed-in account follows this channel; undefined if unknown. */
+  following?: boolean;
   isLive: boolean;
   title?: string;
   category?: string;
@@ -611,6 +615,40 @@ export class KickService {
     }
   }
 
+  /**
+   * Follows or unfollows a channel. Kick, unlike Twitch, exposes this, so it can
+   * be done in the app. Needs the session and the same CSRF token as sending.
+   */
+  async setFollowing(slug: string, follow: boolean): Promise<void> {
+    const token = await this.readXsrfToken();
+    if (token === null) throw new Error("Not signed in to Kick.");
+
+    const response = await this.kickSession().fetch(
+      `${KICK_ORIGIN}/api/v2/channels/${encodeURIComponent(slug)}/follow`,
+      {
+        method: follow ? "POST" : "DELETE",
+        headers: {
+          Accept: "application/json",
+          "User-Agent": this.userAgent(),
+          Referer: `${KICK_ORIGIN}/`,
+          "X-XSRF-TOKEN": token,
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      },
+    );
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("Sign in to Kick to follow channels.");
+    }
+    // The channel detail refetch that follows will reflect the change, so a
+    // stale detail cache must not mask it.
+    this.detailCache.delete(slug.toLowerCase());
+    if (!response.ok && response.status !== 409) {
+      // 409 means already in the requested state, which is a success for us.
+      throw new Error("Kick would not change the follow state.");
+    }
+  }
+
   private async readXsrfToken(): Promise<string | null> {
     try {
       const [cookie] = await this.kickSession().cookies.get({
@@ -745,6 +783,7 @@ export class KickService {
       displayName: channel.user?.username ?? slug,
       profileImageUrl: channel.user?.profile_pic ?? "",
       chatroomId: channel.chatroom?.id === undefined ? undefined : String(channel.chatroom.id),
+      following: channel.following ?? undefined,
       // A null livestream is how Kick reports an offline channel.
       isLive: Boolean(livestream?.is_live),
       title: livestream?.session_title ?? undefined,
