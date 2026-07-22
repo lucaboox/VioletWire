@@ -13,10 +13,10 @@ import {
 import {
   ArrowDown,
   AudioLines,
-  BarChart3,
   ChevronLeft,
   ChevronRight,
   Check,
+  Info,
   Layers,
   Maximize,
   MessageSquare,
@@ -1801,7 +1801,7 @@ export function NativeControls({
           onClick={() => closeOrOpenStats()}
           type="button"
         >
-          <BarChart3 size={18} />
+          <Info size={18} />
         </button>
         <button
           aria-label={`Stream quality: ${qualityLabel}`}
