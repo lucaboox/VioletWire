@@ -267,10 +267,11 @@ export class TextureNativePlayer {
       };
       sessionHolder.current = session;
       this.session = session;
+      const startScale = this.lastBounds.scale ?? 1;
       addon.start(
         "",
-        this.lastBounds.width,
-        this.lastBounds.height,
+        Math.round(this.lastBounds.width * startScale),
+        Math.round(this.lastBounds.height * startScale),
         gpuDevice?.vendorId,
         gpuDevice?.deviceId,
       );
@@ -374,7 +375,13 @@ export class TextureNativePlayer {
     this.resizeTimer = setTimeout(() => {
       this.resizeTimer = null;
       if (this.session === session && session.acceptingFrames) {
-        session.addon.resize(this.lastBounds.width, this.lastBounds.height);
+        // Render at the display's real pixel count. The bounds themselves stay
+        // in CSS pixels for positioning the overlay windows.
+        const scale = this.lastBounds.scale ?? 1;
+        session.addon.resize(
+          Math.round(this.lastBounds.width * scale),
+          Math.round(this.lastBounds.height * scale),
+        );
       }
     }, 120);
   }

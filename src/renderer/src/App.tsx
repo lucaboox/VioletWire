@@ -853,6 +853,7 @@ export function App() {
         y: Math.round(bounds.y),
         width: Math.round(bounds.width),
         height: Math.round(bounds.height),
+        scale: window.devicePixelRatio || 1,
       });
     };
 
@@ -1363,12 +1364,12 @@ export function App() {
     const syncMiniBounds = () => {
       const rect = host.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return;
-      const scale = window.devicePixelRatio || 1;
       window.desktop.player.setBounds({
         x: 0,
         y: 0,
-        width: Math.round(rect.width * scale),
-        height: Math.round(rect.height * scale),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        scale: window.devicePixelRatio || 1,
       });
     };
     const observer = new ResizeObserver(syncMiniBounds);

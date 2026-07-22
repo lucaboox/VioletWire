@@ -38,6 +38,11 @@ export const playerBoundsSchema = z.object({
   y: z.number().int().nonnegative(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
+  // The renderer's devicePixelRatio. Bounds stay in CSS pixels because the
+  // overlay windows are positioned in device-independent pixels, but the video
+  // has to be rendered at the display's real pixel count or it is drawn small
+  // and stretched back up, which looks soft above 100% display scaling.
+  scale: z.number().positive().max(4).optional(),
 });
 
 export const channelActionSchema = z.enum(["channel", "subscribe", "clip"]);

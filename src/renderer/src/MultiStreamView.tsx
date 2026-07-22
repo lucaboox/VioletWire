@@ -253,6 +253,7 @@ const MultiTile = memo(function MultiTile({
         y: Math.round(bounds.y),
         width: Math.round(bounds.width),
         height: Math.round(bounds.height),
+        scale: window.devicePixelRatio || 1,
       });
     };
     report();
