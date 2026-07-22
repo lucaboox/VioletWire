@@ -474,65 +474,151 @@
 
       /* ---------------------------- screenshots ---------------------------- */
 
-      .gallery {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-        gap: 20px;
+      /* One large frame with the shots stacked inside it. A grid of small
+         cards made every screenshot too small to read, and the four-tile
+         multistream one worst of all. */
+      .showcase-stage {
+        position: relative;
       }
 
-      .shot-card {
-        display: block;
-        padding: 0;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface);
-        overflow: hidden;
-        text-align: left;
-        cursor: zoom-in;
-        font: inherit;
-        color: inherit;
-        transition:
-          border-color var(--ease),
-          transform var(--ease),
-          box-shadow var(--ease);
-      }
-
-      .shot-card:hover {
-        border-color: #3d3555;
-        transform: translateY(-2px);
-        box-shadow: 0 16px 40px -26px #a855f7;
-      }
-
-      .shot-card img {
-        width: 100%;
+      .showcase-frames {
+        position: relative;
         aspect-ratio: 16 / 9;
-        object-fit: cover;
-        object-position: top center;
+        border: 1px solid var(--border-hi);
+        border-radius: var(--radius);
         background: #08080b;
+        overflow: hidden;
+        box-shadow:
+          0 0 0 1px #8b5cf61f,
+          0 30px 70px -34px #000,
+          0 0 80px -44px #a855f7;
       }
 
-      /* The multistream grid is four small tiles, so it needs the full row to
-         stay legible rather than sharing a two-up column. */
-      .shot-card.wide {
-        grid-column: 1 / -1;
+      .showcase-frame {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+        opacity: 0;
+        visibility: hidden;
+        transition:
+          opacity 260ms ease,
+          visibility 260ms;
       }
 
-      .shot-card figcaption {
-        padding: 15px 18px;
-        border-top: 1px solid var(--border);
+      .showcase-frame.is-active {
+        opacity: 1;
+        visibility: visible;
       }
 
-      .shot-card strong {
+      .showcase-open {
         display: block;
-        font-size: 15px;
+        width: 100%;
+        height: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        cursor: zoom-in;
+      }
+
+      .showcase-open img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .showcase-nav {
+        position: absolute;
+        top: 50%;
+        z-index: 2;
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        border: 1px solid var(--border-hi);
+        border-radius: 50%;
+        color: var(--text);
+        background: #12121ae6;
+        backdrop-filter: blur(8px);
+        cursor: pointer;
+        transform: translateY(-50%);
+        transition:
+          background var(--ease),
+          border-color var(--ease);
+      }
+
+      .showcase-nav:hover {
+        border-color: var(--violet);
+        background: #1f1f2b;
+      }
+
+      .showcase-nav.prev {
+        left: 14px;
+      }
+
+      .showcase-nav.next {
+        right: 14px;
+      }
+
+      .showcase-meta {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        margin-top: 20px;
+      }
+
+      .showcase-meta strong {
+        font-size: 16.5px;
         font-weight: 650;
       }
 
-      .shot-card span {
-        display: block;
-        margin-top: 3px;
+      .showcase-meta span {
+        color: var(--text-dim);
+        font-size: 14.5px;
+      }
+
+      .showcase-count {
+        margin-left: auto;
         color: var(--text-faint);
         font-size: 13.5px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .showcase-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .showcase-tab {
+        padding: 9px 15px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: var(--text-dim);
+        background: var(--surface);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 550;
+        white-space: nowrap;
+        cursor: pointer;
+        transition:
+          color var(--ease),
+          border-color var(--ease),
+          background var(--ease);
+      }
+
+      .showcase-tab:hover {
+        border-color: var(--border-hi);
+        color: var(--text);
+        background: var(--surface-hi);
+      }
+
+      .showcase-tab[aria-selected="true"] {
+        border-color: var(--violet);
+        color: #fff;
+        background: linear-gradient(180deg, #8b5cf6, #7c3aed);
+        box-shadow: 0 6px 20px -12px #7c3aed;
       }
 
       /* ----------------------------- lightbox ----------------------------- */
@@ -777,6 +863,38 @@
           margin-top: 38px;
         }
 
+        /* Five pills wrap into a tall stack on a phone, so scroll them
+           sideways instead. */
+        .showcase-tabs {
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          padding-bottom: 6px;
+          scrollbar-width: thin;
+        }
+
+        .showcase-nav {
+          width: 36px;
+          height: 36px;
+        }
+
+        .showcase-nav.prev {
+          left: 8px;
+        }
+
+        .showcase-nav.next {
+          right: 8px;
+        }
+
+        .showcase-meta {
+          flex-wrap: wrap;
+          gap: 4px 12px;
+        }
+
+        .showcase-count {
+          width: 100%;
+          margin-left: 0;
+        }
+
         .download-card {
           grid-template-columns: 1fr;
           text-align: left;
@@ -800,8 +918,7 @@
         }
 
         .btn:hover,
-        .feature:hover,
-        .shot-card:hover {
+        .feature:hover {
           transform: none;
         }
       }
@@ -1055,79 +1172,170 @@
           <div class="section-head">
             <span class="eyebrow">Screenshots</span>
             <h2>A look around</h2>
-            <p>Select any shot to view it full size.</p>
+            <p>Pick a view below, or select the image to see it full size.</p>
           </div>
 
-          <div class="gallery">
-            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/home.jpg">
-              <img
-                src="assets/home.jpg"
-                alt="VioletWire home screen listing followed live channels as cards with thumbnails, titles, categories, and viewer counts"
-                loading="lazy"
-                width="1600"
-                height="882"
-              />
-              <figcaption>
-                <strong>Followed live channels</strong>
-                <span>Everyone you follow who's live right now</span>
-              </figcaption>
-            </figure>
+          <div class="showcase" id="showcase">
+            <div class="showcase-stage">
+              <button class="showcase-nav prev" type="button" id="shotPrev" aria-label="Previous screenshot">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+              </button>
 
-            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/browse.jpg">
-              <img
-                src="assets/browse.jpg"
-                alt="VioletWire browse page showing a grid of Twitch categories with box art and viewer counts"
-                loading="lazy"
-                width="1600"
-                height="882"
-              />
-              <figcaption>
-                <strong>Browse categories</strong>
-                <span>Find something new without opening a browser</span>
-              </figcaption>
+              <div class="showcase-frames" id="showcaseFrames" role="tabpanel" aria-live="polite">
+            <figure
+              class="showcase-frame is-active"
+              data-full="screenshots/home.jpg"
+              data-title="Followed live channels"
+              data-text="Everyone you follow who&rsquo;s live right now"
+            >
+              <button class="showcase-open" type="button" aria-label="View &ldquo;Followed live channels&rdquo; full size">
+                <img
+                  src="assets/home.jpg"
+                  alt="VioletWire home screen listing followed live channels as cards with thumbnails, titles, categories, and viewer counts"
+                  width="1600"
+                  height="900"
+                  loading="lazy"
+                />
+              </button>
             </figure>
+            <figure
+              class="showcase-frame"
+              data-full="screenshots/browse.jpg"
+              data-title="Browse categories"
+              data-text="Find something new without opening a browser"
+            >
+              <button class="showcase-open" type="button" aria-label="View &ldquo;Browse categories&rdquo; full size">
+                <img
+                  src="assets/browse.jpg"
+                  alt="VioletWire browse page showing a grid of Twitch categories with box art and viewer counts"
+                  width="1600"
+                  height="900"
+                  loading="lazy"
+                />
+              </button>
+            </figure>
+            <figure
+              class="showcase-frame"
+              data-full="screenshots/standard-player.jpg"
+              data-title="Standard player"
+              data-text="Twitch&rsquo;s own player, with VioletWire&rsquo;s chat"
+            >
+              <button class="showcase-open" type="button" aria-label="View &ldquo;Standard player&rdquo; full size">
+                <img
+                  src="assets/standard-player.jpg"
+                  alt="VioletWire playing a stream in the standard Twitch player with chat docked beside it"
+                  width="1600"
+                  height="900"
+                  loading="lazy"
+                />
+              </button>
+            </figure>
+            <figure
+              class="showcase-frame"
+              data-full="screenshots/native-player.jpg"
+              data-title="Native player"
+              data-text="Experimental playback via Streamlink and mpv"
+            >
+              <button class="showcase-open" type="button" aria-label="View &ldquo;Native player&rdquo; full size">
+                <img
+                  src="assets/native-player.jpg"
+                  alt="VioletWire playing a stream in its experimental Native player with chat docked beside it"
+                  width="1600"
+                  height="900"
+                  loading="lazy"
+                />
+              </button>
+            </figure>
+            <figure
+              class="showcase-frame"
+              data-full="screenshots/multistream.jpg"
+              data-title="Multistream"
+              data-text="Four streams at once, with a chat tab for each"
+            >
+              <button class="showcase-open" type="button" aria-label="View &ldquo;Multistream&rdquo; full size">
+                <img
+                  src="assets/multistream.jpg"
+                  alt="VioletWire multistream showing four streams in a two-by-two grid, with tabs above the chat panel for each channel"
+                  width="1600"
+                  height="900"
+                  loading="lazy"
+                />
+              </button>
+            </figure>
+              </div>
 
-            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/standard-player.jpg">
-              <img
-                src="assets/standard-player.jpg"
-                alt="VioletWire playing a stream in the standard Twitch player with chat docked beside it"
-                loading="lazy"
-                width="1600"
-                height="882"
-              />
-              <figcaption>
-                <strong>Standard player</strong>
-                <span>Twitch's own player, with VioletWire's chat</span>
-              </figcaption>
-            </figure>
+              <button class="showcase-nav next" type="button" id="shotNext" aria-label="Next screenshot">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
 
-            <figure class="shot-card" tabindex="0" role="button" data-full="screenshots/native-player.jpg">
-              <img
-                src="assets/native-player.jpg"
-                alt="VioletWire playing a stream in its experimental Native player with chat docked beside it"
-                loading="lazy"
-                width="1600"
-                height="882"
-              />
-              <figcaption>
-                <strong>Native player</strong>
-                <span>Experimental playback via Streamlink and mpv</span>
-              </figcaption>
-            </figure>
+            <p class="showcase-meta">
+              <strong id="shotTitle">Followed live channels</strong>
+              <span id="shotText">Everyone you follow who&rsquo;s live right now</span>
+              <span class="showcase-count" id="shotCount">1 / 5</span>
+            </p>
 
-            <figure class="shot-card wide" tabindex="0" role="button" data-full="screenshots/multistream.jpg">
-              <img
-                src="assets/multistream.jpg"
-                alt="VioletWire multistream showing four streams in a two-by-two grid, with tabs above the chat panel for each channel"
-                loading="lazy"
-                width="1600"
-                height="900"
-              />
-              <figcaption>
-                <strong>Multistream</strong>
-                <span>Four streams at once, with a chat tab for each</span>
-              </figcaption>
-            </figure>
+            <div class="showcase-tabs" role="tablist" aria-label="Screenshots">
+            <button
+              class="showcase-tab"
+              type="button"
+              role="tab"
+              id="shotTab0"
+              aria-selected="true"
+              aria-controls="showcaseFrames"
+              tabindex="0"
+            >
+              Followed
+            </button>
+            <button
+              class="showcase-tab"
+              type="button"
+              role="tab"
+              id="shotTab1"
+              aria-selected="false"
+              aria-controls="showcaseFrames"
+              tabindex="-1"
+            >
+              Browse
+            </button>
+            <button
+              class="showcase-tab"
+              type="button"
+              role="tab"
+              id="shotTab2"
+              aria-selected="false"
+              aria-controls="showcaseFrames"
+              tabindex="-1"
+            >
+              Standard player
+            </button>
+            <button
+              class="showcase-tab"
+              type="button"
+              role="tab"
+              id="shotTab3"
+              aria-selected="false"
+              aria-controls="showcaseFrames"
+              tabindex="-1"
+            >
+              Native player
+            </button>
+            <button
+              class="showcase-tab"
+              type="button"
+              role="tab"
+              id="shotTab4"
+              aria-selected="false"
+              aria-controls="showcaseFrames"
+              tabindex="-1"
+            >
+              Multistream
+            </button>
+            </div>
           </div>
         </div>
       </section>
@@ -1378,34 +1586,89 @@
         if (event.target.closest("a")) setNavOpen(false);
       });
 
+      // Screenshot showcase.
+      const showcase = document.getElementById("showcase");
+      const frames = [...showcase.querySelectorAll(".showcase-frame")];
+      const tabs = [...showcase.querySelectorAll(".showcase-tab")];
+      const shotTitle = document.getElementById("shotTitle");
+      const shotText = document.getElementById("shotText");
+      const shotCount = document.getElementById("shotCount");
+      let currentShot = 0;
+
+      const showShot = (index, moveFocus) => {
+        currentShot = (index + frames.length) % frames.length;
+
+        frames.forEach((frame, i) => {
+          frame.classList.toggle("is-active", i === currentShot);
+        });
+
+        tabs.forEach((tab, i) => {
+          const selected = i === currentShot;
+          tab.setAttribute("aria-selected", String(selected));
+          // Roving tabindex: only the selected tab is in the tab order, so
+          // Tab skips past the group and the arrow keys move within it.
+          tab.tabIndex = selected ? 0 : -1;
+        });
+
+        const frame = frames[currentShot];
+        shotTitle.textContent = frame.dataset.title;
+        shotText.textContent = frame.dataset.text;
+        shotCount.textContent = `${currentShot + 1} / ${frames.length}`;
+        showcase
+          .querySelector(".showcase-frames")
+          .setAttribute("aria-labelledby", tabs[currentShot].id);
+
+        if (moveFocus) tabs[currentShot].focus();
+      };
+
+      tabs.forEach((tab, i) => {
+        tab.addEventListener("click", () => showShot(i));
+      });
+
+      showcase
+        .querySelector(".showcase-tabs")
+        .addEventListener("keydown", (event) => {
+          const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+          if (step) {
+            event.preventDefault();
+            showShot(currentShot + step, true);
+          } else if (event.key === "Home") {
+            event.preventDefault();
+            showShot(0, true);
+          } else if (event.key === "End") {
+            event.preventDefault();
+            showShot(frames.length - 1, true);
+          }
+        });
+
+      document
+        .getElementById("shotPrev")
+        .addEventListener("click", () => showShot(currentShot - 1));
+      document
+        .getElementById("shotNext")
+        .addEventListener("click", () => showShot(currentShot + 1));
+
+      showShot(0);
+
       // Screenshot lightbox.
       const lightbox = document.getElementById("lightbox");
       const lightboxImage = document.getElementById("lightboxImage");
       let lastFocused = null;
 
-      const openLightbox = (card) => {
-        const full = card.dataset.full;
-        const thumb = card.querySelector("img");
-        if (!full || !lightbox.showModal) return;
-
-        lastFocused = card;
-        lightboxImage.src = full;
-        lightboxImage.alt = thumb ? thumb.alt : "";
-        lightbox.showModal();
-      };
-
       const closeLightbox = () => {
         if (lightbox.open) lightbox.close();
       };
 
-      for (const card of document.querySelectorAll(".shot-card")) {
-        card.addEventListener("click", () => openLightbox(card));
-        card.addEventListener("keydown", (event) => {
-          // Cards are role="button", so match a button's keyboard behaviour.
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            openLightbox(card);
-          }
+      for (const frame of frames) {
+        const trigger = frame.querySelector(".showcase-open");
+        trigger.addEventListener("click", () => {
+          const full = frame.dataset.full;
+          if (!full || !lightbox.showModal) return;
+
+          lastFocused = trigger;
+          lightboxImage.src = full;
+          lightboxImage.alt = frame.querySelector("img").alt;
+          lightbox.showModal();
         });
       }
 
