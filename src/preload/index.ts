@@ -15,6 +15,7 @@ import type {
   PlayerMode,
 } from "../shared/player";
 import type { TwitchApi } from "../shared/twitch";
+import type { KickChannelResult } from "../shared/platform";
 import type { EmoteApi } from "../shared/emotes";
 import type { ChatApi, ChatConnectionState, ChatMessage } from "../shared/chat";
 import type { AppUpdateStatus, UpdateApi } from "../shared/updates";
@@ -128,6 +129,10 @@ const api: DesktopApi = {
       ipcRenderer.invoke("emotes:bttv-channel", broadcasterId),
     clearCache: () => ipcRenderer.invoke("emotes:clear-cache"),
   } satisfies EmoteApi,
+  kick: {
+    search: (query: string): Promise<KickChannelResult[]> =>
+      ipcRenderer.invoke("kick:search", query),
+  },
   chat: {
     send: (channel: string, message: string, replyParentMessageId?: string) =>
       ipcRenderer.invoke("chat:send", channel, message, replyParentMessageId),

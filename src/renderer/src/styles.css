@@ -96,6 +96,12 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .top-search-clear:hover { color: white; background: #2a2a30; }
 .top-search-results { position: absolute; z-index: 30; top: calc(100% + 7px); right: -1px; left: -1px; max-height: min(570px, calc(100vh - 92px)); padding: 7px; overflow-y: auto; border: 1px solid #34343c; border-radius: 9px; color: #e4e4e7; background: #18181d; box-shadow: 0 18px 48px #000c; }
 .top-search-results section + section { margin-top: 6px; padding-top: 6px; border-top: 1px solid #2d2d34; }
+/* Which services the search covers. Sits above the results so the effect of
+   changing it is visible immediately. */
+.top-search-platforms { display: flex; gap: 4px; margin-bottom: 6px; padding: 0 2px 6px; border-bottom: 1px solid #26262d; }
+.top-search-platforms button { flex: 1 1 0; padding: 6px 8px; border: 1px solid transparent; border-radius: 7px; color: #a1a1aa; background: transparent; cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; }
+.top-search-platforms button:hover { color: #f4f4f5; background: #232329; }
+.top-search-platforms button.active { border-color: #6d28d9; color: #f4f4f5; background: #2a1f3d; }
 .top-search-heading { display: block; padding: 5px 8px 6px; color: #85858f; font-size: 10px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; }
 .top-search-result { display: flex; width: 100%; min-height: 49px; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 6px; color: inherit; background: transparent; cursor: pointer; text-align: left; }
 .top-search-result:hover, .top-search-result:focus-visible { outline: 0; background: #303038; }

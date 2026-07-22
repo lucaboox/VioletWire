@@ -98,7 +98,11 @@ import { ChatEmote } from "./ChatEmote";
 import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
-import { channelKey, parseChannelKey } from "../../shared/platform";
+import {
+  channelKey,
+  parseChannelKey,
+  type KickChannelResult,
+} from "../../shared/platform";
 import { NativeControls } from "./NativeControls";
 import {
   ChatToggleSetting,
@@ -430,6 +434,8 @@ export function App() {
   const [changelogReturnsToSettings, setChangelogReturnsToSettings] = useState(false);
   const [playerReturnSection, setPlayerReturnSection] = useState<AppSection>("home");
   const [channelInput, setChannelInput] = useState("");
+  const [kickSearchResults, setKickSearchResults] = useState<KickChannelResult[]>([]);
+  const [platformFilter, setPlatformFilter] = useState<"twitch" | "kick" | "both">("twitch");
   const [topSearchResults, setTopSearchResults] =
     useState<TwitchSearchResults>(emptySearchResults);
   const [topSearchOpen, setTopSearchOpen] = useState(false);
@@ -1068,6 +1074,7 @@ export function App() {
       setChatOnLeft(preferences.chatOnLeft);
       setFavoriteChannels(new Set(preferences.favoriteChannels));
       setControlsHideDelay(preferences.controlsHideDelay);
+      setPlatformFilter(preferences.platformFilter);
       // Seed the volume slider from the saved level while nothing is actively
       // playing, so the first stream opens showing it rather than 100%.
       setNativeState((current) =>
@@ -1582,6 +1589,32 @@ export function App() {
 
   useEffect(() => {
     const query = channelInput.trim();
+    if (platformFilter === "twitch" || query.length < 2 || !topSearchOpen) {
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void window.desktop.kick
+        .search(query)
+        .then((results) => {
+          if (!cancelled) setKickSearchResults(results);
+        })
+        .catch(() => {
+          // Kick's API is unofficial; a failure leaves the Twitch group intact.
+          if (!cancelled) setKickSearchResults([]);
+        });
+      // Longer than Twitch's: this request is slower and less reliable, and
+      // typing should not queue up a burst of them.
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [channelInput, platformFilter, topSearchOpen]);
+
+  useEffect(() => {
+    const query = channelInput.trim();
+    if (platformFilter === "kick") return;
     if (authState.status !== "signed-in" || query.length < 2 || !topSearchOpen) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -1601,7 +1634,7 @@ export function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [authState.status, channelInput, topSearchOpen]);
+  }, [authState.status, channelInput, platformFilter, topSearchOpen]);
 
   useEffect(() => {
     if (
@@ -2764,6 +2797,23 @@ export function App() {
             )}
             {topSearchOpen && (
               <div className="top-search-results">
+                <div className="top-search-platforms" role="group" aria-label="Services to search">
+                  {(["twitch", "kick", "both"] as const).map((option) => (
+                    <button
+                      aria-pressed={platformFilter === option}
+                      className={platformFilter === option ? "active" : ""}
+                      key={option}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setPlatformFilter(option);
+                        void window.desktop.preferences.update({ platformFilter: option });
+                      }}
+                      type="button"
+                    >
+                      {option === "twitch" ? "Twitch" : option === "kick" ? "Kick" : "Both"}
+                    </button>
+                  ))}
+                </div>
                 {topSearchLoading ? (
                   <div className="top-search-state">
                     <RefreshCw className="spin" size={16} /> Searching Twitch…
@@ -2829,6 +2879,42 @@ export function App() {
                                       .filter(Boolean)
                                       .join(" · ")
                                   : "Offline"}
+                              </small>
+                            </span>
+                          </button>
+                        ))}
+                      </section>
+                    )}
+                    {platformFilter !== "twitch" && kickSearchResults.length > 0 && (
+                      <section>
+                        <span className="top-search-heading">Kick</span>
+                        {kickSearchResults.map((channel) => (
+                          <button
+                            className="top-search-result"
+                            key={`kick-${channel.id}`}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setTopSearchOpen(false);
+                              void watchChannel(channelKey("kick", channel.slug));
+                            }}
+                            type="button"
+                          >
+                            {channel.profileImageUrl ? (
+                              <img className="channel-result-avatar" alt="" src={channel.profileImageUrl} />
+                            ) : (
+                              <span className="channel-result-fallback">
+                                {channel.displayName.slice(0, 1).toUpperCase()}
+                              </span>
+                            )}
+                            <span>
+                              <strong>
+                                {channel.displayName}
+                                {channel.isLive && <i>LIVE</i>}
+                              </strong>
+                              <small>
+                                {channel.isLive
+                                  ? channel.category || "Live on Kick"
+                                  : "Offline on Kick"}
                               </small>
                             </span>
                           </button>

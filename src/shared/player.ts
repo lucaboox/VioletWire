@@ -5,6 +5,7 @@ import type { TwitchApi } from "./twitch";
 import type { UpdateApi } from "./updates";
 import type { PreferencesApi } from "./preferences";
 import type { LinkPreview } from "./link-preview";
+import type { KickApi } from "./platform";
 
 function normalizeChannelInput(input: string): string {
   const value = input.trim().toLowerCase();
@@ -212,6 +213,7 @@ export interface DesktopApi {
     getLinkPreview(url: string): Promise<LinkPreview | null>;
   };
   twitch: TwitchApi;
+  kick: KickApi;
   emotes: EmoteApi;
   chat: ChatApi;
   updates: UpdateApi;

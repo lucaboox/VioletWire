@@ -100,3 +100,21 @@ export function streamlinkPlatformArguments(platform: Platform): string[] {
       ]
     : ["--twitch-low-latency", "--twitch-supported-codecs", "h264,h265,av1"];
 }
+
+/**
+ * A Kick channel as the renderer sees it. Search results carry less than the
+ * channel endpoint does: Kick returns no viewer count or stream title there.
+ */
+export interface KickChannelResult {
+  id: string;
+  slug: string;
+  displayName: string;
+  profileImageUrl: string;
+  isLive: boolean;
+  category?: string;
+  viewerCount: number;
+}
+
+export interface KickApi {
+  search(query: string): Promise<KickChannelResult[]>;
+}

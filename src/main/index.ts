@@ -1369,6 +1369,13 @@ handleTrusted(
     return twitchService.getCategoryStreams(rawGameId, after);
   },
 );
+handleTrusted("kick:search", (_event, rawQuery: unknown) => {
+  const query = typeof rawQuery === "string" ? rawQuery.slice(0, 100) : "";
+  // Returns an empty list rather than throwing: Kick's API is unofficial, so a
+  // failure there must not take the Twitch results down with it.
+  return kickService.search(query);
+});
+
 handleTrusted("twitch:search", (_event, rawQuery: unknown) => {
   if (typeof rawQuery !== "string") throw new Error("Search text must be a string.");
   return twitchService.search(rawQuery.slice(0, 100));
