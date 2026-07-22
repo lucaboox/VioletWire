@@ -122,7 +122,31 @@ export interface KickChannelDetails extends KickChannelResult {
   thumbnailUrl?: string;
 }
 
+export interface KickUserAccount {
+  id: string;
+  username: string;
+  profileImageUrl: string;
+}
+
+export interface KickEmoteAsset {
+  id: string;
+  name: string;
+  imageUrl: string;
+  subscribersOnly: boolean;
+}
+
+export interface KickEmoteGroup {
+  id: string;
+  name: string;
+  emotes: KickEmoteAsset[];
+}
+
 export interface KickApi {
   search(query: string): Promise<KickChannelResult[]>;
   getChannel(slug: string): Promise<KickChannelDetails | null>;
+  getUser(): Promise<KickUserAccount | null>;
+  signIn(): Promise<KickUserAccount | null>;
+  signOut(): Promise<void>;
+  getFollowedChannels(): Promise<KickChannelDetails[]>;
+  getEmoteSets(slug: string): Promise<KickEmoteGroup[]>;
 }

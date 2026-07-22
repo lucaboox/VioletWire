@@ -2860,6 +2860,11 @@ export function App() {
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => {
                         setPlatformFilter(option);
+                        // Drop whatever the new scope excludes straight away,
+                        // rather than leaving the old service's results sitting
+                        // above the new ones until the next keystroke.
+                        if (option === "kick") setTopSearchResults(emptySearchResults);
+                        if (option === "twitch") setKickSearchResults([]);
                         void window.desktop.preferences.update({ platformFilter: option });
                       }}
                       type="button"

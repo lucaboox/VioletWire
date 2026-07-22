@@ -1394,6 +1394,15 @@ handleTrusted(
     return twitchService.getCategoryStreams(rawGameId, after);
   },
 );
+handleTrusted("kick:get-user", () => kickService.getUser());
+handleTrusted("kick:sign-in", () => kickService.signIn());
+handleTrusted("kick:sign-out", () => kickService.signOut());
+handleTrusted("kick:get-followed", () => kickService.getFollowedChannels());
+handleTrusted("kick:get-emote-sets", (_event, rawSlug: unknown) => {
+  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
+  return slug.length === 0 ? [] : kickService.getEmoteSets(slug);
+});
+
 handleTrusted("kick:get-channel", (_event, rawSlug: unknown) => {
   const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
   return slug.length === 0 ? null : kickService.getChannel(slug);

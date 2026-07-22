@@ -88,6 +88,76 @@ const kickSearchSchema = z.object({
     .optional(),
 });
 
+// Signed out, /api/v1/user answers with an empty array rather than an error,
+// so identity is decided by whether a username came back.
+const kickUserSchema = z.object({
+  id: z.number().optional(),
+  username: z.string().optional(),
+  profile_pic: z.string().nullable().optional(),
+});
+
+// The followed list is its own shape again: live state sits on the entry
+// rather than in a nested livestream.
+const kickFollowedSchema = z.object({
+  channels: z
+    .array(
+      z.object({
+        id: z.number().optional(),
+        slug: z.string().optional(),
+        user_username: z.string().optional(),
+        username: z.string().optional(),
+        profile_pic: z.string().nullable().optional(),
+        profilePic: z.string().nullable().optional(),
+        is_live: z.boolean().optional(),
+        isLive: z.boolean().optional(),
+        viewer_count: z.number().optional(),
+        viewers: z.number().optional(),
+        session_title: z.string().optional(),
+        category_name: z.string().optional(),
+        category: z.union([z.string(), z.object({ name: z.string().optional() })]).optional(),
+        start_time: z.string().optional(),
+      }),
+    )
+    .optional(),
+  next_cursor: z.union([z.string(), z.number()]).nullable().optional(),
+});
+
+// Emote sets: the channel's own, then Global and Emoji.
+const kickEmoteSetsSchema = z.array(
+  z.object({
+    id: z.union([z.string(), z.number()]).optional(),
+    name: z.string().optional(),
+    emotes: z
+      .array(
+        z.object({
+          id: z.number().optional(),
+          name: z.string().optional(),
+          subscribers_only: z.boolean().optional(),
+        }),
+      )
+      .optional(),
+  }),
+);
+
+export interface KickUser {
+  id: string;
+  username: string;
+  profileImageUrl: string;
+}
+
+export interface KickEmote {
+  id: string;
+  name: string;
+  imageUrl: string;
+  subscribersOnly: boolean;
+}
+
+export interface KickEmoteSet {
+  id: string;
+  name: string;
+  emotes: KickEmote[];
+}
+
 export interface KickChannel {
   id: string;
   slug: string;
@@ -116,6 +186,7 @@ export class KickService {
   // instead of each opening its own request.
   private sessionRequest: Promise<string | null> | null = null;
   private challengeFailedAt = 0;
+  private loginWindow: BrowserWindow | null = null;
 
   /**
    * The cookie Streamlink needs to resolve a Kick stream without falling back
@@ -302,6 +373,165 @@ export class KickService {
       });
     }
     return results;
+  }
+
+  /** The signed-in Kick account, or null when signed out. */
+  async getUser(): Promise<KickUser | null> {
+    const payload = await this.requestJson("/api/v1/user");
+    // Signed out this route answers 200 with an empty array, so the shape
+    // itself is the signal rather than the status code.
+    const parsed = kickUserSchema.safeParse(payload);
+    if (!parsed.success || !parsed.data.username) return null;
+    return {
+      id: parsed.data.id === undefined ? "" : String(parsed.data.id),
+      username: parsed.data.username,
+      profileImageUrl: parsed.data.profile_pic ?? "",
+    };
+  }
+
+  /**
+   * Channels the signed-in account follows. Kick has no public endpoint for
+   * this, so it comes from the site's own paginated route and needs the
+   * browser session; signed out it simply yields nothing.
+   */
+  async getFollowedChannels(): Promise<KickChannel[]> {
+    const channels: KickChannel[] = [];
+    let cursor: string | null = null;
+
+    // Bounded: a runaway cursor must not loop forever.
+    for (let page = 0; page < 10; page += 1) {
+      const path: string =
+        cursor === null
+          ? "/api/v2/channels/followed"
+          : `/api/v2/channels/followed?cursor=${encodeURIComponent(cursor)}`;
+      const payload: unknown = await this.requestJson(path);
+      if (payload === null) break;
+
+      const parsed = kickFollowedSchema.safeParse(payload);
+      if (!parsed.success) break;
+
+      for (const entry of parsed.data.channels ?? []) {
+        const slug = entry.slug;
+        if (!slug) continue;
+        const category =
+          typeof entry.category === "string" ? entry.category : entry.category?.name;
+        channels.push({
+          id: entry.id === undefined ? slug : String(entry.id),
+          slug,
+          displayName: entry.user_username ?? entry.username ?? slug,
+          profileImageUrl: entry.profilePic ?? entry.profile_pic ?? "",
+          isLive: Boolean(entry.is_live ?? entry.isLive),
+          title: entry.session_title,
+          category: entry.category_name ?? category,
+          viewerCount: entry.viewer_count ?? entry.viewers ?? 0,
+          startedAt: entry.start_time,
+        });
+      }
+
+      const next = parsed.data.next_cursor;
+      if (next === null || next === undefined || next === "" || next === 0) break;
+      cursor = String(next);
+    }
+    return channels;
+  }
+
+  /** The channel's emote sets, plus Kick's global and emoji sets. */
+  async getEmoteSets(slug: string): Promise<KickEmoteSet[]> {
+    const payload = await this.requestJson(`/emotes/${encodeURIComponent(slug)}`);
+    if (payload === null) return [];
+
+    const parsed = kickEmoteSetsSchema.safeParse(payload);
+    if (!parsed.success) return [];
+
+    const sets: KickEmoteSet[] = [];
+    for (const group of parsed.data) {
+      const emotes = (group.emotes ?? [])
+        .filter((emote) => emote.id !== undefined && emote.name)
+        .map((emote) => ({
+          id: String(emote.id),
+          name: emote.name as string,
+          imageUrl: `https://files.kick.com/emotes/${emote.id}/fullsize`,
+          subscribersOnly: Boolean(emote.subscribers_only),
+        }));
+      if (emotes.length === 0) continue;
+      sets.push({
+        id: group.id === undefined ? (group.name ?? "set") : String(group.id),
+        // The channel's own set is named after the channel; keep that, and let
+        // the picker show it as the channel group.
+        name: group.name ?? "Kick",
+        emotes,
+      });
+    }
+    return sets;
+  }
+
+  /**
+   * Opens Kick's own sign-in page in a window of its own. Nothing is typed
+   * into VioletWire: the user signs in on Kick, in the same partition the API
+   * calls already use, so no credential is ever handled here.
+   */
+  async signIn(): Promise<KickUser | null> {
+    if (this.loginWindow && !this.loginWindow.isDestroyed()) {
+      this.loginWindow.focus();
+      return null;
+    }
+
+    const window = new BrowserWindow({
+      width: 520,
+      height: 760,
+      title: "Sign in to Kick",
+      autoHideMenuBar: true,
+      webPreferences: {
+        partition: KICK_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    this.loginWindow = window;
+    window.setMenu(null);
+
+    await window.loadURL(`${KICK_ORIGIN}/`);
+
+    return new Promise<KickUser | null>((resolve) => {
+      let settled = false;
+      const finish = (user: KickUser | null) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(poll);
+        if (!window.isDestroyed()) window.destroy();
+        this.loginWindow = null;
+        resolve(user);
+      };
+
+      // Kick's sign-in has no redirect to intercept, so completion is detected
+      // by the account endpoint starting to answer.
+      const poll = setInterval(() => {
+        void this.getUser().then((user) => {
+          if (user !== null) finish(user);
+        });
+      }, 1_500);
+      poll.unref();
+
+      window.on("closed", () => {
+        // Closing the window without signing in is a cancellation, not an error.
+        void this.getUser().then((user) => finish(user));
+      });
+    });
+  }
+
+  /** Clears the Kick session, leaving the anonymous cookie to be re-fetched. */
+  async signOut(): Promise<void> {
+    this.sessionCookie = null;
+    this.sessionFetchedAt = 0;
+    try {
+      await this.kickSession().clearStorageData({
+        origin: KICK_ORIGIN,
+        storages: ["cookies", "localstorage", "indexdb"],
+      });
+    } catch {
+      // Nothing stored.
+    }
   }
 
   async getChannel(slug: string): Promise<KickChannel | null> {

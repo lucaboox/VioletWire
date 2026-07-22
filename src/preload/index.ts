@@ -15,7 +15,12 @@ import type {
   PlayerMode,
 } from "../shared/player";
 import type { TwitchApi } from "../shared/twitch";
-import type { KickChannelDetails, KickChannelResult } from "../shared/platform";
+import type {
+  KickChannelDetails,
+  KickChannelResult,
+  KickEmoteGroup,
+  KickUserAccount,
+} from "../shared/platform";
 import type { EmoteApi } from "../shared/emotes";
 import type { ChatApi, ChatConnectionState, ChatMessage } from "../shared/chat";
 import type { AppUpdateStatus, UpdateApi } from "../shared/updates";
@@ -134,6 +139,13 @@ const api: DesktopApi = {
       ipcRenderer.invoke("kick:search", query),
     getChannel: (slug: string): Promise<KickChannelDetails | null> =>
       ipcRenderer.invoke("kick:get-channel", slug),
+    getUser: (): Promise<KickUserAccount | null> => ipcRenderer.invoke("kick:get-user"),
+    signIn: (): Promise<KickUserAccount | null> => ipcRenderer.invoke("kick:sign-in"),
+    signOut: (): Promise<void> => ipcRenderer.invoke("kick:sign-out"),
+    getFollowedChannels: (): Promise<KickChannelDetails[]> =>
+      ipcRenderer.invoke("kick:get-followed"),
+    getEmoteSets: (slug: string): Promise<KickEmoteGroup[]> =>
+      ipcRenderer.invoke("kick:get-emote-sets", slug),
   },
   chat: {
     send: (channel: string, message: string, replyParentMessageId?: string) =>
