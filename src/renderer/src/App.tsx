@@ -741,11 +741,26 @@ export function App() {
   const activeChannelDisplayName =
     streamMetadata?.displayName ?? activeChannelIdentity?.displayName ?? activeChannel;
 
+  // Where the user currently is, shown in the title bar and the window title.
+  // Ordered by how specific each place is: a stream beats the section it was
+  // opened from, and a chosen category beats Browse itself.
+  const locationLabel = useMemo(() => {
+    if (multiStreamActive) return "Multistream";
+    if (activeChannel) return activeChannelDisplayName;
+    if (activeSection === "settings") return "Settings";
+    if (activeSection === "browse") return selectedBrowseCategory?.name ?? "Browse";
+    return "Home";
+  }, [
+    activeChannel,
+    activeChannelDisplayName,
+    activeSection,
+    multiStreamActive,
+    selectedBrowseCategory,
+  ]);
+
   useEffect(() => {
-    document.title = activeChannel
-      ? `${activeChannelDisplayName} - VioletWire`
-      : "VioletWire";
-  }, [activeChannel, activeChannelDisplayName]);
+    document.title = `${locationLabel} - VioletWire`;
+  }, [locationLabel]);
 
   useEffect(() => {
     window.desktop.player.setModalOpen(settingsOpen || topSearchOpen || changelogOpen);
@@ -2632,7 +2647,9 @@ export function App() {
           the right, so anything added here goes to the left of them. */}
       <div className="titlebar">
         <img className="titlebar-icon" alt="" src={violetWireIcon} />
-        <span className="titlebar-title">VioletWire</span>
+        <span className="titlebar-app">VioletWire</span>
+        <span className="titlebar-separator" aria-hidden="true">/</span>
+        <span className="titlebar-title">{locationLabel}</span>
       </div>
 
       <div className="brand">
