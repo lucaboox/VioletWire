@@ -738,7 +738,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 /* Theater floats the stream info over the video instead of reserving a row for
    it, the way Twitch does, so the picture gets the full height. */
 .theater-mode .player-page { grid-template-rows: minmax(0, 1fr); }
-.theater-mode .player-toolbar { position: absolute; z-index: 12; top: 0; right: 0; left: 0; border-bottom: 0; background: transparent; transition: opacity 160ms ease; }
+/* The bar spans the full width but only its left cell holds anything, so the
+   empty part over chat must not swallow clicks meant for the chat header. */
+.theater-mode .player-toolbar { position: absolute; z-index: 12; top: 0; right: 0; left: 0; border-bottom: 0; background: transparent; pointer-events: none; transition: opacity 160ms ease; }
+.theater-mode .player-toolbar-main { pointer-events: auto; }
 /* Only the stream-info half sits over the picture, so only it needs to fade
    out into the video. */
 .theater-mode .player-toolbar-main { padding-top: 12px; padding-bottom: 6px; background: linear-gradient(180deg, rgb(5 5 6 / 82%) 0%, rgb(5 5 6 / 62%) 55%, rgb(5 5 6 / 0%) 100%); }
