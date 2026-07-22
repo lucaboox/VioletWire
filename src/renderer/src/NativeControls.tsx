@@ -220,7 +220,7 @@ function renderOverlayText(
         }
         key={`${message.id}-twitch-${index}`}
         name={name}
-        provider="twitch"
+        provider={range.provider ?? "twitch"}
       />,
     );
     cursor = range.end + 1;

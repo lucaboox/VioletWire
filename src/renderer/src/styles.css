@@ -31,7 +31,7 @@ button { color: inherit; }
    marking the name keeps it readable with the sidebar collapsed, where the
    avatar is all that is left. Only shown while both services are listed; with
    one selected every row would carry the same ring. */
-.service-ring img { box-shadow: 0 0 0 2px #0e0e10, 0 0 0 4px var(--service-color); }
+.service-ring img { box-shadow: 0 0 0 1.5px #0e0e10, 0 0 0 3px var(--service-color); }
 .service-ring.twitch { --service-color: #a970ff; }
 .service-ring.kick { --service-color: #53fc18; }
 /* The live dot sits on the avatar's edge, so it moves out past the ring. */

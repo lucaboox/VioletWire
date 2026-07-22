@@ -1,7 +1,7 @@
 import type { EmoteProvider } from "../../shared/emotes";
 import { ProviderLogo, type ProviderLogoName } from "./ProviderLogo";
 
-type ChatEmoteProvider = EmoteProvider | "twitch";
+type ChatEmoteProvider = EmoteProvider | "twitch" | "kick";
 
 interface ChatEmoteProps {
   className: string;
@@ -16,6 +16,7 @@ const providerLabels: Record<ChatEmoteProvider, string> = {
   ffz: "FrankerFaceZ",
   bttv: "BetterTTV",
   twitch: "Twitch",
+  kick: "Kick",
 };
 
 export function ChatEmote({
