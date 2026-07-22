@@ -813,6 +813,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .fullscreen-mode .player-page { grid-template-rows: 1fr; }
 .fullscreen-mode .player-toolbar { display: none; }
 .fullscreen-mode .video-column { padding-top: 0; }
+/* Chat-on-left pins main to grid-row 2 to sit below the title bar. Fullscreen
+   drops the title bar and collapses the shell to a single row, so that pin
+   would push main into a phantom second row and the video would vanish. */
+.fullscreen-mode.chat-left main { grid-row: 1; }
 .fullscreen-mode .viewer-layout { height: 100%; }
 .fullscreen-mode .chat-overlay-mode .chat-panel.overlay { top: 24px; right: 24px; bottom: 66px; width: min(390px, 30vw); }
 .fullscreen-mode.controls-hidden .chat-overlay-mode .chat-panel.overlay { bottom: 24px; }
