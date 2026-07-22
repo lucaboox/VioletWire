@@ -74,8 +74,6 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
    env() is exact and the fallback covers the usual three 46px buttons. */
 .titlebar { grid-column: 1 / -1; z-index: 60; display: flex; align-items: center; gap: 8px; height: var(--titlebar-height); padding-left: 10px; padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 138px))); border-bottom: 1px solid #202024; background: #121216; -webkit-app-region: drag; }
 .titlebar-icon { width: 16px; height: 16px; border-radius: 4px; }
-.titlebar-app { color: #a1a1aa; font-weight: 600; font-size: 12px; letter-spacing: .2px; }
-.titlebar-separator { color: #4a4a54; font-size: 12px; }
 /* A channel name can be long, so it truncates rather than pushing into the
    space reserved for the caption buttons. */
 .titlebar-title { min-width: 0; overflow: hidden; color: #e4e4e7; font-weight: 600; font-size: 12px; letter-spacing: .2px; text-overflow: ellipsis; white-space: nowrap; }

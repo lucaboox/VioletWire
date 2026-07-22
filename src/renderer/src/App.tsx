@@ -2647,8 +2647,6 @@ export function App() {
           the right, so anything added here goes to the left of them. */}
       <div className="titlebar">
         <img className="titlebar-icon" alt="" src={violetWireIcon} />
-        <span className="titlebar-app">VioletWire</span>
-        <span className="titlebar-separator" aria-hidden="true">/</span>
         <span className="titlebar-title">{locationLabel}</span>
       </div>
 
