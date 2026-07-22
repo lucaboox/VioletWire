@@ -241,6 +241,14 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     // fast path performs this scaling on the GPU.
     api_.set_option_string(mpv_, "sws-fast", "yes");
     api_.set_option_string(mpv_, "sws-scaler", "bilinear");
+    // A 1440p stream is usually shown in a window well under half that size.
+    // mpv's default downscale samples a fixed 2x2 footprint no matter the
+    // scale factor, so most source pixels never reach the screen and the
+    // result looks softer and more aliased than the same stream in a browser.
+    // correct-downscaling widens the filter to match the ratio; mitchell keeps
+    // that cheap enough for four multistream tiles.
+    api_.set_option_string(mpv_, "correct-downscaling", "yes");
+    api_.set_option_string(mpv_, "dscale", "mitchell");
     api_.set_option_string(mpv_, "keep-open", "no");
     // Every input this bridge ever opens is a Twitch HLS playlist. Telling
     // ffmpeg the container up front skips its format probing on each stream
@@ -346,6 +354,10 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     };
 
     Napi::Object result = Napi::Object::New(env);
+    // Not an mpv property. The software fallback scales on the CPU with a much
+    // cheaper filter, so knowing which path is live explains a picture that
+    // looks worse than it should.
+    result.Set("vw-render-path", Napi::String::New(env, use_open_gl_ ? "OpenGL" : "Software"));
     for (const char* name : kProperties) {
       char* value = api_.get_property_string(mpv_, name);
       if (!value) continue;

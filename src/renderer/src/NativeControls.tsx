@@ -939,17 +939,22 @@ export function NativeControls({
       const value = stats[key];
       return value && value.length > 0 ? value : null;
     };
-    const round = (key: string, digits = 0) => {
-      const value = Number(read(key));
-      return Number.isFinite(value) ? value.toFixed(digits) : null;
+    // Number(null) is 0, not NaN, so an absent property has to be rejected
+    // before the conversion or every missing figure reads as a real zero.
+    const number = (key: string) => {
+      const raw = read(key);
+      if (raw === null) return null;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : null;
     };
+    const round = (key: string, digits = 0) => number(key)?.toFixed(digits) ?? null;
     const megabits = (key: string) => {
-      const value = Number(read(key));
-      return Number.isFinite(value) ? `${(value / 1_000_000).toFixed(2)} Mbps` : null;
+      const value = number(key);
+      return value === null ? null : `${(value / 1_000_000).toFixed(2)} Mbps`;
     };
     const kilobits = (key: string) => {
-      const value = Number(read(key));
-      return Number.isFinite(value) ? `${Math.round(value / 1000)} kbps` : null;
+      const value = number(key);
+      return value === null ? null : `${Math.round(value / 1000)} kbps`;
     };
     const pair = (first: string, second: string, separator = " x ") => {
       const a = read(first);
@@ -969,9 +974,15 @@ export function NativeControls({
       return seconds ? `${seconds} sec` : null;
     })();
     const sync = (() => {
-      const value = Number(read("avsync"));
-      if (!Number.isFinite(value)) return null;
-      return `${value >= 0 ? "+" : ""}${value.toFixed(3)} sec`;
+      const value = number("avsync");
+      return value === null ? null : `${value >= 0 ? "+" : ""}${value.toFixed(3)} sec`;
+    })();
+    // estimated-vf-fps reads 0 until the renderer has timed enough frames, so
+    // fall back to the container's declared rate rather than showing a zero.
+    const fps = (() => {
+      const estimated = number("estimated-vf-fps");
+      if (estimated !== null && estimated > 0) return estimated.toFixed(1);
+      return round("container-fps", 1);
     })();
     const audio = (() => {
       const channels = read("audio-params/channel-count");
@@ -986,10 +997,11 @@ export function NativeControls({
     };
     push("Resolution", source);
     push("Display", display);
-    push("FPS", round("estimated-vf-fps", 1) ?? round("container-fps", 1));
+    push("FPS", fps);
     push("Video", read("video-codec"));
     push("Pixel format", read("video-format"));
     push("Hardware decode", read("hwdec-current"));
+    push("Render path", read("vw-render-path"));
     push("Video bitrate", megabits("video-bitrate"));
     push("Audio", read("audio-codec-name"));
     push("Audio bitrate", kilobits("audio-bitrate"));
