@@ -2154,7 +2154,6 @@ export function App() {
     setReplyingTo(null);
     setEmotePickerOpen(false);
     setMiniPlayerActive(false);
-    setChannelInput(channel);
     // Mount the player shell immediately so clicking a card feels instant and
     // the texture receiver has a canvas before Streamlink finishes resolving.
     setPlayerReturnSection(returnSection);
