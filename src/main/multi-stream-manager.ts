@@ -34,6 +34,7 @@ export class MultiStreamManager {
     private readonly getStreamlinkPath: () => string | undefined,
     private readonly getTwitchPlaybackToken: () => string | null,
     private readonly getStoredVolume: () => number,
+    private readonly getKickCookie: () => Promise<string | null>,
     private readonly onTileState: TileStateListener,
     private readonly onTileRemoved: TileRemovedListener,
   ) {}
@@ -136,6 +137,7 @@ export class MultiStreamManager {
       this.getTwitchPlaybackToken,
       String(id),
       this.getStoredVolume,
+      this.getKickCookie,
     );
     const tile: Tile = { id, channel, player, state: player.getState() };
     this.tiles.set(id, tile);

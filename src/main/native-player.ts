@@ -16,6 +16,11 @@ import {
   redactSensitivePlaybackText,
   spawnStreamlink,
 } from "./streamlink-process";
+import {
+  channelUrl,
+  parseChannelKey,
+  streamlinkPlatformArguments,
+} from "../shared/platform";
 
 type StateListener = (state: NativePlayerState) => void;
 const AUDIO_COMPRESSOR_FILTER =
@@ -222,6 +227,7 @@ export class NativePlayer {
   }
 
   getQualities(channel: string): Promise<NativeQuality[]> {
+    const target = parseChannelKey(channel);
     const playbackToken = this.getTwitchPlaybackToken();
     const cacheKey = `${channel}:${playbackToken ? "authenticated" : "anonymous"}`;
     const cached = this.qualityCache.get(cacheKey);
@@ -239,9 +245,8 @@ export class NativePlayer {
           "--no-config",
           "--loglevel",
           "none",
-          "--twitch-supported-codecs",
-          "h264,h265,av1",
-          `https://www.twitch.tv/${channel}`,
+          ...streamlinkPlatformArguments(target.platform),
+          channelUrl(target.platform, target.login),
         ],
         playbackToken,
         {
@@ -330,6 +335,7 @@ export class NativePlayer {
       "--profile=low-latency",
       "{playerinput}",
     ].join(" ");
+    const playbackTarget = parseChannelKey(channel);
 
     this.updateState({
       status: "starting",
@@ -351,12 +357,10 @@ export class NativePlayer {
         availability.mpvPath,
         "--player-args",
         playerArguments,
-        "--twitch-low-latency",
-        "--twitch-supported-codecs",
-        "h264,h265,av1",
+        ...streamlinkPlatformArguments(playbackTarget.platform),
         "--retry-open",
         "3",
-        `https://www.twitch.tv/${channel}`,
+        channelUrl(playbackTarget.platform, playbackTarget.login),
         quality,
       ],
       playbackToken,

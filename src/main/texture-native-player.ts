@@ -11,6 +11,11 @@ import type {
   PlayerBounds,
 } from "../shared/player";
 import {
+  channelUrl,
+  parseChannelKey,
+  streamlinkPlatformArguments,
+} from "../shared/platform";
+import {
   redactSensitivePlaybackText,
   spawnStreamlink,
 } from "./streamlink-process";
@@ -166,6 +171,9 @@ export class TextureNativePlayer {
     // The volume (0–100) a fresh session starts at, so it restores the user's
     // last setting instead of jumping from 100% down to their level.
     private readonly getStoredVolume: () => number = () => 100,
+    // Supplies Kick's anonymous session cookie for Streamlink. Returns null on
+    // Twitch, offline, or when Kick's handshake changes.
+    private readonly getKickCookie: () => Promise<string | null> = async () => null,
   ) {}
 
   getAvailability(): { available: boolean; reason?: string } {
@@ -488,7 +496,7 @@ export class TextureNativePlayer {
     });
   }
 
-  private resolveStreamUrl(
+  private async resolveStreamUrl(
     channel: string,
     quality: NativeQualityValue,
     // Primary resolves belong to an active start and die with it; hover
@@ -496,8 +504,14 @@ export class TextureNativePlayer {
     trackAsPrimary: boolean,
   ): Promise<string> {
     const streamlinkPath = this.getStreamlinkPath();
-    if (!streamlinkPath) return Promise.reject(new Error("Streamlink is unavailable."));
+    if (!streamlinkPath) throw new Error("Streamlink is unavailable.");
     const playbackToken = this.getTwitchPlaybackToken();
+    const { platform, login } = parseChannelKey(channel);
+    // Kick's API answers 403 without a session cookie, which is what drives
+    // Streamlink to its headless-browser challenge solver. Supplying one that
+    // was fetched anonymously keeps that browser out of the picture. It is not
+    // a credential, so it is safe on the command line.
+    const kickCookie = platform === "kick" ? await this.getKickCookie() : null;
     return new Promise((resolve, reject) => {
       const child = spawnStreamlink(
         streamlinkPath,
@@ -509,10 +523,9 @@ export class TextureNativePlayer {
           // channel is simply offline.
           "error",
           "--stream-url",
-          "--twitch-low-latency",
-          "--twitch-supported-codecs",
-          "h264,h265,av1",
-          `https://www.twitch.tv/${channel}`,
+          ...streamlinkPlatformArguments(platform),
+          ...(kickCookie === null ? [] : ["--http-cookie", kickCookie]),
+          channelUrl(platform, login),
           quality,
         ],
         playbackToken,

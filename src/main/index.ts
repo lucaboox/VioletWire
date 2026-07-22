@@ -32,11 +32,13 @@ import {
   type NativeRenderBackend,
   type PlayerMode,
 } from "../shared/player";
+import { channelKeySchema } from "../shared/platform";
 import { NativePlayer } from "./native-player";
 import { TextureNativePlayer } from "./texture-native-player";
 import { MultiStreamManager } from "./multi-stream-manager";
 import { MultiChatService } from "./multi-chat-service";
 import { TwitchService } from "./twitch-service";
+import { KickService } from "./kick-service";
 import { PlaybackSessionService } from "./playback-session";
 import { SevenTvService } from "./seven-tv-service";
 import { ThirdPartyEmoteService } from "./third-party-emote-service";
@@ -276,6 +278,7 @@ const nativePlayer = new NativePlayer(
   },
   () => playbackSessionService.getToken(),
 );
+const kickService = new KickService();
 const textureNativePlayer = new TextureNativePlayer(
   () => mainWindow,
   (state) => {
@@ -310,12 +313,14 @@ const textureNativePlayer = new TextureNativePlayer(
   () => playbackSessionService.getToken(),
   "main",
   () => preferencesService.get().playerVolume,
+  () => kickService.getStreamlinkCookie(),
 );
 const multiStreamManager = new MultiStreamManager(
   () => mainWindow,
   () => nativePlayer.getAvailability().streamlinkPath,
   () => playbackSessionService.getToken(),
   () => preferencesService.get().playerVolume,
+  () => kickService.getStreamlinkCookie(),
   (tile) => sendToWindow(mainWindow, "native-multi:tile-state", tile),
   (id) => sendToWindow(mainWindow, "native-multi:tile-removed", id),
 );
@@ -923,7 +928,7 @@ async function createWindow(): Promise<void> {
 handleTrusted(
   "player:open",
   async (_event, input: unknown, requestedModeInput: unknown, requestedQualityInput: unknown) => {
-  const channel = channelNameSchema.parse(input);
+  const channel = channelKeySchema.parse(input);
   const requestedMode = playerModeSchema.parse(requestedModeInput);
   const requestedQuality =
     requestedQualityInput === undefined ? "best" : nativeQualitySchema.parse(requestedQualityInput);
@@ -1056,7 +1061,7 @@ handleTrusted("native-player:get-availability", () => {
 });
 
 handleTrusted("native-player:get-qualities", (_event, input: unknown) => {
-  const channel = channelNameSchema.parse(input);
+  const channel = channelKeySchema.parse(input);
   return nativePlayer.getQualities(channel);
 });
 
@@ -1064,7 +1069,7 @@ handleTrusted(
   "native-player:set-quality",
   async (_event, channelInput: unknown, qualityInput: unknown) => {
     if (activePlayerMode !== "native") return;
-    const channel = channelNameSchema.parse(channelInput);
+    const channel = channelKeySchema.parse(channelInput);
     const quality = nativeQualitySchema.parse(qualityInput);
     const result =
       activeNativeBackend === "texture"
@@ -1118,7 +1123,7 @@ handleTrusted("native-multi:start", async (_event, input: unknown) => {
   if (!Array.isArray(input)) return [];
   const channels: string[] = [];
   for (const entry of input) {
-    const result = channelNameSchema.safeParse(entry);
+    const result = channelKeySchema.safeParse(entry);
     if (result.success) channels.push(result.data);
   }
   // Multistream replaces the single full-window player; tear it down so its
@@ -1131,7 +1136,7 @@ handleTrusted("native-multi:start", async (_event, input: unknown) => {
 });
 
 handleTrusted("native-multi:add-tile", async (_event, input: unknown) => {
-  const result = channelNameSchema.safeParse(input);
+  const result = channelKeySchema.safeParse(input);
   if (!result.success) return null;
   const tile = await multiStreamManager.addTile(result.data);
   multiChatService.setChannels(multiStreamManager.getChannels());
@@ -1173,7 +1178,7 @@ handleTrusted("native-multi:set-quality", async (_event, idInput: unknown, quali
 });
 
 onTrusted("player:preresolve", (_event, input: unknown) => {
-  const result = channelNameSchema.safeParse(input);
+  const result = channelKeySchema.safeParse(input);
   if (!result.success) return;
   // Hovering a channel card speculatively resolves its stream URL so a click
   // skips the Streamlink round trip. Only worthwhile for the texture backend,
