@@ -27,6 +27,13 @@ button { color: inherit; }
 /* Service scope for the followed list, shown here because this is where its
    effect is visible. It shares the search preference, so changing it in either
    place moves both. */
+/* Which service a followed channel is on. Only shown while both are listed,
+   where it distinguishes them; with one selected it would be noise. */
+.service-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; }
+.service-dot.twitch { background: #a970ff; }
+.service-dot.kick { background: #53fc18; }
+.service-both { display: inline-flex; align-items: center; gap: 2px; }
+.followed-platforms button, .top-search-platforms button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
 .followed-platforms { display: flex; gap: 3px; margin: 0 9px 8px; padding: 3px; border-radius: 8px; background: #17171b; }
 .followed-platforms button { flex: 1 1 0; padding: 5px 6px; border: 0; border-radius: 6px; color: #8a8a94; background: transparent; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; }
 .followed-platforms button:hover { color: #e4e4e7; }
@@ -665,6 +672,9 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-composer-inline-actions { position: absolute; z-index: 3; right: 6px; bottom: 7px; display: flex; align-items: center; }
 .chat-composer-footer { display: flex; align-items: center; justify-content: space-between; min-height: 38px; padding-top: 7px; }
 .native-chat-input .chat-send-button { min-width: 48px; height: 29px; padding: 0 10px; border: 1px solid #8b5cf6; border-radius: 6px; color: white; background: #7c3aed; cursor: pointer; font-size: 10px; font-weight: 750; transition: border-color 120ms ease, background 120ms ease, opacity 120ms ease; }
+/* Kick's own green, so the composer matches the service being posted to. */
+.chat-send-button.kick { border-color: #53fc18; color: #0b1a05; background: #3ecf12; }
+.chat-send-button.kick:hover:not(:disabled) { border-color: #7bff4d; background: #53fc18; }
 .native-chat-input .chat-send-button:hover:not(:disabled) { border-color: #a78bfa; background: #8b5cf6; }
 .native-chat-input .chat-send-button:disabled { border-color: #37373e; color: #777781; background: #29292f; cursor: default; opacity: .72; }
 .chat-panel.overlay .native-chat-input { position: absolute; z-index: 7; right: 0; bottom: 0; left: 0; border-radius: 0 0 11px 11px; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity 140ms ease, transform 140ms ease; }

@@ -2806,7 +2806,15 @@ export function App() {
           )}
         </span>
         <span className="followed-copy">
-          <strong>{channel.displayName}</strong>
+          <strong>
+            {platformFilter === "both" && (
+              <i
+                aria-hidden="true"
+                className={`service-dot ${parseChannelKey(channel.login).platform}`}
+              />
+            )}
+            {channel.displayName}
+          </strong>
           <small>{channel.category}</small>
         </span>
         {channel.isLive && (
@@ -2909,6 +2917,14 @@ export function App() {
                 }}
                 type="button"
               >
+                {option === "both" ? (
+                  <span className="service-both">
+                    <ProviderLogo name="twitch" />
+                    <ProviderLogo name="kick" />
+                  </span>
+                ) : (
+                  <ProviderLogo name={option} />
+                )}
                 {option === "twitch" ? "Twitch" : option === "kick" ? "Kick" : "Both"}
               </button>
             ))}
@@ -3022,6 +3038,14 @@ export function App() {
                       }}
                       type="button"
                     >
+                      {option === "both" ? (
+                        <span className="service-both">
+                          <ProviderLogo name="twitch" />
+                          <ProviderLogo name="kick" />
+                        </span>
+                      ) : (
+                        <ProviderLogo name={option} />
+                      )}
                       {option === "twitch" ? "Twitch" : option === "kick" ? "Kick" : "Both"}
                     </button>
                   ))}
@@ -3083,6 +3107,7 @@ export function App() {
                                 {channel.isLive && <i>LIVE</i>}
                               </strong>
                               <small>
+                                <ProviderLogo name="twitch" />{" "}
                                 {channel.isLive
                                   ? [
                                       channel.category || "Live channel",
@@ -3508,7 +3533,7 @@ export function App() {
                     )}
                   </div>
                   <button
-                    className="chat-send-button"
+                    className={chatIsKick ? "chat-send-button kick" : "chat-send-button"}
                     disabled={authState.status !== "signed-in" || !chatInput.trim()}
                     type="submit"
                   >
@@ -4389,7 +4414,7 @@ export function App() {
                       <div className="chat-composer-footer">
                         <span />
                         <button
-                          className="chat-send-button"
+                          className={chatIsKick ? "chat-send-button kick" : "chat-send-button"}
                           disabled={authState.status !== "signed-in" || !chatInput.trim()}
                           type="submit"
                         >
