@@ -2646,7 +2646,6 @@ export function App() {
           caption buttons, which the system draws into the reserved space on
           the right, so anything added here goes to the left of them. */}
       <div className="titlebar">
-        <img className="titlebar-icon" alt="" src={violetWireIcon} />
         <span className="titlebar-title">{locationLabel}</span>
       </div>
 

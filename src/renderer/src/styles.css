@@ -72,8 +72,7 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 /* Our own title bar strip, in place of the system one. The native caption
    buttons are drawn into the right end of it, so reserve their width;
    env() is exact and the fallback covers the usual three 46px buttons. */
-.titlebar { grid-column: 1 / -1; z-index: 60; display: flex; align-items: center; gap: 8px; height: var(--titlebar-height); padding-left: 10px; padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 138px))); border-bottom: 1px solid #202024; background: #121216; -webkit-app-region: drag; }
-.titlebar-icon { width: 16px; height: 16px; border-radius: 4px; }
+.titlebar { grid-column: 1 / -1; z-index: 60; display: flex; align-items: center; gap: 8px; height: var(--titlebar-height); padding-left: 19px; padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 138px))); border-bottom: 1px solid #202024; background: #121216; -webkit-app-region: drag; }
 /* A channel name can be long, so it truncates rather than pushing into the
    space reserved for the caption buttons. */
 .titlebar-title { min-width: 0; overflow: hidden; color: #e4e4e7; font-weight: 600; font-size: 12px; letter-spacing: .2px; text-overflow: ellipsis; white-space: nowrap; }
