@@ -744,6 +744,11 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .theater-mode .player-toolbar-main { padding-top: 12px; padding-bottom: 6px; background: linear-gradient(180deg, rgb(5 5 6 / 82%) 0%, rgb(5 5 6 / 62%) 55%, rgb(5 5 6 / 0%) 100%); }
 /* Fades with the player controls rather than covering the video permanently. */
 .theater-mode .player-page.controls-hidden .player-toolbar { opacity: 0; pointer-events: none; }
+/* With chat hidden the toolbar spans the full width, putting its actions in the
+   same corner as the button that brings chat back. Reserve room for it, and
+   only while it is actually on screen. */
+.theater-mode .player-page:has(.native-chat-edge-restore) .player-toolbar-main,
+.theater-mode .player-page:has(.chat-edge-restore) .player-toolbar-main { padding-right: 54px; }
 .theater-mode .player-page, .fullscreen-mode .player-page { height: 100%; }
 .fullscreen-mode .player-page { grid-template-rows: 1fr; }
 .fullscreen-mode .player-toolbar { display: none; }
