@@ -25,6 +25,12 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 // is not re-run on every launch. Kept apart from the Twitch website session.
 const KICK_PARTITION = "persist:violetwire-kick";
 const CHALLENGE_TIMEOUT_MS = 15_000;
+// When the challenge does not yield a cookie, every later request would
+// otherwise re-run it and wait the full timeout again. Back off instead, and
+// let requests proceed without a cookie in the meantime.
+const CHALLENGE_FAILURE_BACKOFF_MS = 60_000;
+// How long stream resolution will wait for a cookie before going without one.
+const COOKIE_WAIT_MS = 2_500;
 
 // Kick sends far more than this; only the fields the app renders are declared,
 // and everything is optional so a shape change degrades a single card rather
@@ -107,6 +113,7 @@ export class KickService {
   // Single-flight, so a burst of channel lookups on startup shares one refresh
   // instead of each opening its own request.
   private sessionRequest: Promise<string | null> | null = null;
+  private challengeFailedAt = 0;
 
   /**
    * The cookie Streamlink needs to resolve a Kick stream without falling back
@@ -155,15 +162,34 @@ export class KickService {
     if (stored !== null) {
       this.sessionCookie = stored;
       this.sessionFetchedAt = Date.now();
+      this.log("reused the stored session cookie");
       return stored;
     }
 
+    if (Date.now() - this.challengeFailedAt < CHALLENGE_FAILURE_BACKOFF_MS) {
+      return null;
+    }
+
+    const startedAt = Date.now();
     const solved = await this.solveChallenge();
     if (solved !== null) {
       this.sessionCookie = solved;
       this.sessionFetchedAt = Date.now();
+      this.challengeFailedAt = 0;
+      this.log(`solved the challenge in ${Date.now() - startedAt}ms`);
+    } else {
+      this.challengeFailedAt = Date.now();
+      this.log(
+        `challenge produced no ${SESSION_COOKIE} cookie after ${Date.now() - startedAt}ms; ` +
+          "requests will continue without one",
+      );
     }
     return solved;
+  }
+
+  private log(message: string): void {
+    // Diagnostics only; the resolver's own errors already surface to the user.
+    console.log(`[kick] ${message}`);
   }
 
   private async solveChallenge(): Promise<string | null> {
@@ -218,9 +244,23 @@ export class KickService {
     }
   }
 
-  /** `name=value`, ready for Streamlink's --http-cookie. */
+  /**
+   * `name=value`, ready for Streamlink's --http-cookie.
+   *
+   * Resolution must not wait on the challenge. A cached cookie is returned at
+   * once; otherwise acquisition starts and this gives up quickly, because
+   * Streamlink often resolves without one and holding playback for the full
+   * challenge timeout is worse than sending the request unauthenticated. The
+   * cookie is then ready for the next stream.
+   */
   async getStreamlinkCookie(): Promise<string | null> {
-    const value = await this.getSessionCookie();
+    const pending = this.getSessionCookie();
+    const value = await Promise.race([
+      pending,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), COOKIE_WAIT_MS)),
+    ]);
+    // Keep the acquisition running in the background when the wait expired.
+    void pending.catch(() => null);
     return value === null ? null : `${SESSION_COOKIE}=${value}`;
   }
 
