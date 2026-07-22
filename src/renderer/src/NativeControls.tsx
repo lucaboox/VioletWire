@@ -22,7 +22,8 @@ import {
   Maximize,
   Minimize,
   MoveDiagonal2,
-  PanelRight,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pause,
   Play,
   Reply,
@@ -1793,9 +1794,11 @@ export function NativeControls({
           onClick={() => window.desktop.player.sendNativeControlAction("toggle-theater")}
           type="button"
         >
-          <span className={`icon-toggle${context.theaterMode ? "" : " off"}`}>
-            <PanelRight size={18} />
-          </span>
+          {context.theaterMode ? (
+            <PanelLeftClose size={18} />
+          ) : (
+            <PanelLeftOpen size={18} />
+          )}
         </button>
         <button
           aria-label={context.fullscreen ? "Exit fullscreen" : "Fullscreen"}
