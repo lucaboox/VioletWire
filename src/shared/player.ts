@@ -75,7 +75,6 @@ export const nativePlayerCommandSchema = z.discriminatedUnion("command", [
     command: z.literal("set-compressor"),
     enabled: z.boolean(),
   }),
-  z.object({ command: z.literal("toggle-stats") }),
 ]);
 
 export type PlayerBounds = z.infer<typeof playerBoundsSchema>;
@@ -235,6 +234,9 @@ export interface DesktopApi {
     getNativeQualities(channel: string): Promise<NativeQuality[]>;
     setNativeQuality(channel: string, quality: NativeQualityValue): Promise<void>;
     controlNative(command: NativePlayerCommand): void;
+    // Raw mpv property names mapped to their values, or null when the texture
+    // backend is not the one currently playing.
+    getNativeStats(): Promise<Record<string, string> | null>;
     onNativeState(listener: (state: NativePlayerState) => void): () => void;
     onNativeBackendChanged(listener: (backend: NativeRenderBackend) => void): () => void;
     readyNativeControls(): void;

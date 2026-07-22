@@ -205,6 +205,8 @@ const api: DesktopApi = {
     setNativeQuality: (channel: string, quality: NativeQualityValue) =>
       ipcRenderer.invoke("native-player:set-quality", channel, quality),
     controlNative: (command: NativePlayerCommand) => ipcRenderer.send("native-player:control", command),
+    getNativeStats: (): Promise<Record<string, string> | null> =>
+      ipcRenderer.invoke("native-player:stats"),
     onNativeState: (listener: (state: NativePlayerState) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, state: NativePlayerState) => listener(state);
       ipcRenderer.on("native-player:state", handler);
@@ -321,6 +323,7 @@ const controlsApi = {
     getNativeQualities: api.player.getNativeQualities,
     setNativeQuality: api.player.setNativeQuality,
     controlNative: api.player.controlNative,
+    getNativeStats: api.player.getNativeStats,
     onNativeState: api.player.onNativeState,
     readyNativeControls: api.player.readyNativeControls,
     setNativeControlsVisible: api.player.setNativeControlsVisible,

@@ -1089,6 +1089,14 @@ function persistPlayerVolume(volume: number): void {
   }, 400);
 }
 
+// Only the texture backend can report these; the window backend drives mpv as
+// a separate process with no property channel back to us.
+handleTrusted("native-player:stats", () =>
+  activePlayerMode === "native" && activeNativeBackend === "texture"
+    ? textureNativePlayer.getStats()
+    : null,
+);
+
 onTrusted("native-player:control", (_event, input: unknown) => {
   const result = nativePlayerCommandSchema.safeParse(input);
   if (!result.success || activePlayerMode !== "native") return;

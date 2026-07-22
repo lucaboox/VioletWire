@@ -1353,12 +1353,90 @@ input {
   width: 244px;
 }
 
-/* The gear sits at the left end of the right-hand cluster, so its popover
-   clears the wider quality button rather than sharing an offset with it.
-   These offsets are tuned to the cluster by eye, as the others are. */
-.settings-popover {
-  right: 150px;
-  width: 258px;
+/* Video stats. Anchored to the top-left the way Twitch's own panel is, so it
+   stays clear of the control bar and the overlay chat on the right. */
+.stats-panel {
+  position: absolute;
+  z-index: 1100;
+  top: 14px;
+  left: 14px;
+  width: 296px;
+  max-height: calc(100% - 90px);
+  overflow: hidden auto;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 11px;
+  color: #e4e4e7;
+  background: rgb(15 15 18 / 96%);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 70%);
+  animation: popover-in 120ms ease-out;
+}
+
+.controls-surface.inline-controls .stats-panel {
+  pointer-events: auto;
+}
+
+.stats-panel header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 10px 13px;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+  background: inherit;
+}
+
+.stats-panel header strong {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.stats-panel header button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: #a1a1aa;
+  background: transparent;
+  cursor: pointer;
+}
+
+.stats-panel header button:hover {
+  color: #f4f4f5;
+  background: rgb(255 255 255 / 10%);
+}
+
+.stats-panel dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 14px;
+  margin: 0;
+  padding: 11px 13px 13px;
+  font-size: 12px;
+}
+
+.stats-panel dt {
+  color: #a1a1aa;
+  white-space: nowrap;
+}
+
+.stats-panel dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.stats-empty {
+  margin: 0;
+  padding: 14px 13px;
+  color: #a1a1aa;
+  font-size: 12px;
 }
 
 .chat-options button > span b,

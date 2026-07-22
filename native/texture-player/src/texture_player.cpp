@@ -52,6 +52,8 @@ struct MpvApi {
   decltype(&mpv_initialize) initialize = nullptr;
   decltype(&mpv_set_option_string) set_option_string = nullptr;
   decltype(&mpv_observe_property) observe_property = nullptr;
+  decltype(&mpv_get_property_string) get_property_string = nullptr;
+  decltype(&mpv_free) free = nullptr;
   decltype(&mpv_command_async) command_async = nullptr;
   decltype(&mpv_wait_event) wait_event = nullptr;
   decltype(&mpv_terminate_destroy) terminate_destroy = nullptr;
@@ -102,6 +104,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         InstanceMethod("start", &TexturePlayer::Start),
         InstanceMethod("resize", &TexturePlayer::Resize),
         InstanceMethod("command", &TexturePlayer::Command),
+        InstanceMethod("stats", &TexturePlayer::Stats),
         InstanceMethod("recoverGraphics", &TexturePlayer::RecoverGraphics),
         InstanceMethod("releaseFrame", &TexturePlayer::ReleaseFrame),
         InstanceMethod("destroy", &TexturePlayer::DestroyFromJs),
@@ -179,6 +182,8 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       LoadFunction(module_, "mpv_initialize", api_.initialize) &&
       LoadFunction(module_, "mpv_set_option_string", api_.set_option_string) &&
       LoadFunction(module_, "mpv_observe_property", api_.observe_property) &&
+      LoadFunction(module_, "mpv_get_property_string", api_.get_property_string) &&
+      LoadFunction(module_, "mpv_free", api_.free) &&
       LoadFunction(module_, "mpv_command_async", api_.command_async) &&
       LoadFunction(module_, "mpv_wait_event", api_.wait_event) &&
       LoadFunction(module_, "mpv_terminate_destroy", api_.terminate_destroy) &&
@@ -305,6 +310,49 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     command.push_back(nullptr);
     api_.command_async(mpv_, 0, command.data());
     return info.Env().Undefined();
+  }
+
+  // Snapshot of the playback properties behind the video stats panel. These are
+  // read on demand rather than observed, because the panel polls them only
+  // while it is open and observing every one of them would emit events for the
+  // whole session. libmpv's client API is thread safe, and these properties are
+  // already resolved in the client, so the read does not block the render loop.
+  Napi::Value Stats(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (!mpv_ || !api_.get_property_string || !api_.free) return env.Null();
+
+    static constexpr const char* kProperties[] = {
+      "file-format",
+      "video-codec",
+      "video-format",
+      "hwdec-current",
+      "width",
+      "height",
+      "dwidth",
+      "dheight",
+      "estimated-vf-fps",
+      "container-fps",
+      "video-bitrate",
+      "audio-codec-name",
+      "audio-bitrate",
+      "audio-params/channel-count",
+      "audio-params/samplerate",
+      "current-ao",
+      "demuxer-cache-duration",
+      "demuxer-cache-time",
+      "frame-drop-count",
+      "decoder-frame-drop-count",
+      "avsync",
+    };
+
+    Napi::Object result = Napi::Object::New(env);
+    for (const char* name : kProperties) {
+      char* value = api_.get_property_string(mpv_, name);
+      if (!value) continue;
+      result.Set(name, Napi::String::New(env, value));
+      api_.free(value);
+    }
+    return result;
   }
 
   Napi::Value RecoverGraphics(const Napi::CallbackInfo& info) {

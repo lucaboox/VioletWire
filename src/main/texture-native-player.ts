@@ -48,6 +48,9 @@ interface TexturePlayerAddonInstance {
   ): void;
   resize(width: number, height: number): void;
   command(command: string[]): void;
+  // Raw mpv property names mapped to their string values. Null once the player
+  // has been torn down.
+  stats(): Record<string, string> | null;
   recoverGraphics(cycleAdapter: boolean): void;
   releaseFrame(slot: number): void;
   destroy(): void;
@@ -401,12 +404,6 @@ export class TextureNativePlayer {
           ]);
         }
         break;
-      case "toggle-stats":
-        // mpv ships stats.lua as a builtin script, so its own overlay can be
-        // toggled straight onto the video texture without the addon having to
-        // expose any of the underlying properties to us.
-        addon.command(["script-binding", "stats/display-stats-toggle"]);
-        break;
       case "go-live":
         // Discarding mpv's demuxer cache left playback at the starvation
         // edge under the low-latency profile: it caught up to live but then
@@ -433,6 +430,19 @@ export class TextureNativePlayer {
 
   get target(): string {
     return this.renderTarget;
+  }
+
+  // Polled by the renderer only while the video stats panel is open.
+  getStats(): Record<string, string> | null {
+    const addon = this.session?.addon;
+    if (!addon) return null;
+    try {
+      return addon.stats();
+    } catch {
+      // An older addon build predates the stats method. Report nothing rather
+      // than taking playback down over a diagnostic panel.
+      return null;
+    }
   }
 
   private async reloadAtLiveEdge(): Promise<void> {

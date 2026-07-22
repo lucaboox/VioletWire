@@ -11,9 +11,9 @@ import {
   useState,
 } from "react";
 import {
-  Activity,
   ArrowDown,
   AudioLines,
+  BarChart3,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -384,7 +384,9 @@ export function NativeControls({
   const [qualities, setQualities] = useState<NativeQuality[]>([
     { value: "best", label: "Auto" },
   ]);
-  const [openMenu, setOpenMenu] = useState<"quality" | "chat" | "settings" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"quality" | "chat" | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [stats, setStats] = useState<Record<string, string> | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -929,13 +931,108 @@ export function NativeControls({
     reportActivity();
   }
 
+  // mpv reports everything as strings in its own units. Turn the handful worth
+  // showing into labelled rows, dropping any the player has not resolved yet.
+  const statsRows = useMemo(() => {
+    if (!stats) return [];
+    const read = (key: string) => {
+      const value = stats[key];
+      return value && value.length > 0 ? value : null;
+    };
+    const round = (key: string, digits = 0) => {
+      const value = Number(read(key));
+      return Number.isFinite(value) ? value.toFixed(digits) : null;
+    };
+    const megabits = (key: string) => {
+      const value = Number(read(key));
+      return Number.isFinite(value) ? `${(value / 1_000_000).toFixed(2)} Mbps` : null;
+    };
+    const kilobits = (key: string) => {
+      const value = Number(read(key));
+      return Number.isFinite(value) ? `${Math.round(value / 1000)} kbps` : null;
+    };
+    const pair = (first: string, second: string, separator = " x ") => {
+      const a = read(first);
+      const b = read(second);
+      return a && b ? `${a}${separator}${b}` : null;
+    };
+
+    const source = pair("width", "height");
+    const display = pair("dwidth", "dheight");
+    const dropped = (() => {
+      const decoder = read("decoder-frame-drop-count") ?? "0";
+      const output = read("frame-drop-count") ?? "0";
+      return `${decoder} decoder, ${output} output`;
+    })();
+    const cache = (() => {
+      const seconds = round("demuxer-cache-duration", 1);
+      return seconds ? `${seconds} sec` : null;
+    })();
+    const sync = (() => {
+      const value = Number(read("avsync"));
+      if (!Number.isFinite(value)) return null;
+      return `${value >= 0 ? "+" : ""}${value.toFixed(3)} sec`;
+    })();
+    const audio = (() => {
+      const channels = read("audio-params/channel-count");
+      const rate = read("audio-params/samplerate");
+      if (!channels || !rate) return null;
+      return `${channels} ch, ${Math.round(Number(rate) / 1000)} kHz`;
+    })();
+
+    const rows: { label: string; value: string }[] = [];
+    const push = (label: string, value: string | null) => {
+      if (value) rows.push({ label, value });
+    };
+    push("Resolution", source);
+    push("Display", display);
+    push("FPS", round("estimated-vf-fps", 1) ?? round("container-fps", 1));
+    push("Video", read("video-codec"));
+    push("Pixel format", read("video-format"));
+    push("Hardware decode", read("hwdec-current"));
+    push("Video bitrate", megabits("video-bitrate"));
+    push("Audio", read("audio-codec-name"));
+    push("Audio bitrate", kilobits("audio-bitrate"));
+    push("Audio format", audio);
+    push("Output", read("current-ao"));
+    push("Dropped frames", dropped);
+    push("Buffer", cache);
+    push("A/V sync", sync);
+    push("Protocol", read("file-format"));
+    return rows;
+  }, [stats]);
+
+  // Polled rather than observed, so nothing is read while the panel is closed.
+  useEffect(() => {
+    if (!statsOpen) return;
+    let cancelled = false;
+    const read = async () => {
+      const next = await window.desktop.player.getNativeStats();
+      if (!cancelled) setStats(next);
+    };
+    void read();
+    const timer = window.setInterval(() => void read(), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [statsOpen]);
+
+  // Clearing here rather than in the effect keeps a stale reading from showing
+  // for a frame when the panel is reopened.
+  function closeOrOpenStats(next?: boolean) {
+    const open = next ?? !statsOpen;
+    setStatsOpen(open);
+    if (!open) setStats(null);
+  }
+
   function closeMenu() {
     setOpenMenu(null);
     if (!inline) window.desktop.player.setNativeControlsExpanded(false);
     reportActivity();
   }
 
-  function toggleMenu(menu: "quality" | "chat" | "settings") {
+  function toggleMenu(menu: "quality" | "chat") {
     const nextMenu = openMenu === menu ? null : menu;
     setOpenMenu(nextMenu);
     if (!inline) window.desktop.player.setNativeControlsExpanded(nextMenu !== null);
@@ -1539,31 +1636,28 @@ export function NativeControls({
           </div>
         </div>
       )}
-      {openMenu === "settings" && (
-        <div
-          className={`control-popover settings-popover ${
-            context.chatVisible && context.chatPresentation === "overlay" ? "avoid-chat" : ""
-          }`}
-          onPointerDown={(event) => event.stopPropagation()}
-          role="menu"
-        >
+      {statsOpen && (
+        <div className="stats-panel" onPointerDown={(event) => event.stopPropagation()}>
           <header>
-            <strong>Player settings</strong>
-            <small>Playback details drawn over the video.</small>
-          </header>
-          <div className="popover-options">
-            <button
-              onClick={() => {
-                closeMenu();
-                window.desktop.player.controlNative({ command: "toggle-stats" });
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Activity size={16} />
-              <span><b>Video stats</b><small>Resolution, FPS, dropped frames, cache</small></span>
+            <strong>Video stats</strong>
+            <button aria-label="Close video stats" onClick={() => closeOrOpenStats(false)} type="button">
+              <X size={15} />
             </button>
-          </div>
+          </header>
+          {statsRows.length > 0 ? (
+            <dl>
+              {statsRows.map((row) => (
+                <Fragment key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          ) : (
+            <p className="stats-empty">
+              {stats ? "Waiting for playback." : "Stats are only available on the Native player."}
+            </p>
+          )}
         </div>
       )}
       {openMenu === "chat" && (
@@ -1700,14 +1794,14 @@ export function NativeControls({
                 : state.status}
         </div>
         <button
-          aria-label="Player settings"
-          aria-expanded={openMenu === "settings"}
-          className={openMenu === "settings" ? "active" : ""}
-          data-tooltip={openMenu === "settings" ? undefined : "Player settings"}
-          onClick={() => toggleMenu("settings")}
+          aria-label="Video stats"
+          aria-pressed={statsOpen}
+          className={statsOpen ? "active" : ""}
+          data-tooltip="Video stats"
+          onClick={() => closeOrOpenStats()}
           type="button"
         >
-          <Settings size={17} />
+          <BarChart3 size={18} />
         </button>
         <button
           aria-label={`Stream quality: ${qualityLabel}`}
