@@ -22,8 +22,6 @@ import {
   Maximize,
   Minimize,
   MoveDiagonal2,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pause,
   Play,
   Reply,
@@ -71,6 +69,30 @@ import {
 import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
 import { useChatFeed } from "./chat-feed";
+
+// The sidebar-layout pair, drawn here rather than pulled from another icon set
+// so the app keeps a single icon dependency. Stroked to sit alongside lucide:
+// same 24 grid, same 2px round strokes, with the panel filled when it is there.
+function SidebarLayoutIcon({ filled, size = 18 }: { filled: boolean; size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height={size}
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      viewBox="0 0 24 24"
+      width={size}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect height="18" rx="2" width="18" x="3" y="3" />
+      <path d="M15 3v18" />
+      {filled && <path d="M16 4h4v16h-4z" fill="currentColor" stroke="none" />}
+    </svg>
+  );
+}
 
 const initialState: NativePlayerState = {
   status: "idle",
@@ -1794,11 +1816,9 @@ export function NativeControls({
           onClick={() => window.desktop.player.sendNativeControlAction("toggle-theater")}
           type="button"
         >
-          {context.theaterMode ? (
-            <PanelLeftClose size={18} />
-          ) : (
-            <PanelLeftOpen size={18} />
-          )}
+          {/* Theater collapses the app chrome, so the panel goes from present
+              to absent. */}
+          <SidebarLayoutIcon filled={!context.theaterMode} />
         </button>
         <button
           aria-label={context.fullscreen ? "Exit fullscreen" : "Fullscreen"}
