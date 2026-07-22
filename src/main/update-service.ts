@@ -88,7 +88,7 @@ export class UpdateService {
         state: "downloaded",
         availableVersion: info.version,
         progress: 100,
-        message: "Update ready. Restart VioletWire to install it.",
+        message: "Update ready. Restart to install it; VioletWire reopens on its own.",
       });
       if (shouldOfferRestart) void this.offerRestart(info.version);
     });
@@ -144,7 +144,11 @@ export class UpdateService {
   }
 
   install(): void {
-    if (this.downloaded) this.updater.quitAndInstall(false, true);
+    // The first argument is `isSilent`, which is what makes electron-updater
+    // pass NSIS `/S`. Without it the full installer wizard opens and the user
+    // has to click through it again. The second relaunches VioletWire once the
+    // install finishes. Installing on quit is already silent.
+    if (this.downloaded) this.updater.quitAndInstall(true, true);
   }
 
   private setStatus(update: Omit<AppUpdateStatus, "currentVersion">): void {
@@ -160,7 +164,8 @@ export class UpdateService {
       type: "info",
       title: "VioletWire update ready",
       message: `VioletWire ${version} has been downloaded.`,
-      detail: "Restart now to install the update, or choose Later to install it when VioletWire closes.",
+      detail:
+        "Restarting installs it in a few seconds and reopens VioletWire. Choose Later to install it the next time you close VioletWire.",
       buttons: ["Restart now", "Later"],
       defaultId: 0,
       cancelId: 1,
