@@ -1,3 +1,4 @@
+import { BrowserWindow, session, type Session } from "electron";
 import { z } from "zod";
 
 /**
@@ -20,6 +21,10 @@ const REQUEST_TIMEOUT_MS = 10_000;
 // Long enough that a viewing session reuses one cookie, short enough that a
 // rotated cookie recovers without waiting for a failure.
 const SESSION_TTL_MS = 30 * 60 * 1000;
+// Its own partition, so the solved cookie survives restarts and the challenge
+// is not re-run on every launch. Kept apart from the Twitch website session.
+const KICK_PARTITION = "persist:violetwire-kick";
+const CHALLENGE_TIMEOUT_MS = 15_000;
 
 // Kick sends far more than this; only the fields the app renders are declared,
 // and everything is optional so a shape change degrades a single card rather
@@ -89,36 +94,99 @@ export class KickService {
       Date.now() - this.sessionFetchedAt < SESSION_TTL_MS;
     if (fresh && !forceRefresh) return this.sessionCookie;
 
+    if (forceRefresh) {
+      this.sessionCookie = null;
+      await this.clearStoredCookie();
+    }
     this.sessionRequest ??= this.requestSessionCookie().finally(() => {
       this.sessionRequest = null;
     });
     return this.sessionRequest;
   }
 
-  private async requestSessionCookie(): Promise<string | null> {
+  private kickSession(): Session {
+    return session.fromPartition(KICK_PARTITION);
+  }
+
+  private async readStoredCookie(): Promise<string | null> {
     try {
-      const response = await fetch(KICK_ORIGIN, {
-        headers: { Accept: "text/html", "User-Agent": this.userAgent() },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      const [cookie] = await this.kickSession().cookies.get({
+        url: KICK_ORIGIN,
+        name: SESSION_COOKIE,
       });
-      // getSetCookie keeps the individual cookies separate; a plain get()
-      // joins them into one string that cannot be split safely, because
-      // cookie values may contain commas.
-      const cookies = response.headers.getSetCookie();
-      for (const cookie of cookies) {
-        const [pair] = cookie.split(";");
-        const separator = pair.indexOf("=");
-        if (separator === -1) continue;
-        if (pair.slice(0, separator).trim() !== SESSION_COOKIE) continue;
-        this.sessionCookie = pair.slice(separator + 1).trim();
-        this.sessionFetchedAt = Date.now();
-        return this.sessionCookie;
-      }
+      return cookie?.value ?? null;
     } catch {
-      // Offline, blocked, or Kick changed the handshake. Callers treat a null
-      // cookie as "try without one" rather than as a hard failure.
+      return null;
     }
-    return null;
+  }
+
+  private async requestSessionCookie(): Promise<string | null> {
+    // A plain HTTP request cannot obtain this. Kick answers 403 and sets only
+    // Cloudflare's own cookie; the session cookie is issued after a JS
+    // challenge runs. Loading the page in a real Chromium context solves it the
+    // way any browser would, which is also how Streamlink's plugin does it —
+    // except the browser here is the one already shipped with the app, so
+    // nothing extra has to be installed or found on PATH.
+    const stored = await this.readStoredCookie();
+    if (stored !== null) {
+      this.sessionCookie = stored;
+      this.sessionFetchedAt = Date.now();
+      return stored;
+    }
+
+    const solved = await this.solveChallenge();
+    if (solved !== null) {
+      this.sessionCookie = solved;
+      this.sessionFetchedAt = Date.now();
+    }
+    return solved;
+  }
+
+  private async solveChallenge(): Promise<string | null> {
+    // The partition persists, so this normally runs once and later launches
+    // reuse the stored cookie rather than loading anything.
+    const window = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        partition: KICK_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // Nothing here is trusted; it is a third-party page rendered purely so
+        // its own scripts can complete the handshake.
+        webSecurity: true,
+        images: false,
+      },
+    });
+
+    try {
+      await Promise.race([
+        window.loadURL(KICK_ORIGIN),
+        new Promise((resolve) => setTimeout(resolve, CHALLENGE_TIMEOUT_MS)),
+      ]);
+      // The cookie is set by script after load, so poll briefly rather than
+      // reading once and giving up.
+      const deadline = Date.now() + CHALLENGE_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        const cookie = await this.readStoredCookie();
+        if (cookie !== null) return cookie;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      if (!window.isDestroyed()) window.destroy();
+    }
+  }
+
+  /** Drops the stored cookie so the next request solves the challenge again. */
+  private async clearStoredCookie(): Promise<void> {
+    try {
+      await this.kickSession().cookies.remove(KICK_ORIGIN, SESSION_COOKIE);
+    } catch {
+      // Nothing to clear.
+    }
   }
 
   /** `name=value`, ready for Streamlink's --http-cookie. */
