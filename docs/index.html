@@ -710,6 +710,12 @@
         font-size: 14.5px;
       }
 
+      .release-meta {
+        margin-top: 8px !important;
+        color: var(--text-faint) !important;
+        font-size: 12.5px !important;
+      }
+
       .pill {
         display: inline-block;
         margin-left: 9px;
@@ -1364,9 +1370,12 @@
                 and mpv runtimes the Native player needs, so there's nothing else
                 to set up.
               </p>
+              <p class="release-meta" data-release-meta aria-live="polite">
+                Checking the latest release...
+              </p>
             </div>
-            <!-- LINK: direct installer. Rebuilt by script.js from APP_VERSION
-                 so a version bump only needs editing in one place. -->
+            <!-- Updated from GitHub's latest-release API; this static href is
+                 the safe fallback when that request is unavailable. -->
             <a
               class="btn btn-primary"
               id="directDownload"
@@ -1528,30 +1537,99 @@
       ================================================================= */
       const GITHUB_USER = "lucaboox";
       const GITHUB_REPO = "VioletWire";
-      const APP_VERSION = "0.3.3-alpha.1";
-      // Matches electron-builder's artifactName:
-      // VioletWire-Setup-${version}-${arch}.${ext}
-      const INSTALLER_NAME = `VioletWire-Setup-${APP_VERSION}-x64.exe`;
       /* ================================================================= */
 
       const REPO_URL = `https://github.com/${GITHUB_USER}/${GITHUB_REPO}`;
-      const DIRECT_INSTALLER_URL = `${REPO_URL}/releases/download/v${APP_VERSION}/${INSTALLER_NAME}`;
-
-      // Version label, shown in the hero note and next to the download button.
-      for (const el of document.querySelectorAll("[data-version-label]")) {
-        el.textContent = `v${APP_VERSION}`;
-      }
-
-      // Point the download button straight at the installer. Falls back to the
-      // "latest release" href already in the HTML if this script never runs.
       const directDownload = document.getElementById("directDownload");
-      if (directDownload) {
-        directDownload.href = DIRECT_INSTALLER_URL;
-        directDownload.setAttribute(
-          "aria-label",
-          `Download VioletWire ${APP_VERSION} installer for Windows`,
+      const releaseApiUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/latest`;
+      const releaseCacheKey = "violetwire-latest-release";
+      const releaseCacheDurationMs = 30 * 60 * 1000;
+
+      const setReleaseLabels = (version) => {
+        for (const el of document.querySelectorAll("[data-version-label]")) {
+          el.textContent = version;
+        }
+      };
+
+      const setReleaseMeta = (text) => {
+        for (const el of document.querySelectorAll("[data-release-meta]")) {
+          el.textContent = text;
+        }
+      };
+
+      const formatDownloads = (count) =>
+        new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(count);
+
+      const readCachedRelease = () => {
+        try {
+          const cached = JSON.parse(sessionStorage.getItem(releaseCacheKey) ?? "null");
+          if (!cached || Date.now() - cached.cachedAt > releaseCacheDurationMs) return null;
+          return cached.release;
+        } catch {
+          return null;
+        }
+      };
+
+      const cacheRelease = (release) => {
+        try {
+          sessionStorage.setItem(releaseCacheKey, JSON.stringify({ cachedAt: Date.now(), release }));
+        } catch {
+          // Private browsing or storage restrictions should not stop downloads.
+        }
+      };
+
+      const applyLatestRelease = (release) => {
+        if (!release || typeof release.tag_name !== "string") return;
+        const version = release.tag_name;
+        setReleaseLabels(version);
+
+        const installer = Array.isArray(release.assets)
+          ? release.assets.find(
+              (asset) =>
+                typeof asset?.name === "string" &&
+                /^VioletWire-Setup-.*-x64\.exe$/i.test(asset.name) &&
+                typeof asset.browser_download_url === "string",
+            )
+          : null;
+
+        if (installer && directDownload) {
+          directDownload.href = installer.browser_download_url;
+          directDownload.setAttribute(
+            "aria-label",
+            `Download VioletWire ${version} installer for Windows`,
+          );
+        }
+
+        const downloads = Number(installer?.download_count);
+        setReleaseMeta(
+          Number.isFinite(downloads)
+            ? `${formatDownloads(downloads)} installer download${downloads === 1 ? "" : "s"} on GitHub`
+            : "Available now on GitHub",
         );
-      }
+      };
+
+      const loadLatestRelease = async () => {
+        const cached = readCachedRelease();
+        if (cached) {
+          applyLatestRelease(cached);
+          return;
+        }
+
+        try {
+          const response = await fetch(releaseApiUrl, {
+            headers: { Accept: "application/vnd.github+json" },
+          });
+          if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
+          const release = await response.json();
+          cacheRelease(release);
+          applyLatestRelease(release);
+        } catch {
+          setReleaseLabels("Latest alpha");
+          setReleaseMeta("Latest release on GitHub");
+        }
+      };
+
+      void loadLatestRelease();
 
       document.getElementById("year").textContent = String(
         new Date().getFullYear(),
