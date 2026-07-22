@@ -4,6 +4,43 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.3] - 2026-07-21
+
+### Additions
+
+- Added native Unicode emoji to the emote picker, organized into familiar
+  categories with a compact skin-tone selector. Emoji data is cached locally,
+  and unsupported characters are filtered against the installed Windows emoji
+  font so blank or broken glyphs are not offered.
+- Added a saved globe toggle to search every emote provider at once. Search
+  results remain grouped by their useful subcategories, including channel,
+  global, event, and native emoji groups.
+
+### Improvements
+
+- Native emoji categories now load as they approach the visible area, keeping
+  the complete catalog available without mounting thousands of emoji at once
+  or making picker resizing sluggish.
+- Pressing Tab after an emote name now starts completion and repeatedly pressing
+  Tab cycles through matching emotes. Exact matches are prioritized, and Tab no
+  longer unexpectedly moves focus to another chat control when nothing matches.
+- Ctrl-clicking an emote inserts it while keeping the picker open; Alt-clicking
+  still toggles favorites. Their tooltip now presents both shortcuts on clear,
+  separate lines.
+- Emotes inserted into the composer now match the configured chat emote size.
+- Twitch account-wide and event emotes are grouped into meaningful sections
+  instead of appearing as fake channel-owned collections.
+- The VioletWire website now reads the latest version and download totals from
+  GitHub, and its main Windows download button links directly to the newest
+  installer.
+
+### Fixes
+
+- Kept Twitch and native emoji category icons at a consistent size when the
+  picker is shortened, and removed the unwanted horizontal category scrollbar.
+- Prevented Alt-clicking an emote from revealing Electron's default
+  File/Edit/View application menu.
+
 ## [0.3.3-alpha.2] - 2026-07-21
 
 ### Additions
