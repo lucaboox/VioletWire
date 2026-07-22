@@ -989,11 +989,11 @@
           </p>
 
           <div class="hero-actions">
-            <!-- LINK: primary download. Points at the latest release so it
-                 never goes stale. See the Downloads section for a direct
-                 installer link. -->
+            <!-- Updated to the latest installer by the release API below;
+                 this static release-page href is the safe fallback. -->
             <a
               class="btn btn-primary"
+              data-installer-download
               href="https://github.com/lucaboox/VioletWire/releases/latest"
             >
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1379,6 +1379,7 @@
             <a
               class="btn btn-primary"
               id="directDownload"
+              data-installer-download
               href="https://github.com/lucaboox/VioletWire/releases/latest"
             >
               Download installer
@@ -1540,7 +1541,7 @@
       /* ================================================================= */
 
       const REPO_URL = `https://github.com/${GITHUB_USER}/${GITHUB_REPO}`;
-      const directDownload = document.getElementById("directDownload");
+      const installerDownloads = document.querySelectorAll("[data-installer-download]");
       const releaseApiUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/latest`;
       const releaseCacheKey = "violetwire-latest-release";
       const releaseCacheDurationMs = 30 * 60 * 1000;
@@ -1592,12 +1593,14 @@
             )
           : null;
 
-        if (installer && directDownload) {
-          directDownload.href = installer.browser_download_url;
-          directDownload.setAttribute(
+        if (installer) {
+          for (const download of installerDownloads) {
+            download.href = installer.browser_download_url;
+            download.setAttribute(
             "aria-label",
             `Download VioletWire ${version} installer for Windows`,
           );
+          }
         }
 
         const downloads = Number(installer?.download_count);
