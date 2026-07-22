@@ -1817,18 +1817,21 @@ export function App() {
       .then((sets) => {
         if (cancelled) return;
         setKickPickerEmotes(
-          sets.flatMap((set) =>
-            set.emotes.map((emote) => ({
+          sets.flatMap((set) => {
+            // Kick names the channel's own set after the channel; the rest are
+            // its shared sets (Global, Emojis). Each keeps its own owner id so
+            // the picker groups them separately instead of merging into one.
+            const isChannelSet = set.name.toLowerCase() === target.login;
+            return set.emotes.map((emote) => ({
               id: emote.id,
               name: emote.name,
               imageUrl: emote.imageUrl,
-              // Kick names the channel's own set after the channel; anything
-              // else is one of its shared sets.
-              scope: set.name.toLowerCase() === target.login ? ("channel" as const) : ("global" as const),
+              scope: isChannelSet ? ("channel" as const) : ("global" as const),
               subscriptionOnly: emote.subscribersOnly,
-              ownerName: set.name,
-            })),
-          ),
+              ownerId: `kick-set-${set.id}`,
+              ownerName: isChannelSet ? (target.login) : set.name,
+            }));
+          }),
         );
       })
       .catch(() => undefined);

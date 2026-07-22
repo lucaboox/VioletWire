@@ -540,9 +540,11 @@ export function EmotePicker({
       for (const emote of source) {
         const groupId = emote.categoryId
           ? `set-${emote.categoryId}`
-          : emote.scope === "global"
-            ? "global"
-            : emote.ownerId ?? "channel";
+          : emote.ownerId
+            ? `owner-${emote.ownerId}`
+            : emote.scope === "global"
+              ? "global"
+              : "channel";
         const existing = grouped.get(groupId);
         if (existing) {
           existing.emotes.push(emote);
@@ -550,9 +552,14 @@ export function EmotePicker({
         }
         grouped.set(groupId, {
           id: `twitch-${groupId}`,
-          label: emote.categoryName ?? (emote.scope === "global"
-            ? "Global emotes"
-            : emote.ownerName ?? (groupId === "channel" ? channelName : "Twitch emotes")),
+          label:
+            emote.categoryName ??
+            emote.ownerName ??
+            (emote.scope === "global"
+              ? "Global emotes"
+              : groupId === "channel"
+                ? channelName
+                : "Twitch emotes"),
           scope: emote.categoryId ? "twitch-set" : emote.scope,
           avatarUrl: emote.categoryId ? emote.imageUrl : emote.ownerImageUrl,
           emotes: [emote],
