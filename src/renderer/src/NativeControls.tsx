@@ -72,7 +72,8 @@ import { useChatFeed } from "./chat-feed";
 
 // The sidebar-layout pair, drawn here rather than pulled from another icon set
 // so the app keeps a single icon dependency. Stroked to sit alongside lucide:
-// same 24 grid, same 2px round strokes, with the panel filled when it is there.
+// same 24 grid, same 2px round strokes. Theater fills the panel, so the solid
+// state marks the toggle being on rather than the chrome still being there.
 function SidebarLayoutIcon({ filled, size = 18 }: { filled: boolean; size?: number }) {
   return (
     <svg
@@ -1816,9 +1817,7 @@ export function NativeControls({
           onClick={() => window.desktop.player.sendNativeControlAction("toggle-theater")}
           type="button"
         >
-          {/* Theater collapses the app chrome, so the panel goes from present
-              to absent. */}
-          <SidebarLayoutIcon filled={!context.theaterMode} />
+          <SidebarLayoutIcon filled={context.theaterMode} />
         </button>
         <button
           aria-label={context.fullscreen ? "Exit fullscreen" : "Fullscreen"}
