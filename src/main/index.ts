@@ -793,7 +793,7 @@ function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false)
 
 // Matches the renderer's .titlebar strip, which sits above the top bar and
 // holds the native caption buttons. Keep the two in step.
-const TITLE_BAR_HEIGHT = 32;
+const TITLE_BAR_HEIGHT = 30;
 // The strip is border-box, so its bottom border is the last pixel of that
 // height. The system paints the caption buttons over the full overlay height,
 // which would cover the border and leave the divider stopping short of the
