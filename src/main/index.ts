@@ -791,9 +791,9 @@ function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false)
   lastChatBounds = null;
 }
 
-// Matches the renderer's .topbar height so the caption buttons line up with it
-// instead of floating in a separate strip above.
-const TITLE_BAR_HEIGHT = 68;
+// Matches the renderer's .titlebar strip, which sits above the top bar and
+// holds the native caption buttons. Keep the two in step.
+const TITLE_BAR_HEIGHT = 32;
 
 function titleBarOverlayOptions(oledMode: boolean): {
   color: string;
@@ -801,8 +801,8 @@ function titleBarOverlayOptions(oledMode: boolean): {
   height: number;
 } {
   return {
-    // Keep these in step with .topbar and .oled-mode .topbar in styles.css.
-    color: oledMode ? "#000000" : "#0d0d10",
+    // Keep these in step with .titlebar and .oled-mode .titlebar in styles.css.
+    color: oledMode ? "#000000" : "#121216",
     symbolColor: "#d4d4d8",
     height: TITLE_BAR_HEIGHT,
   };

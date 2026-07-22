@@ -2627,7 +2627,13 @@ export function App() {
           {notice}
         </div>
       )}
-      <div className="titlebar-drag" aria-hidden="true" />
+      {/* Our own title bar. The window is frameless apart from the native
+          caption buttons, which the system draws into the reserved space on
+          the right, so anything added here goes to the left of them. */}
+      <div className="titlebar">
+        <img className="titlebar-icon" alt="" src={violetWireIcon} />
+        <span className="titlebar-title">VioletWire</span>
+      </div>
 
       <div className="brand">
         <span className="brand-mark"><img alt="" src={violetWireIcon} /></span>
