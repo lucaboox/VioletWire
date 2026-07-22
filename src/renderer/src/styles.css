@@ -454,7 +454,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
    band next to the account controls (which stop at the main column's edge).
    Pin those controls to the true top-right corner and extend the top bar's
    look across the sidebar's top, so the followed list cleanly starts below. */
-.chat-left .top-actions { position: fixed; z-index: 6; top: 0; right: 0; height: 68px; padding-right: 24px; }
+/* Fixed to the window so it clears the sidebar, which sits on the right in this
+   layout. It has to start below the title bar or it lands on the caption
+   buttons. */
+.chat-left .top-actions { position: fixed; z-index: 6; top: var(--titlebar-height); right: 0; height: 68px; padding-right: 24px; }
 /* The main/sidebar divider is drawn only below the top bar (via ::after) so it
    does not cut up through the continuous top-bar band (::before). */
 .chat-left .sidebar { position: relative; border-left: 0; }
@@ -690,7 +693,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .emote-picker-grid img { max-width: 35px; max-height: 35px; object-fit: contain; }
 .emote-picker-grid button.wide img { max-width: 80px; }
 .emote-group-empty { grid-column: 1 / -1; padding: 12px 5px; color: #73737d; font-size: 10px; text-align: center; }
-.app-toast { position: fixed; z-index: 1000; top: 78px; left: 50%; width: max-content; max-width: min(560px, calc(100vw - 40px)); padding: 11px 17px; border: 1px solid #6d4b91; border-radius: 10px; color: #f5efff; background: #241a2df2; box-shadow: 0 14px 42px #000b, 0 0 0 1px #a78bfa18 inset; backdrop-filter: blur(14px); font-size: 14px; font-weight: 650; line-height: 1.35; opacity: 0; pointer-events: none; text-align: center; transform: translate(-50%, -8px) scale(.98); animation: app-toast-lifecycle 3500ms cubic-bezier(.2, .8, .2, 1) forwards; }
+.app-toast { position: fixed; z-index: 1000; top: calc(var(--titlebar-height) + 78px); left: 50%; width: max-content; max-width: min(560px, calc(100vw - 40px)); padding: 11px 17px; border: 1px solid #6d4b91; border-radius: 10px; color: #f5efff; background: #241a2df2; box-shadow: 0 14px 42px #000b, 0 0 0 1px #a78bfa18 inset; backdrop-filter: blur(14px); font-size: 14px; font-weight: 650; line-height: 1.35; opacity: 0; pointer-events: none; text-align: center; transform: translate(-50%, -8px) scale(.98); animation: app-toast-lifecycle 3500ms cubic-bezier(.2, .8, .2, 1) forwards; }
 .fullscreen-mode .app-toast { top: 16px; left: 50%; max-width: min(560px, calc(100vw - 40px)); }
 @keyframes app-toast-lifecycle {
   0% { opacity: 0; transform: translate(-50%, -8px) scale(.98); }
