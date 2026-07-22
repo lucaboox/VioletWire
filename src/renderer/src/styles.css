@@ -174,7 +174,6 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .oled-mode .player-page,
 .oled-mode .player-toolbar,
 .oled-mode .player-toolbar-main,
-.oled-mode .player-chat-actions,
 .oled-mode .viewer-layout,
 .oled-mode .video-column,
 .oled-mode .player-host,
@@ -209,7 +208,6 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .oled-mode .sidebar,
 .oled-mode .topbar,
 .oled-mode .player-toolbar,
-.oled-mode .player-chat-actions,
 .oled-mode .chat-panel-header,
 .oled-mode .native-chat-input,
 .oled-mode .settings-card,
@@ -383,7 +381,6 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .player-toolbar:not(.chat-collapsed) { grid-template-columns: minmax(400px, 1fr) var(--chat-sidebar-width, 384px); }
 .player-toolbar.chat-collapsed { grid-template-columns: minmax(400px, 1fr) auto; }
 .player-toolbar-main { display: flex; min-width: 0; align-items: center; gap: 11px; padding: 0 12px; }
-.player-chat-actions { display: flex; min-width: 0; align-items: center; justify-content: center; gap: 7px; padding: 0 10px; border-left: 1px solid #28282e; background: #151519; }
 .back-button { flex: 0 0 auto; display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: #a1a1aa; background: transparent; cursor: pointer; }
 .back-button:hover { color: white; background: #26262b; }
 .channel-identity { flex: 1 1 420px; display: flex; align-items: center; gap: 10px; min-width: 170px; max-width: 660px; }
@@ -437,8 +434,6 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .subscription-continue { display: flex; width: 100%; min-height: 34px; align-items: center; justify-content: center; gap: 7px; border: 1px solid #755a25; border-radius: 7px; color: #fff7d6; background: #5a4116; cursor: pointer; font-size: 11px; font-weight: 700; }
 .subscription-continue:hover { border-color: #a17b32; background: #6b4e1b; }
 .subscription-disclaimer { display: block; margin-top: 8px; color: #73737d; font-size: 8.5px; text-align: center; }
-.player-chat-actions .toolbar-icon { width: 38px; }
-.player-chat-actions .toolbar-icon.active { border-color: #503b68; color: #ddd6fe; background: #2a2035; }
 .toolbar-separator { width: 1px; height: 21px; margin: 0 3px; background: #303036; }
 .viewer-layout { position: relative; display: grid; grid-template-columns: minmax(400px, 1fr) minmax(330px, 390px); width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: #050506; }
 .viewer-layout:not(.chat-collapsed):not(.chat-overlay-mode) { grid-template-columns: minmax(400px, 1fr) var(--chat-sidebar-width, 384px); }
@@ -460,8 +455,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .oled-mode.chat-left .sidebar::before { background: #000; }
 .chat-left .player-toolbar:not(.chat-collapsed) { grid-template-columns: var(--chat-sidebar-width, 384px) minmax(400px, 1fr); }
 .chat-left .player-toolbar:not(.chat-collapsed) .player-toolbar-main { order: 2; }
-.chat-left .player-toolbar:not(.chat-collapsed) .player-chat-actions { order: 1; border-right: 1px solid #28282e; border-left: 0; }
-.chat-left .viewer-layout:not(.chat-collapsed):not(.chat-overlay-mode) { grid-template-columns: var(--chat-sidebar-width, 384px) minmax(400px, 1fr); }
+.chat-left .player-toolbar:not(.chat-collapsed) .chat-left .viewer-layout:not(.chat-collapsed):not(.chat-overlay-mode) { grid-template-columns: var(--chat-sidebar-width, 384px) minmax(400px, 1fr); }
 .chat-left .viewer-layout:not(.chat-overlay-mode) .video-column { order: 2; }
 .chat-left .viewer-layout:not(.chat-overlay-mode) .chat-panel { order: 1; border-right: 1px solid #29292f; border-left: 0; }
 .chat-left .chat-edge-restore { right: auto; left: 0; border-right: 1px solid #3a3a42; border-left: 0; border-radius: 0 8px 8px 0; }
@@ -747,11 +741,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .theater-mode .player-toolbar { position: absolute; z-index: 12; top: 0; right: 0; left: 0; border-bottom: 0; background: transparent; transition: opacity 160ms ease; }
 /* Only the stream-info half sits over the picture, so only it needs to fade
    out into the video. */
-.theater-mode .player-toolbar-main { background: linear-gradient(180deg, rgb(5 5 6 / 82%) 0%, rgb(5 5 6 / 62%) 55%, rgb(5 5 6 / 0%) 100%); }
-/* The chat half sits over the chat column, where it reads as its header, so it
-   keeps a solid background and chat starts below it. */
-.theater-mode .player-chat-actions { background: #121216; }
-.theater-mode .chat-panel { padding-top: 54px; }
+.theater-mode .player-toolbar-main { padding-top: 12px; padding-bottom: 6px; background: linear-gradient(180deg, rgb(5 5 6 / 82%) 0%, rgb(5 5 6 / 62%) 55%, rgb(5 5 6 / 0%) 100%); }
 /* Fades with the player controls rather than covering the video permanently. */
 .theater-mode .player-page.controls-hidden .player-toolbar { opacity: 0; pointer-events: none; }
 .theater-mode .player-page, .fullscreen-mode .player-page { height: 100%; }

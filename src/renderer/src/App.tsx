@@ -23,7 +23,6 @@ import {
   Heart,
   History,
   Home,
-  Layers,
   LayoutGrid,
   LogIn,
   Maximize,
@@ -3236,7 +3235,9 @@ export function App() {
               if (previous?.x === event.clientX && previous.y === event.clientY) return;
               lastPlayerPointerPosition.current = { x: event.clientX, y: event.clientY };
               const overVideo =
-                event.target instanceof Element && event.target.closest(".video-column");
+                event.target instanceof Element &&
+                (event.target.closest(".video-column") ||
+                  (theaterMode && event.target.closest(".player-toolbar")));
               if (overVideo) {
                 revealNativeControls();
               } else {
@@ -3415,32 +3416,6 @@ export function App() {
                   <ExternalLink size={16} />
                 </button>
               </div>
-              </div>
-              <div className="player-chat-actions" aria-label="Chat layout controls">
-                <button
-                  aria-label={chatVisible && chatPresentation === "overlay" ? "Hide overlay chat" : "Overlay chat"}
-                  aria-pressed={chatVisible && chatPresentation === "overlay"}
-                  className={
-                    chatVisible && chatPresentation === "overlay"
-                      ? "toolbar-icon active"
-                      : "toolbar-icon"
-                  }
-                  onClick={() =>
-                    // Pure overlay toggle: turning the overlay off hides chat
-                    // rather than switching to the side layout.
-                    setChatLayout(
-                      chatVisible && chatPresentation === "overlay" ? "hidden" : "overlay",
-                    )
-                  }
-                  title={
-                    chatVisible && chatPresentation === "overlay"
-                      ? "Hide the overlay chat"
-                      : "Overlay chat on the video"
-                  }
-                  type="button"
-                >
-                  <Layers size={17} />
-                </button>
               </div>
             </div>
 

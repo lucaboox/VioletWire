@@ -1775,7 +1775,7 @@ export function NativeControls({
         <button
           aria-label={chatOverlayActive ? "Dock chat beside the video" : "Overlay chat on the video"}
           aria-pressed={chatOverlayActive}
-          data-tooltip={chatOverlayActive ? "Chat overlay on" : "Chat overlay off"}
+          data-tooltip={chatOverlayActive ? "Disable chat overlay" : "Enable chat overlay"}
           onClick={() => selectChatLayout(chatOverlayActive ? "side-chat" : "overlay-chat")}
           type="button"
         >
