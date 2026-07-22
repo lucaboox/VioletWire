@@ -373,13 +373,21 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-line i { width: 15px; height: 15px; border-radius: 50%; }
 .chat-line span { display: block; height: 5px; border-radius: 4px; background: #3e3a44; }
 
-.player-page { position: relative; display: grid; grid-template-rows: 54px minmax(0, 1fr); height: calc(100% - 68px); min-height: 0; overflow: hidden; background: #050506; }
+.player-page { position: relative; display: grid; grid-template-rows: minmax(0, 1fr); height: calc(100% - 68px); min-height: 0; overflow: hidden; background: #050506; }
 /* The chat column width is a shared CSS variable (--chat-sidebar-width, set on
-   .player-page) so the toolbar's chat-actions region and the chat panel below
-   it resize together and stay edge-aligned. */
-.player-toolbar { display: grid; grid-template-columns: minmax(400px, 1fr) minmax(330px, 390px); min-width: 0; border-bottom: 1px solid #28282e; background: #121216; font-size: 13px; }
-.player-toolbar:not(.chat-collapsed) { grid-template-columns: minmax(400px, 1fr) var(--chat-sidebar-width, 384px); }
-.player-toolbar.chat-collapsed { grid-template-columns: minmax(400px, 1fr) auto; }
+   .player-page) so the floating toolbar stops exactly where the chat panel
+   starts, and the two stay edge-aligned while chat is resized. */
+/* The toolbar is lifted out of the page's rows and floated over the video
+   column, so it no longer reserves a strip above chat. It held a chat-side
+   cell for that alignment once; with the cell gone that strip was just a gap,
+   and chat now runs the full height of the page. */
+.player-toolbar { position: absolute; z-index: 12; top: 0; right: var(--chat-sidebar-width, 384px); left: 0; display: grid; grid-template-columns: minmax(0, 1fr); height: 54px; min-width: 0; border-bottom: 1px solid #28282e; background: #121216; font-size: 13px; }
+/* Without a chat column beside it the bar spans the whole width. */
+.player-toolbar.chat-collapsed { right: 0; }
+.chat-left .player-toolbar { right: 0; left: var(--chat-sidebar-width, 384px); }
+.chat-left .player-toolbar.chat-collapsed { left: 0; }
+/* Keeps the picture below the bar exactly where the reserved row put it. */
+.video-column { padding-top: 54px; }
 .player-toolbar-main { display: flex; min-width: 0; align-items: center; gap: 11px; padding: 0 12px; }
 .back-button { flex: 0 0 auto; display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: #a1a1aa; background: transparent; cursor: pointer; }
 .back-button:hover { color: white; background: #26262b; }
@@ -735,13 +743,11 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 @keyframes auth-pulse { 50% { opacity: .35; } }
 .app-shell.theater-mode, .app-shell.fullscreen-mode { grid-template-columns: 1fr; }
 .theater-mode .sidebar, .fullscreen-mode .sidebar, .theater-mode .topbar, .fullscreen-mode .topbar, .theater-mode .brand, .fullscreen-mode .brand { display: none; }
-/* Theater floats the stream info over the video instead of reserving a row for
-   it, the way Twitch does, so the picture gets the full height. */
-.theater-mode .player-page { grid-template-rows: minmax(0, 1fr); }
-/* The bar spans the full width but only its left cell holds anything, so the
-   empty part over chat must not swallow clicks meant for the chat header. */
-.theater-mode .player-toolbar { position: absolute; z-index: 12; top: 0; right: 0; left: 0; border-bottom: 0; background: transparent; pointer-events: none; transition: opacity 160ms ease; }
+/* Theater drops the bar's own background so the stream info fades into the
+   picture, and lets the video run under it for the full height. */
+.theater-mode .player-toolbar { height: auto; border-bottom: 0; background: transparent; pointer-events: none; transition: opacity 160ms ease; }
 .theater-mode .player-toolbar-main { pointer-events: auto; }
+.theater-mode .video-column { padding-top: 0; }
 /* .player-host isolates, so everything inside it paints as one layer below the
    floating bar however high its own z-index is, leaving the restore-chat button
    and the controls unclickable underneath. Dropping the isolation in theater
@@ -760,6 +766,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .theater-mode .player-page, .fullscreen-mode .player-page { height: 100%; }
 .fullscreen-mode .player-page { grid-template-rows: 1fr; }
 .fullscreen-mode .player-toolbar { display: none; }
+.fullscreen-mode .video-column { padding-top: 0; }
 .fullscreen-mode .viewer-layout { height: 100%; }
 .fullscreen-mode .chat-overlay-mode .chat-panel.overlay { top: 24px; right: 24px; bottom: 66px; width: min(390px, 30vw); }
 .fullscreen-mode.controls-hidden .chat-overlay-mode .chat-panel.overlay { bottom: 24px; }
