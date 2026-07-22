@@ -512,7 +512,9 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .native-player-placeholder button { display: flex; align-items: center; gap: 6px; margin-top: 14px; padding: 7px 11px; border: 1px solid #554067; border-radius: 7px; color: #e9d5ff; background: #2c1c38; cursor: pointer; font-size: 11px; }
 .native-status-orb { width: 22px; height: 22px; border: 3px solid #8b5cf6; border-right-color: transparent; border-radius: 50%; animation: native-spin .8s linear infinite; }
 .native-status-orb.error { border-color: #fb7185; animation: none; }
-.chat-panel { display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; min-height: 0; max-height: 100%; overflow: hidden; contain: layout size; border-left: 1px solid #29292f; background: #0e0e10; }
+/* The header row matches the player toolbar's height so the two bars line up
+   across the top of the page. */
+.chat-panel { display: grid; grid-template-rows: 54px minmax(0, 1fr); min-width: 0; min-height: 0; max-height: 100%; overflow: hidden; contain: layout size; border-left: 1px solid #29292f; background: #0e0e10; }
 /* Kept mounted while hidden so re-showing chat is instant, not a full remount. */
 .chat-panel.chat-hidden { display: none; }
 /* Drag-to-resize handle at the video/chat border, inside the chat panel (its
