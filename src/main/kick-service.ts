@@ -101,11 +101,18 @@ const kickUserSchema = z.object({
 // Every field is nullish rather than optional: Kick returns null for anything
 // unset, and a plain .optional() rejects null, which failed the whole page over
 // one absent title or start time.
+// The observed shape of a followed entry. It shares almost no field names with
+// the channel endpoint: the slug is channel_slug, the avatar is
+// profile_picture, and there is no id or start time at all. The alternatives
+// below are kept because the search and channel routes spell the same things
+// differently, and this route is unofficial enough to drift.
 const kickFollowedEntrySchema = z.object({
   id: z.number().nullish(),
+  channel_slug: z.string().nullish(),
   slug: z.string().nullish(),
   user_username: z.string().nullish(),
   username: z.string().nullish(),
+  profile_picture: z.string().nullish(),
   profile_pic: z.string().nullish(),
   profilePic: z.string().nullish(),
   is_live: z.boolean().nullish(),
@@ -447,7 +454,7 @@ export class KickService {
           rejected += 1;
           continue;
         }
-        const slug = entry.data.slug;
+        const slug = entry.data.channel_slug ?? entry.data.slug;
         if (!slug) {
           rejected += 1;
           continue;
@@ -460,7 +467,11 @@ export class KickService {
           id: entry.data.id === null || entry.data.id === undefined ? slug : String(entry.data.id),
           slug,
           displayName: entry.data.user_username ?? entry.data.username ?? slug,
-          profileImageUrl: entry.data.profilePic ?? entry.data.profile_pic ?? "",
+          profileImageUrl:
+            entry.data.profile_picture ??
+            entry.data.profilePic ??
+            entry.data.profile_pic ??
+            "",
           isLive: Boolean(entry.data.is_live ?? entry.data.isLive),
           title: entry.data.session_title ?? undefined,
           category: entry.data.category_name ?? category ?? undefined,
