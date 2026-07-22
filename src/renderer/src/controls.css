@@ -1506,12 +1506,6 @@ input {
   transform: rotate(-45deg);
 }
 
-/* Theater fills its screen. Scoped to the rect so only the screen solidifies:
-   filling the whole SVG also solidifies any strokes drawn around it, which is
-   what made the Tv glyph's antenna fill in. */
-.icon-toggle.filled svg rect {
-  fill: currentColor;
-}
 
 .controls-bar button[data-tooltip]::after {
   position: absolute;

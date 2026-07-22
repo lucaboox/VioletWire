@@ -21,7 +21,7 @@ import {
   Maximize,
   Minimize,
   MoveDiagonal2,
-  RectangleHorizontal,
+  PanelRight,
   Pause,
   Play,
   Reply,
@@ -1790,8 +1790,8 @@ export function NativeControls({
           onClick={() => window.desktop.player.sendNativeControlAction("toggle-theater")}
           type="button"
         >
-          <span className={`icon-toggle${context.theaterMode ? " filled" : ""}`}>
-            <RectangleHorizontal size={18} />
+          <span className={`icon-toggle${context.theaterMode ? "" : " off"}`}>
+            <PanelRight size={18} />
           </span>
         </button>
         <button
