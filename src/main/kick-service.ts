@@ -36,30 +36,30 @@ const COOKIE_WAIT_MS = 2_500;
 // and everything is optional so a shape change degrades a single card rather
 // than failing the whole response.
 const kickLivestreamSchema = z.object({
-  id: z.number().optional(),
-  is_live: z.boolean().optional(),
-  viewer_count: z.number().optional(),
-  session_title: z.string().optional(),
-  created_at: z.string().optional(),
-  start_time: z.string().optional(),
+  id: z.number().nullish(),
+  is_live: z.boolean().nullish(),
+  viewer_count: z.number().nullish(),
+  session_title: z.string().nullish(),
+  created_at: z.string().nullish(),
+  start_time: z.string().nullish(),
   thumbnail: z
-    .union([z.string(), z.object({ url: z.string().optional() })])
+    .union([z.string(), z.object({ url: z.string().nullish() })])
     .optional(),
   categories: z
-    .array(z.object({ name: z.string().optional() }))
+    .array(z.object({ name: z.string().nullish() }))
     .optional(),
 });
 
 const kickChannelSchema = z.object({
-  id: z.number().optional(),
-  slug: z.string().optional(),
+  id: z.number().nullish(),
+  slug: z.string().nullish(),
   user: z
     .object({
-      username: z.string().optional(),
-      profile_pic: z.string().nullable().optional(),
+      username: z.string().nullish(),
+      profile_pic: z.string().nullish(),
     })
     .optional(),
-  chatroom: z.object({ id: z.number().optional() }).optional(),
+  chatroom: z.object({ id: z.number().nullish() }).optional(),
   livestream: kickLivestreamSchema.nullable().optional(),
 });
 
@@ -70,18 +70,18 @@ const kickSearchSchema = z.object({
   channels: z
     .array(
       z.object({
-        id: z.number().optional(),
-        slug: z.string().optional(),
-        isLive: z.boolean().optional(),
+        id: z.number().nullish(),
+        slug: z.string().nullish(),
+        isLive: z.boolean().nullish(),
         user: z
           .object({
-            username: z.string().optional(),
-            profilePic: z.string().nullable().optional(),
-            profile_pic: z.string().nullable().optional(),
+            username: z.string().nullish(),
+            profilePic: z.string().nullish(),
+            profile_pic: z.string().nullish(),
           })
           .optional(),
         recentCategories: z
-          .array(z.object({ name: z.string().optional() }))
+          .array(z.object({ name: z.string().nullish() }))
           .optional(),
       }),
     )
@@ -91,48 +91,50 @@ const kickSearchSchema = z.object({
 // Signed out, /api/v1/user answers with an empty array rather than an error,
 // so identity is decided by whether a username came back.
 const kickUserSchema = z.object({
-  id: z.number().optional(),
-  username: z.string().optional(),
-  profile_pic: z.string().nullable().optional(),
+  id: z.number().nullish(),
+  username: z.string().nullish(),
+  profile_pic: z.string().nullish(),
 });
 
 // The followed list is its own shape again: live state sits on the entry
 // rather than in a nested livestream.
+// Every field is nullish rather than optional: Kick returns null for anything
+// unset, and a plain .optional() rejects null, which failed the whole page over
+// one absent title or start time.
+const kickFollowedEntrySchema = z.object({
+  id: z.number().nullish(),
+  slug: z.string().nullish(),
+  user_username: z.string().nullish(),
+  username: z.string().nullish(),
+  profile_pic: z.string().nullish(),
+  profilePic: z.string().nullish(),
+  is_live: z.boolean().nullish(),
+  isLive: z.boolean().nullish(),
+  viewer_count: z.number().nullish(),
+  viewers: z.number().nullish(),
+  session_title: z.string().nullish(),
+  category_name: z.string().nullish(),
+  category: z.union([z.string(), z.object({ name: z.string().nullish() })]).nullish(),
+  start_time: z.string().nullish(),
+  created_at: z.string().nullish(),
+});
+
 const kickFollowedSchema = z.object({
-  channels: z
-    .array(
-      z.object({
-        id: z.number().optional(),
-        slug: z.string().optional(),
-        user_username: z.string().optional(),
-        username: z.string().optional(),
-        profile_pic: z.string().nullable().optional(),
-        profilePic: z.string().nullable().optional(),
-        is_live: z.boolean().optional(),
-        isLive: z.boolean().optional(),
-        viewer_count: z.number().optional(),
-        viewers: z.number().optional(),
-        session_title: z.string().optional(),
-        category_name: z.string().optional(),
-        category: z.union([z.string(), z.object({ name: z.string().optional() })]).optional(),
-        start_time: z.string().optional(),
-      }),
-    )
-    .optional(),
-  next_cursor: z.union([z.string(), z.number()]).nullable().optional(),
+  channels: z.array(z.unknown()).nullish(),
+  next_cursor: z.union([z.string(), z.number()]).nullish(),
 });
 
 // Emote sets: the channel's own, then Global and Emoji.
 const kickEmoteSetsSchema = z.array(
   z.object({
     id: z.union([z.string(), z.number()]).optional(),
-    name: z.string().optional(),
+    name: z.string().nullish(),
     emotes: z
       .array(
         z.object({
-          id: z.number().optional(),
-          name: z.string().optional(),
-          subscribers_only: z.boolean().optional(),
+          id: z.number().nullish(),
+          name: z.string().nullish(),
+          subscribers_only: z.boolean().nullish(),
         }),
       )
       .optional(),
@@ -176,7 +178,7 @@ export interface KickChannel {
 function readThumbnail(livestream: z.infer<typeof kickLivestreamSchema>): string | undefined {
   const { thumbnail } = livestream;
   if (typeof thumbnail === "string") return thumbnail;
-  return thumbnail?.url;
+  return thumbnail?.url ?? undefined;
 }
 
 export class KickService {
@@ -382,7 +384,7 @@ export class KickService {
         // channel up before connecting chat.
         chatroomId: undefined,
         isLive: Boolean(entry.isLive),
-        category: entry.recentCategories?.[0]?.name,
+        category: entry.recentCategories?.[0]?.name ?? undefined,
         viewerCount: 0,
       });
     }
@@ -435,22 +437,42 @@ export class KickService {
       if (page === 0 && entries.length === 0) {
         this.log(`followed list was empty; payload was ${this.describeShape(payload)}`);
       }
-      for (const entry of entries) {
-        const slug = entry.slug;
-        if (!slug) continue;
+
+      let rejected = 0;
+      for (const raw of entries) {
+        // Entries are validated one at a time so a single unexpected record
+        // cannot empty the whole list.
+        const entry = kickFollowedEntrySchema.safeParse(raw);
+        if (!entry.success) {
+          rejected += 1;
+          continue;
+        }
+        const slug = entry.data.slug;
+        if (!slug) {
+          rejected += 1;
+          continue;
+        }
         const category =
-          typeof entry.category === "string" ? entry.category : entry.category?.name;
+          typeof entry.data.category === "string"
+            ? entry.data.category
+            : entry.data.category?.name;
         channels.push({
-          id: entry.id === undefined ? slug : String(entry.id),
+          id: entry.data.id === null || entry.data.id === undefined ? slug : String(entry.data.id),
           slug,
-          displayName: entry.user_username ?? entry.username ?? slug,
-          profileImageUrl: entry.profilePic ?? entry.profile_pic ?? "",
-          isLive: Boolean(entry.is_live ?? entry.isLive),
-          title: entry.session_title,
-          category: entry.category_name ?? category,
-          viewerCount: entry.viewer_count ?? entry.viewers ?? 0,
-          startedAt: entry.start_time,
+          displayName: entry.data.user_username ?? entry.data.username ?? slug,
+          profileImageUrl: entry.data.profilePic ?? entry.data.profile_pic ?? "",
+          isLive: Boolean(entry.data.is_live ?? entry.data.isLive),
+          title: entry.data.session_title ?? undefined,
+          category: entry.data.category_name ?? category ?? undefined,
+          viewerCount: entry.data.viewer_count ?? entry.data.viewers ?? 0,
+          startedAt: entry.data.start_time ?? entry.data.created_at ?? undefined,
         });
+      }
+      if (rejected > 0) {
+        this.log(
+          `skipped ${rejected} of ${entries.length} followed entries; ` +
+            `first looked like ${this.describeShape(entries[0])}`,
+        );
       }
 
       const next = parsed.data.next_cursor;
@@ -581,10 +603,10 @@ export class KickService {
       chatroomId: channel.chatroom?.id === undefined ? undefined : String(channel.chatroom.id),
       // A null livestream is how Kick reports an offline channel.
       isLive: Boolean(livestream?.is_live),
-      title: livestream?.session_title,
-      category: livestream?.categories?.[0]?.name,
+      title: livestream?.session_title ?? undefined,
+      category: livestream?.categories?.[0]?.name ?? undefined,
       viewerCount: livestream?.viewer_count ?? 0,
-      startedAt: livestream?.start_time ?? livestream?.created_at,
+      startedAt: livestream?.start_time ?? livestream?.created_at ?? undefined,
       thumbnailUrl: livestream === null ? undefined : readThumbnail(livestream),
     };
   }
