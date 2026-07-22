@@ -330,12 +330,14 @@ const MultiTile = memo(function MultiTile({
             tile.state.compressorEnabled ? "Disable audio compressor" : "Enable audio compressor"
           }
           aria-pressed={tile.state.compressorEnabled}
-          className={tile.state.compressorEnabled ? "multi-tile-btn active" : "multi-tile-btn"}
+          className="multi-tile-btn"
           onClick={() => onToggleCompressor(tile.id, !tile.state.compressorEnabled)}
           title="Audio compressor"
           type="button"
         >
-          <AudioLines size={14} />
+          <span className={tile.state.compressorEnabled ? undefined : "icon-slashed"}>
+            <AudioLines size={14} />
+          </span>
         </button>
         <div className="multi-tile-quality">
           <button

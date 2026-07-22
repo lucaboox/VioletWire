@@ -1770,7 +1770,6 @@ export function NativeControls({
             state.compressorEnabled ? "Disable audio compression" : "Enable audio compression"
           }
           aria-pressed={state.compressorEnabled}
-          className={state.compressorEnabled ? "active" : ""}
           data-tooltip={
             state.compressorEnabled ? "Audio compression on" : "Audio compression off"
           }
@@ -1781,7 +1780,9 @@ export function NativeControls({
           }}
           type="button"
         >
-          <AudioLines size={18} />
+          <span className={state.compressorEnabled ? undefined : "icon-slashed"}>
+            <AudioLines size={18} />
+          </span>
         </button>
         <span className="control-spacer" />
         <div
@@ -1839,17 +1840,15 @@ export function NativeControls({
         <button
           aria-label="Theater mode"
           aria-pressed={context.theaterMode}
-          className={context.theaterMode ? "active" : ""}
           data-tooltip="Theater mode (T)"
           onClick={() => window.desktop.player.sendNativeControlAction("toggle-theater")}
           type="button"
         >
-          <Tv size={18} />
+          <Tv fill={context.theaterMode ? "currentColor" : "none"} size={18} />
         </button>
         <button
           aria-label={context.fullscreen ? "Exit fullscreen" : "Fullscreen"}
           aria-pressed={context.fullscreen}
-          className={context.fullscreen ? "active" : ""}
           data-tooltip={context.fullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)"}
           onClick={() => window.desktop.player.sendNativeControlAction("toggle-fullscreen")}
           type="button"

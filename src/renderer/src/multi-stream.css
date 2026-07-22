@@ -200,8 +200,8 @@
 
 .multi-bar-btn.active {
   border-color: rgb(255 255 255 / 15%);
-  color: #ddd6fe;
-  background: rgb(67 47 88 / 88%);
+  color: white;
+  background: rgb(35 35 42 / 88%);
 }
 
 /* Theater mode: hide the app sidebar and top bar so the grid + chat fill the
@@ -379,8 +379,27 @@
 }
 
 .multi-tile-btn.active {
-  color: #d8b4fe;
-  background: #2c1c44;
+  color: white;
+  background: rgb(255 255 255 / 14%);
+}
+
+/* Matches the single player: an "off" toggle is shown by slashing its icon
+   rather than tinting the button. */
+.multi-tile-btn .icon-slashed {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.multi-tile-btn .icon-slashed::after {
+  position: absolute;
+  width: 18px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  box-shadow: 0 -2px 0 rgb(10 10 12 / 88%);
+  content: "";
+  transform: rotate(-45deg);
 }
 
 .multi-tile-remove:hover {

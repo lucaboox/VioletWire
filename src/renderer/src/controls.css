@@ -1501,9 +1501,27 @@ input {
   background: rgb(35 35 42 / 88%);
 }
 
-.controls-bar button.active {
-  color: #ddd6fe;
-  background: rgb(67 47 88 / 88%);
+/* Toggles say what they are through their icon, the way Twitch's player does,
+   so an enabled control is not also tinted. .active is left for buttons whose
+   icon cannot show it, which is only the ones holding a menu open. */
+
+/* Stands in for the "off" icons lucide does not ship, e.g. AudioLines. The
+   dark edge keeps the stroke readable where it crosses the icon. */
+.controls-bar button .icon-slashed {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.controls-bar button .icon-slashed::after {
+  position: absolute;
+  width: 23px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  box-shadow: 0 -2px 0 rgb(10 10 12 / 88%);
+  content: "";
+  transform: rotate(-45deg);
 }
 
 .controls-bar button[data-tooltip]::after {
