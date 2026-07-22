@@ -1353,6 +1353,14 @@ input {
   width: 244px;
 }
 
+/* The gear sits at the left end of the right-hand cluster, so its popover
+   clears the wider quality button rather than sharing an offset with it.
+   These offsets are tuned to the cluster by eye, as the others are. */
+.settings-popover {
+  right: 150px;
+  width: 258px;
+}
+
 .chat-options button > span b,
 .chat-options button > span small {
   display: block;

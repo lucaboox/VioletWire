@@ -75,6 +75,7 @@ export const nativePlayerCommandSchema = z.discriminatedUnion("command", [
     command: z.literal("set-compressor"),
     enabled: z.boolean(),
   }),
+  z.object({ command: z.literal("toggle-stats") }),
 ]);
 
 export type PlayerBounds = z.infer<typeof playerBoundsSchema>;

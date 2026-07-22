@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 import {
+  Activity,
   ArrowDown,
   AudioLines,
   ChevronLeft,
@@ -383,7 +384,7 @@ export function NativeControls({
   const [qualities, setQualities] = useState<NativeQuality[]>([
     { value: "best", label: "Auto" },
   ]);
-  const [openMenu, setOpenMenu] = useState<"quality" | "chat" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"quality" | "chat" | "settings" | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -934,7 +935,7 @@ export function NativeControls({
     reportActivity();
   }
 
-  function toggleMenu(menu: "quality" | "chat") {
+  function toggleMenu(menu: "quality" | "chat" | "settings") {
     const nextMenu = openMenu === menu ? null : menu;
     setOpenMenu(nextMenu);
     if (!inline) window.desktop.player.setNativeControlsExpanded(nextMenu !== null);
@@ -1538,6 +1539,33 @@ export function NativeControls({
           </div>
         </div>
       )}
+      {openMenu === "settings" && (
+        <div
+          className={`control-popover settings-popover ${
+            context.chatVisible && context.chatPresentation === "overlay" ? "avoid-chat" : ""
+          }`}
+          onPointerDown={(event) => event.stopPropagation()}
+          role="menu"
+        >
+          <header>
+            <strong>Player settings</strong>
+            <small>Playback details drawn over the video.</small>
+          </header>
+          <div className="popover-options">
+            <button
+              onClick={() => {
+                closeMenu();
+                window.desktop.player.controlNative({ command: "toggle-stats" });
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <Activity size={16} />
+              <span><b>Video stats</b><small>Resolution, FPS, dropped frames, cache</small></span>
+            </button>
+          </div>
+        </div>
+      )}
       {openMenu === "chat" && (
         <div
           className={`control-popover chat-popover ${
@@ -1671,6 +1699,16 @@ export function NativeControls({
                 ? "Live"
                 : state.status}
         </div>
+        <button
+          aria-label="Player settings"
+          aria-expanded={openMenu === "settings"}
+          className={openMenu === "settings" ? "active" : ""}
+          data-tooltip={openMenu === "settings" ? undefined : "Player settings"}
+          onClick={() => toggleMenu("settings")}
+          type="button"
+        >
+          <Settings size={17} />
+        </button>
         <button
           aria-label={`Stream quality: ${qualityLabel}`}
           aria-expanded={openMenu === "quality"}

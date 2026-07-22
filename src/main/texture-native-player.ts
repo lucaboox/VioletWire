@@ -401,6 +401,12 @@ export class TextureNativePlayer {
           ]);
         }
         break;
+      case "toggle-stats":
+        // mpv ships stats.lua as a builtin script, so its own overlay can be
+        // toggled straight onto the video texture without the addon having to
+        // expose any of the underlying properties to us.
+        addon.command(["script-binding", "stats/display-stats-toggle"]);
+        break;
       case "go-live":
         // Discarding mpv's demuxer cache left playback at the starvation
         // edge under the low-latency profile: it caught up to live but then

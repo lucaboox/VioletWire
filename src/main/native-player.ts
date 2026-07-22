@@ -445,6 +445,9 @@ export class NativePlayer {
         this.updateState({ compressorEnabled: command.enabled });
         this.applyCompressor(command.enabled);
         break;
+      case "toggle-stats":
+        this.sendMpvCommand(["script-binding", "stats/display-stats-toggle"]);
+        break;
       case "go-live":
         // Streamlink's rolling live input has no consistently seekable end.
         // Flush delayed packets while paused, then resume after the cache has
