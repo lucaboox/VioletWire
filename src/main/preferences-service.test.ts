@@ -102,6 +102,7 @@ describe("PreferencesService", () => {
       lastSeenChangelogVersion: "0.3.0-alpha.1",
       emoteFavorites: [],
       favoriteChannels: [],
+      platformFilter: "twitch",
       emotePickerWidth: 390,
       emotePickerHeight: 500,
       emoteSearchAllProviders: false,

@@ -56,6 +56,30 @@ const kickChannelSchema = z.object({
   livestream: kickLivestreamSchema.nullable().optional(),
 });
 
+// Search entries are a different, thinner shape than the channel endpoint's:
+// live state is `isLive` rather than a nested livestream, and there is no
+// chatroom, title, or viewer count.
+const kickSearchSchema = z.object({
+  channels: z
+    .array(
+      z.object({
+        id: z.number().optional(),
+        slug: z.string().optional(),
+        isLive: z.boolean().optional(),
+        user: z
+          .object({
+            username: z.string().optional(),
+            profile_pic: z.string().nullable().optional(),
+          })
+          .optional(),
+        recentCategories: z
+          .array(z.object({ name: z.string().optional() }))
+          .optional(),
+      }),
+    )
+    .optional(),
+});
+
 export interface KickChannel {
   id: string;
   slug: string;
@@ -193,6 +217,44 @@ export class KickService {
   async getStreamlinkCookie(): Promise<string | null> {
     const value = await this.getSessionCookie();
     return value === null ? null : `${SESSION_COOKIE}=${value}`;
+  }
+
+  /**
+   * Kick's search returns channels without viewer counts or stream titles, so
+   * results carry less than Twitch's. The renderer groups the two services
+   * rather than interleaving them, which keeps the thinner rows from reading
+   * as though they failed to load.
+   */
+  async search(term: string): Promise<KickChannel[]> {
+    const query = term.trim();
+    if (query.length === 0) return [];
+
+    const payload = await this.requestJson(
+      `/api/search?searched_word=${encodeURIComponent(query)}`,
+    );
+    if (payload === null) return [];
+
+    const parsed = kickSearchSchema.safeParse(payload);
+    if (!parsed.success) return [];
+
+    const results: KickChannel[] = [];
+    for (const entry of parsed.data.channels ?? []) {
+      const slug = entry.slug;
+      if (!slug) continue;
+      results.push({
+        id: entry.id === undefined ? slug : String(entry.id),
+        slug,
+        displayName: entry.user?.username ?? slug,
+        profileImageUrl: entry.user?.profile_pic ?? "",
+        // Search does not include the chatroom, so opening a result looks the
+        // channel up before connecting chat.
+        chatroomId: undefined,
+        isLive: Boolean(entry.isLive),
+        category: entry.recentCategories?.[0]?.name,
+        viewerCount: 0,
+      });
+    }
+    return results;
   }
 
   async getChannel(slug: string): Promise<KickChannel | null> {
