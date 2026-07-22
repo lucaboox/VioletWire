@@ -260,6 +260,20 @@ export class KickService {
     return solved;
   }
 
+  /** Structure only, never values: enough to see a shape change, nothing personal. */
+  private describeShape(payload: unknown): string {
+    if (Array.isArray(payload)) {
+      const first = payload[0];
+      const keys =
+        typeof first === "object" && first !== null ? Object.keys(first).join(",") : typeof first;
+      return `array(${payload.length}) of {${keys}}`;
+    }
+    if (typeof payload === "object" && payload !== null) {
+      return `object {${Object.keys(payload).join(",")}}`;
+    }
+    return typeof payload;
+  }
+
   private log(message: string): void {
     // Diagnostics only; the resolver's own errors already surface to the user.
     console.log(`[kick] ${message}`);
@@ -407,10 +421,21 @@ export class KickService {
       const payload: unknown = await this.requestJson(path);
       if (payload === null) break;
 
-      const parsed = kickFollowedSchema.safeParse(payload);
-      if (!parsed.success) break;
+      const parsed = kickFollowedSchema.safeParse(
+        Array.isArray(payload) ? { channels: payload } : payload,
+      );
+      if (!parsed.success) {
+        this.log(
+          `followed list had an unexpected shape: ${this.describeShape(payload)}`,
+        );
+        break;
+      }
 
-      for (const entry of parsed.data.channels ?? []) {
+      const entries = parsed.data.channels ?? [];
+      if (page === 0 && entries.length === 0) {
+        this.log(`followed list was empty; payload was ${this.describeShape(payload)}`);
+      }
+      for (const entry of entries) {
         const slug = entry.slug;
         if (!slug) continue;
         const category =
@@ -569,7 +594,9 @@ export class KickService {
    * rather than that the request was wrong.
    */
   private async requestJson(path: string, retryOnForbidden = true): Promise<unknown> {
-    const cookie = await this.getSessionCookie();
+    // No Cookie header: the session carries its own jar, and setting one here
+    // would override it with the cached anonymous value, which is stale the
+    // moment somebody signs in.
     try {
       // Node's fetch is refused here. Kick sits behind a check that a plain
       // request cannot pass regardless of the headers or cookie it carries,
@@ -582,7 +609,6 @@ export class KickService {
           "Accept-Language": "en-US,en;q=0.9",
           "User-Agent": this.userAgent(),
           Referer: `${KICK_ORIGIN}/`,
-          ...(cookie === null ? {} : { Cookie: `${SESSION_COOKIE}=${cookie}` }),
         },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
