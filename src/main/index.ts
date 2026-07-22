@@ -794,6 +794,11 @@ function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false)
 // Matches the renderer's .titlebar strip, which sits above the top bar and
 // holds the native caption buttons. Keep the two in step.
 const TITLE_BAR_HEIGHT = 32;
+// The strip is border-box, so its bottom border is the last pixel of that
+// height. The system paints the caption buttons over the full overlay height,
+// which would cover the border and leave the divider stopping short of the
+// window edge, so the overlay stops one pixel above it.
+const TITLE_BAR_BORDER = 1;
 
 function titleBarOverlayOptions(oledMode: boolean): {
   color: string;
@@ -804,7 +809,7 @@ function titleBarOverlayOptions(oledMode: boolean): {
     // Keep these in step with .titlebar and .oled-mode .titlebar in styles.css.
     color: oledMode ? "#000000" : "#121216",
     symbolColor: "#d4d4d8",
-    height: TITLE_BAR_HEIGHT,
+    height: TITLE_BAR_HEIGHT - TITLE_BAR_BORDER,
   };
 }
 
