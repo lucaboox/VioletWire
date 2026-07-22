@@ -17,7 +17,8 @@ import {
   ChevronRight,
   Check,
   Info,
-  Layers,
+  MessageSquareOff,
+  MessageSquareText,
   Maximize,
   Minimize,
   MoveDiagonal2,
@@ -1779,9 +1780,11 @@ export function NativeControls({
           onClick={() => selectChatLayout(chatOverlayActive ? "side-chat" : "overlay-chat")}
           type="button"
         >
-          <span className={`icon-toggle${chatOverlayActive ? "" : " off"}`}>
-            <Layers size={18} />
-          </span>
+          {chatOverlayActive ? (
+            <MessageSquareText size={18} />
+          ) : (
+            <MessageSquareOff size={18} />
+          )}
         </button>
         <button
           aria-label="Theater mode"
