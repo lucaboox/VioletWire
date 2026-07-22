@@ -339,16 +339,24 @@ export class KickService {
   private async requestJson(path: string, retryOnForbidden = true): Promise<unknown> {
     const cookie = await this.getSessionCookie();
     try {
-      const response = await fetch(`${KICK_ORIGIN}${path}`, {
+      // Node's fetch is refused here. Kick sits behind a check that a plain
+      // request cannot pass regardless of the headers or cookie it carries,
+      // which is why Streamlink drives a browser for it. Electron's net module
+      // issues the request through Chromium instead, on the same partition that
+      // solved the challenge, so it carries that context.
+      const response = await this.kickSession().fetch(`${KICK_ORIGIN}${path}`, {
         headers: {
-          Accept: "application/json",
+          Accept: "application/json, text/plain, */*",
+          "Accept-Language": "en-US,en;q=0.9",
           "User-Agent": this.userAgent(),
+          Referer: `${KICK_ORIGIN}/`,
           ...(cookie === null ? {} : { Cookie: `${SESSION_COOKIE}=${cookie}` }),
         },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if ((response.status === 403 || response.status === 401) && retryOnForbidden) {
+        this.log(`${path} was refused; re-solving the challenge and retrying once`);
         await this.getSessionCookie(true);
         return this.requestJson(path, false);
       }
