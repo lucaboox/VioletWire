@@ -20,7 +20,7 @@ button { color: inherit; }
 /* Fullscreen drops the title bar row, so the content takes the whole window. */
 .app-shell.fullscreen-mode { grid-template-rows: minmax(0, 1fr); }
 .sidebar { display: flex; min-height: 0; flex-direction: column; padding: 68px 10px 10px; border-right: 1px solid #242429; background: #111114; }
-.brand { position: absolute; z-index: 5; top: calc(var(--titlebar-height) + 18px); left: 10px; display: flex; width: calc(var(--sidebar-width) - 20px); height: 32px; align-items: center; gap: 10px; padding: 0 9px; font-weight: 700; font-size: 19px; letter-spacing: -.3px; pointer-events: none; }
+.brand { position: absolute; z-index: 51; top: calc(var(--titlebar-height) + 18px); left: 10px; display: flex; width: calc(var(--sidebar-width) - 20px); height: 32px; align-items: center; gap: 10px; padding: 0 9px; font-weight: 700; font-size: 19px; letter-spacing: -.3px; pointer-events: none; }
 .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 9px; box-shadow: 0 6px 20px #7c3aed55; }
 .brand-mark img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .followed-rail { display: flex; min-height: 0; flex: 1; flex-direction: column; }
@@ -471,6 +471,13 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-left .viewer-layout:not(.chat-overlay-mode) .video-column { order: 2; }
 .chat-left .viewer-layout:not(.chat-overlay-mode) .chat-panel { order: 1; border-right: 1px solid #29292f; border-left: 0; }
 .chat-left .chat-edge-restore { right: auto; left: 0; border-right: 1px solid #3a3a42; border-left: 0; border-radius: 0 8px 8px 0; }
+/* Chat sits left of the video here, so its header mirrors: collapse on the
+   inner edge beside the video, settings on the outer one. */
+.chat-left .chat-panel-header .chat-collapse-button { order: 1; }
+.chat-left .chat-panel-header .chat-header-actions { order: -1; }
+/* The sidebar is on the right in this layout, so its collapse control belongs
+   on the inner edge too. */
+.chat-left .rail-heading { flex-direction: row-reverse; }
 .viewer-layout.chat-collapsed { grid-template-columns: minmax(400px, 1fr); }
 .video-column { display: grid; grid-template-rows: minmax(300px, 1fr); min-width: 400px; min-height: 0; overflow: hidden; }
 .video-column.native { grid-template-rows: minmax(300px, 1fr); }

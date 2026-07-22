@@ -1217,6 +1217,17 @@ input {
   cursor: pointer;
 }
 
+/* Chat returns on the left in this layout, so the tab hugs that edge and its
+   chevron points the other way. */
+.chat-left .native-chat-edge-restore {
+  right: auto;
+  left: 12px;
+}
+
+.chat-left .native-chat-edge-restore svg {
+  transform: scaleX(-1);
+}
+
 .native-chat-edge-restore:hover {
   color: white;
   background: rgb(40 40 47 / 97%);
