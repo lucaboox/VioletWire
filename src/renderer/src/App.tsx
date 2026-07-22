@@ -106,6 +106,7 @@ import {
   type KickUserAccount,
 } from "../../shared/platform";
 import { NativeControls } from "./NativeControls";
+import { ProviderLogo } from "./ProviderLogo";
 import {
   ChatToggleSetting,
   MentionSoundControls,
@@ -3128,9 +3129,8 @@ export function App() {
                                 {channel.isLive && <i>LIVE</i>}
                               </strong>
                               <small>
-                                {channel.isLive
-                                  ? channel.category || "Live on Kick"
-                                  : "Offline on Kick"}
+                                <ProviderLogo name="kick" />{" "}
+                                {channel.isLive ? channel.category || "Live" : "Offline"}
                               </small>
                             </span>
                           </button>

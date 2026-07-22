@@ -59,7 +59,10 @@ export const nativeControlActionSchema = z.enum([
   "overlay-chat",
 ]);
 export const nativeControlsContextSchema = z.object({
-  channel: z.string().min(1).max(25).regex(/^[a-z0-9_]+$/),
+  // A channel key, not a Twitch login: this context carries whichever service
+  // is playing, and the Twitch pattern rejected every Kick channel, so the
+  // controls never learned which channel they were showing.
+  channel: z.string().min(1).max(40).regex(/^(?:[a-z0-9_-]+:)?[a-z0-9_-]+$/),
   fullscreen: z.boolean(),
   theaterMode: z.boolean(),
   chatVisible: z.boolean(),

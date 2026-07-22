@@ -719,7 +719,11 @@ export function EmotePicker({
     { id: "7tv", logo: "7tv", mark: "7TV" },
     { id: "ffz", logo: "ffz", mark: "FFZ" },
     { id: "bttv", logo: "bttv", mark: "BTTV" },
-    { id: "twitch", logo: "twitch", mark: platformLabel },
+    {
+      id: "twitch",
+      logo: platformLabel === "Kick" ? "kick" : "twitch",
+      mark: platformLabel,
+    },
     { id: "emoji", icon: Smile, mark: "" },
   ];
 

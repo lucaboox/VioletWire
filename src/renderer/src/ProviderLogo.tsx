@@ -1,12 +1,31 @@
 // Provider logo artwork adapted from SevenTV/Extension's logo assets.
 // See THIRD_PARTY_NOTICES.md for source and licensing information.
-export type ProviderLogoName = "7tv" | "ffz" | "bttv" | "twitch";
+export type ProviderLogoName = "7tv" | "ffz" | "bttv" | "twitch" | "kick";
 
 interface ProviderLogoProps {
   name: ProviderLogoName;
 }
 
 export function ProviderLogo({ name }: ProviderLogoProps) {
+  if (name === "kick") {
+    // Kick's mark is a blocky K on its green. Drawn here rather than shipping
+    // their artwork, so nothing of theirs is redistributed.
+    return (
+      <svg
+        aria-hidden="true"
+        height="14"
+        viewBox="0 0 24 24"
+        width="14"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M3 3h6v6h3V6h3V3h6v9h-3v3h3v9h-6v-3h-3v-3H9v6H3Z"
+          fill="#53fc18"
+        />
+      </svg>
+    );
+  }
+
   if (name === "7tv") {
     return (
       <svg
