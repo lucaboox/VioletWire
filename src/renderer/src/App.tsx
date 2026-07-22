@@ -3878,10 +3878,10 @@ export function App() {
                     >
                       {chatMessages.length === 0 && (
                         <div className="chat-empty-state">
-                          {activeChannel && parseChannelKey(activeChannel).platform === "kick"
-                            ? "Kick chat is not connected yet."
-                            : chatConnectionState === "connected"
-                              ? "Waiting for the next chat message…"
+                          {chatConnectionState === "connected"
+                            ? "Waiting for the next chat message…"
+                            : activeChannel && parseChannelKey(activeChannel).platform === "kick"
+                              ? "Connecting to Kick chat…"
                               : "Connecting to Twitch chat…"}
                         </div>
                       )}

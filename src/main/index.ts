@@ -39,6 +39,7 @@ import { MultiStreamManager } from "./multi-stream-manager";
 import { MultiChatService } from "./multi-chat-service";
 import { TwitchService } from "./twitch-service";
 import { KickService } from "./kick-service";
+import { KickChatService } from "./kick-chat-service";
 import { PlaybackSessionService } from "./playback-session";
 import { SevenTvService } from "./seven-tv-service";
 import { ThirdPartyEmoteService } from "./third-party-emote-service";
@@ -280,6 +281,19 @@ const nativePlayer = new NativePlayer(
   () => playbackSessionService.getToken(),
 );
 const kickService = new KickService();
+// Kick chat reuses the same renderer channels as Twitch's, so the panel does
+// not care which service a message came from.
+const kickChatService = new KickChatService(
+  () => kickService,
+  (message) => {
+    sendToWindow(mainWindow, "chat:message", message);
+    sendToWindow(nativeControlsWindow, "chat:message", message);
+  },
+  (state) => {
+    sendToWindow(mainWindow, "chat:state", state);
+    sendToWindow(nativeControlsWindow, "chat:state", state);
+  },
+);
 const textureNativePlayer = new TextureNativePlayer(
   () => mainWindow,
   (state) => {
@@ -1000,10 +1014,15 @@ handleTrusted(
 
   chatPresentation = "side";
   chatVisible = true;
-  // Twitch IRC has no room for a channel on another service; joining one would
-  // fail and then retry on a backoff for as long as the stream is open.
-  if (parseChannelKey(channel).platform === "twitch") twitchChatService.connect(channel);
-  else twitchChatService.disconnect();
+  // Each service has its own chat transport, and only one is ever live.
+  const chatTarget = parseChannelKey(channel);
+  if (chatTarget.platform === "kick") {
+    twitchChatService.disconnect();
+    void kickChatService.connect(chatTarget.login);
+  } else {
+    kickChatService.disconnect();
+    twitchChatService.connect(channel);
+  }
 
   return { channel, mode, nativeBackend, fallbackReason };
   },
@@ -1337,6 +1356,12 @@ handleTrusted("system:open-external", async (_event, input: unknown) => {
 });
 
 handleTrusted("channel:open-action", async (_event, rawChannel: unknown, rawAction: unknown) => {
+  // Sending on Kick needs its OAuth flow, which is not wired up yet. Reject it
+  // here rather than letting the Twitch name check throw an opaque error.
+  const target = channelKeySchema.safeParse(rawChannel);
+  if (target.success && parseChannelKey(target.data).platform !== "twitch") {
+    throw new Error("Sending messages is not available on this service yet.");
+  }
   const channel = channelNameSchema.parse(rawChannel);
   const action = channelActionSchema.parse(rawAction);
   await openChannelActionWindow(channel, action);
