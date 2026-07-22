@@ -66,7 +66,21 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
    z-index only competes *inside* it. This value must therefore beat page
    content that overlaps it — notably the sticky .browse-category-header (12) —
    while staying under modals, the mini player, menus, and tooltips. */
-.topbar { position: relative; z-index: 50; display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 520px) minmax(0, 1fr); align-items: center; gap: 22px; height: 68px; padding: 0 24px; border-bottom: 1px solid #202024; background: #0d0d10f2; }
+.topbar { position: relative; z-index: 50; display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 520px) minmax(0, 1fr); align-items: center; gap: 22px; height: 68px; padding: 0 24px; border-bottom: 1px solid #202024; background: #0d0d10f2; -webkit-app-region: drag; }
+/* The window has no system title bar, so the top bar is what the user drags.
+   Reserve the width the native caption buttons occupy so the account and
+   settings buttons never sit underneath them. This has to measure against the
+   viewport, not the top bar, because the top bar is only the grid column next
+   to the sidebar while the buttons sit at the window's right edge. env() is
+   exact; the fallback covers the usual three 46px buttons. */
+.topbar { padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 138px)) + 24px); }
+/* Anything clickable has to opt back out, or the drag region swallows it. */
+.topbar button, .topbar input, .topbar a, .topbar label, .topbar select, .top-search-results { -webkit-app-region: no-drag; }
+/* The brand sits over the sidebar in the same strip and is pointer-events:none,
+   so it needs its own drag surface to make that corner draggable too. */
+.titlebar-drag { position: absolute; z-index: 4; top: 0; left: 0; width: var(--sidebar-width); height: 68px; -webkit-app-region: drag; }
+/* Nothing to drag when the app chrome is hidden. */
+.app-shell.theater-mode .titlebar-drag, .app-shell.fullscreen-mode .titlebar-drag, .app-shell.multi-theater .titlebar-drag { display: none; }
 .top-navigation { justify-self: start; display: flex; align-items: center; gap: 3px; }
 .top-nav-item { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 12px; border: 0; border-radius: 8px; color: #8f8f99; background: transparent; cursor: pointer; font-size: 14px; font-weight: 650; }
 .top-nav-item:hover { color: #f4f4f5; background: #1b1b20; }

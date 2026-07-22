@@ -2627,6 +2627,8 @@ export function App() {
           {notice}
         </div>
       )}
+      <div className="titlebar-drag" aria-hidden="true" />
+
       <div className="brand">
         <span className="brand-mark"><img alt="" src={violetWireIcon} /></span>
         <span>VioletWire</span>

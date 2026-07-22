@@ -791,6 +791,30 @@ function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false)
   lastChatBounds = null;
 }
 
+// Matches the renderer's .topbar height so the caption buttons line up with it
+// instead of floating in a separate strip above.
+const TITLE_BAR_HEIGHT = 68;
+
+function titleBarOverlayOptions(oledMode: boolean): {
+  color: string;
+  symbolColor: string;
+  height: number;
+} {
+  return {
+    // Keep these in step with .topbar and .oled-mode .topbar in styles.css.
+    color: oledMode ? "#000000" : "#0d0d10",
+    symbolColor: "#d4d4d8",
+    height: TITLE_BAR_HEIGHT,
+  };
+}
+
+function applyTitleBarTheme(oledMode: boolean): void {
+  // setTitleBarOverlay is Windows and Linux only.
+  if (process.platform === "darwin") return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setTitleBarOverlay(titleBarOverlayOptions(oledMode));
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -801,6 +825,13 @@ async function createWindow(): Promise<void> {
     title: "VioletWire",
     icon: applicationIcon,
     autoHideMenuBar: true,
+    // Hide the system title bar but keep the real caption buttons, so the top
+    // bar doubles as the title bar and the buttons still get Snap Layouts,
+    // tooltips, and correct hit-testing. A fully custom frame would lose those.
+    titleBarStyle: "hidden",
+    // Preferences are initialized before this runs, so OLED mode is applied on
+    // the first paint rather than flashing the lighter colour first.
+    titleBarOverlay: titleBarOverlayOptions(preferencesService.get().oledMode),
     webPreferences: {
       preload: path.join(currentDirectory, "../preload/index.cjs"),
       partition: APP_UI_PARTITION,
@@ -1401,6 +1432,9 @@ handleTrusted("preferences:get-or-migrate", (_event, legacyPreferences: unknown)
 );
 handleTrusted("preferences:update", async (_event, patch: unknown) => {
   const preferences = await preferencesService.update(patch);
+  // The caption buttons are drawn by the system, so OLED mode has to be pushed
+  // to them explicitly or the top bar goes black around light grey buttons.
+  applyTitleBarTheme(preferences.oledMode);
   sendToWindow(mainWindow, "preferences:changed", preferences);
   sendToWindow(nativeControlsWindow, "preferences:changed", preferences);
   return preferences;
