@@ -117,9 +117,11 @@ export interface KickChannelResult {
 
 export interface KickChannelDetails extends KickChannelResult {
   chatroomId?: string;
+  /** Kick's user id, used to look the channel up on 7TV. */
+  userId?: string;
+  thumbnailUrl?: string;
   title?: string;
   startedAt?: string;
-  thumbnailUrl?: string;
 }
 
 export interface KickUserAccount {

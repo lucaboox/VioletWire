@@ -31,6 +31,9 @@ const CHALLENGE_TIMEOUT_MS = 15_000;
 const CHALLENGE_FAILURE_BACKOFF_MS = 60_000;
 // How long stream resolution will wait for a cookie before going without one.
 const COOKIE_WAIT_MS = 2_500;
+// Long enough that the followed poll rarely refetches details, short enough
+// that a thumbnail does not go stale while watching.
+const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Kick sends far more than this; only the fields the app renders are declared,
 // and everything is optional so a shape change degrades a single card rather
@@ -53,8 +56,10 @@ const kickLivestreamSchema = z.object({
 const kickChannelSchema = z.object({
   id: z.number().nullish(),
   slug: z.string().nullish(),
+  user_id: z.number().nullish(),
   user: z
     .object({
+      id: z.number().nullish(),
       username: z.string().nullish(),
       profile_pic: z.string().nullish(),
     })
@@ -169,6 +174,8 @@ export interface KickEmoteSet {
 
 export interface KickChannel {
   id: string;
+  /** Kick's user id, which is what 7TV indexes a Kick channel by. */
+  userId?: string;
   slug: string;
   displayName: string;
   profileImageUrl: string;
@@ -196,6 +203,10 @@ export class KickService {
   private sessionRequest: Promise<string | null> | null = null;
   private challengeFailedAt = 0;
   private loginWindow: BrowserWindow | null = null;
+  private readonly detailCache = new Map<
+    string,
+    { expiresAt: number; thumbnailUrl?: string; startedAt?: string }
+  >();
 
   /**
    * The cookie Streamlink needs to resolve a Kick stream without falling back
@@ -491,7 +502,36 @@ export class KickService {
       if (next === null || next === undefined || next === "" || next === 0) break;
       cursor = String(next);
     }
+    await this.fillLiveDetails(channels);
     return channels;
+  }
+
+  /**
+   * The followed route carries no thumbnail or start time, so live channels are
+   * topped up from the channel endpoint, which has both. Offline ones are left
+   * alone and each result is cached, so a refresh usually costs nothing.
+   */
+  private async fillLiveDetails(channels: KickChannel[]): Promise<void> {
+    const now = Date.now();
+    for (const channel of channels) {
+      if (!channel.isLive) continue;
+
+      const cached = this.detailCache.get(channel.slug);
+      if (cached && cached.expiresAt > now) {
+        channel.thumbnailUrl = cached.thumbnailUrl;
+        channel.startedAt = cached.startedAt;
+        continue;
+      }
+      const details = await this.getChannel(channel.slug);
+      if (details === null) continue;
+      channel.thumbnailUrl = details.thumbnailUrl;
+      channel.startedAt = details.startedAt;
+      this.detailCache.set(channel.slug, {
+        expiresAt: now + DETAIL_CACHE_TTL_MS,
+        thumbnailUrl: details.thumbnailUrl,
+        startedAt: details.startedAt,
+      });
+    }
   }
 
   /**
@@ -656,8 +696,10 @@ export class KickService {
     if (!slug) return null;
 
     const livestream = channel.livestream ?? null;
+    const userId = channel.user?.id ?? channel.user_id;
     return {
       id: channel.id === undefined ? slug : String(channel.id),
+      userId: userId === null || userId === undefined ? undefined : String(userId),
       slug,
       displayName: channel.user?.username ?? slug,
       profileImageUrl: channel.user?.profile_pic ?? "",

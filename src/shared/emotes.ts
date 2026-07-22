@@ -31,7 +31,11 @@ export interface EmoteSetResult {
 
 export interface EmoteApi {
   getSevenTvGlobal(): Promise<EmoteSetResult>;
-  getSevenTvChannel(broadcasterId: string): Promise<EmoteSetResult>;
+  /** `platform` selects which service's id space 7TV should look the user up in. */
+  getSevenTvChannel(
+    broadcasterId: string,
+    platform?: "twitch" | "kick",
+  ): Promise<EmoteSetResult>;
   getFfzGlobal(): Promise<EmoteSetResult>;
   getFfzChannel(broadcasterId: string): Promise<EmoteSetResult>;
   getBttvGlobal(): Promise<EmoteSetResult>;

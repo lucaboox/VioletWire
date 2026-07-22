@@ -124,8 +124,8 @@ const api: DesktopApi = {
   } satisfies TwitchApi,
   emotes: {
     getSevenTvGlobal: () => ipcRenderer.invoke("emotes:7tv-global"),
-    getSevenTvChannel: (broadcasterId: string) =>
-      ipcRenderer.invoke("emotes:7tv-channel", broadcasterId),
+    getSevenTvChannel: (broadcasterId: string, platform?: "twitch" | "kick") =>
+      ipcRenderer.invoke("emotes:7tv-channel", broadcasterId, platform),
     getFfzGlobal: () => ipcRenderer.invoke("emotes:ffz-global"),
     getFfzChannel: (broadcasterId: string) =>
       ipcRenderer.invoke("emotes:ffz-channel", broadcasterId),

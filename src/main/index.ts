@@ -1434,9 +1434,11 @@ handleTrusted("twitch:open-channel", (_event, rawChannel: unknown) =>
   twitchService.openChannel(channelNameSchema.parse(rawChannel)),
 );
 handleTrusted("emotes:7tv-global", () => sevenTvService.getGlobal());
-handleTrusted("emotes:7tv-channel", (_event, broadcasterId: unknown) => {
+handleTrusted("emotes:7tv-channel", (_event, broadcasterId: unknown, rawPlatform: unknown) => {
   if (typeof broadcasterId !== "string") throw new Error("Broadcaster ID must be text.");
-  return sevenTvService.getChannel(broadcasterId);
+  // 7TV indexes users per service, so Kick channels resolve under their Kick id.
+  const platform = rawPlatform === "kick" ? "kick" : "twitch";
+  return sevenTvService.getChannel(broadcasterId, platform);
 });
 handleTrusted("emotes:ffz-global", () => thirdPartyEmoteService.getFfzGlobal());
 handleTrusted("emotes:ffz-channel", (_event, broadcasterId: unknown) => {

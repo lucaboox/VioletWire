@@ -513,6 +513,7 @@ export function App() {
   const [twitchBadges, setTwitchBadges] = useState<Map<string, ChatBadgeAsset>>(new Map());
   const [twitchPickerEmotes, setTwitchPickerEmotes] = useState<TwitchPickerEmote[]>([]);
   const [kickPickerEmotes, setKickPickerEmotes] = useState<TwitchPickerEmote[]>([]);
+  const [kickSevenTvEmotes, setKickSevenTvEmotes] = useState(emptyProviderEmoteMaps);
   // Cache each channel's loaded emotes/badges so switching chat (multistream
   // tabs especially) reuses them instantly instead of clearing and refetching.
   const emoteBundleCache = useRef<
@@ -637,9 +638,14 @@ export function App() {
   const chatChannel = multiStreamActive ? effectiveMultiChatChannel : activeChannel;
   const chatIsKick =
     chatChannel !== null && parseChannelKey(chatChannel).platform === "kick";
+  // Chat resolves provider emotes by name, so Kick messages render 7TV emotes
+  // the same way Twitch ones do.
+  const activeProviderEmotes = chatIsKick ? kickSevenTvEmotes : providerEmoteMaps;
   const pickerEmotes = chatIsKick ? kickPickerEmotes : twitchPickerEmotes;
   const pickerPlatformLabel = chatIsKick ? ("Kick" as const) : ("Twitch" as const);
-  const pickerProviderEmotes = chatIsKick ? emptyProviderEmoteMaps() : providerEmoteMaps;
+  // 7TV works on Kick; FrankerFaceZ and BetterTTV do not, so only 7TV carries
+  // over and the other tabs stay empty rather than showing Twitch's.
+  const pickerProviderEmotes = chatIsKick ? kickSevenTvEmotes : providerEmoteMaps;
   const chatBroadcasterId = multiStreamActive
     ? multiChatBroadcasterId
     : (streamMetadata?.broadcasterId ?? null);
@@ -653,12 +659,12 @@ export function App() {
     // Channel sets win over global sets in each service; provider priority
     // follows the picker order so duplicate names resolve predictably.
     for (const provider of emoteProviders) {
-      for (const emote of providerEmoteMaps.get(provider)?.values() ?? []) {
+      for (const emote of activeProviderEmotes.get(provider)?.values() ?? []) {
         if (!combined.has(emote.name)) combined.set(emote.name, emote);
       }
     }
     return combined;
-  }, [providerEmoteMaps]);
+  }, [activeProviderEmotes]);
   // Stable so the reply thread and user card can memoize their message rows;
   // an inline arrow would change identity every chat batch and defeat it.
   const renderCardText = useCallback(
@@ -1795,6 +1801,18 @@ export function App() {
     }
     let cancelled = false;
     void window.desktop.kick
+      .getChannel(target.login)
+      .then(async (channel) => {
+        if (cancelled || !channel?.userId) return;
+        const set = await window.desktop.emotes.getSevenTvChannel(channel.userId, "kick");
+        if (cancelled) return;
+        const maps = emptyProviderEmoteMaps();
+        const sevenTv = maps.get("7tv");
+        for (const emote of set.emotes) sevenTv?.set(emote.name, emote);
+        setKickSevenTvEmotes(maps);
+      })
+      .catch(() => undefined);
+    void window.desktop.kick
       .getEmoteSets(target.login)
       .then((sets) => {
         if (cancelled) return;
@@ -2677,6 +2695,7 @@ export function App() {
             profileImageUrl: channel.profileImageUrl,
             viewerCount: channel.viewerCount,
             startedAt: channel.startedAt,
+            thumbnailUrl: channel.thumbnailUrl,
             isLive: channel.isLive,
           }));
     return [...twitch, ...kick];

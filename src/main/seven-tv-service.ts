@@ -60,11 +60,19 @@ export class SevenTvService {
     );
   }
 
-  async getChannel(broadcasterId: string): Promise<EmoteSetResult> {
+  /**
+   * 7TV indexes users per service, so a Kick channel is looked up under its
+   * Kick user id rather than a Twitch one. The cache key carries the service
+   * too, since the two id spaces overlap and would otherwise collide.
+   */
+  async getChannel(
+    broadcasterId: string,
+    platform: "twitch" | "kick" = "twitch",
+  ): Promise<EmoteSetResult> {
     const id = z.string().regex(/^\d+$/).parse(broadcasterId);
     return this.getSet(
-      `channel:${id}`,
-      `https://7tv.io/v3/users/twitch/${encodeURIComponent(id)}`,
+      `channel:${platform}:${id}`,
+      `https://7tv.io/v3/users/${platform}/${encodeURIComponent(id)}`,
       (payload) => channelResponseSchema.parse(payload).emote_set.emotes,
     );
   }
