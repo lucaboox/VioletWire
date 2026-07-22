@@ -165,6 +165,46 @@ const kickEmoteSetsSchema = z.array(
   }),
 );
 
+export interface KickChatHistoryEntry {
+  id?: string | null;
+  content?: string | null;
+  created_at?: string | null;
+  sender?: {
+    slug?: string | null;
+    username?: string | null;
+    identity?: { color?: string | null } | null;
+  } | null;
+}
+
+const kickChatHistorySchema = z.object({
+  data: z
+    .object({
+      messages: z
+        .array(
+          z.object({
+            id: z.union([z.string(), z.number()]).nullish(),
+            content: z.string().nullish(),
+            created_at: z.string().nullish(),
+            sender: z
+              .object({
+                slug: z.string().nullish(),
+                username: z.string().nullish(),
+                identity: z.object({ color: z.string().nullish() }).nullish(),
+              })
+              .nullish(),
+          }),
+        )
+        .nullish()
+        .transform((messages) =>
+          (messages ?? []).map((message) => ({
+            ...message,
+            id: message.id === null || message.id === undefined ? undefined : String(message.id),
+          })),
+        ),
+    })
+    .nullish(),
+});
+
 export interface KickUser {
   id: string;
   username: string;
@@ -660,6 +700,21 @@ export class KickService {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Recent chat, newest first, from the channel's message route. Keyed by the
+   * channel id, not the chatroom id the socket subscribes to. Kick's own
+   * history, so it needs no third-party service the way Twitch's does.
+   */
+  async getChatHistory(channelId: string): Promise<KickChatHistoryEntry[]> {
+    const payload = await this.requestJson(
+      `/api/v2/channels/${encodeURIComponent(channelId)}/messages`,
+    );
+    if (payload === null) return [];
+    const parsed = kickChatHistorySchema.safeParse(payload);
+    if (!parsed.success) return [];
+    return parsed.data.data?.messages ?? [];
   }
 
   /** The channel's emote sets, plus Kick's global and emoji sets. */

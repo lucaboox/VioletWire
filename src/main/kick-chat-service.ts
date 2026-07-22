@@ -97,6 +97,7 @@ export class KickChatService {
   // Guards against a slow chatroom lookup completing after the user has already
   // moved to another channel.
   private connectGeneration = 0;
+  private historyLimit = 20;
 
   constructor(
     private readonly getKickService: () => KickService,
@@ -123,6 +124,46 @@ export class KickChatService {
     }
     this.chatroomId = channel.chatroomId;
     this.openSocket();
+    // Load recent chat once the socket is opening, so history and live messages
+    // both flow to the same buffer. The channel id, not the chatroom id, keys
+    // the message route.
+    void this.loadHistory(channel.id, generation);
+  }
+
+  setHistoryLimit(limit: number): void {
+    this.historyLimit = limit;
+  }
+
+  private async loadHistory(channelId: string, generation: number): Promise<void> {
+    if (this.historyLimit <= 0) return;
+    const messages = await this.getKickService().getChatHistory(channelId);
+    if (generation !== this.connectGeneration || this.manuallyClosed) return;
+
+    const mapped = messages
+      .map((entry) =>
+        this.toChatMessage({
+          id: entry.id ?? undefined,
+          content: entry.content ?? undefined,
+          created_at: entry.created_at ?? undefined,
+          sender: entry.sender
+            ? {
+                slug: entry.sender.slug ?? undefined,
+                username: entry.sender.username ?? undefined,
+                identity: entry.sender.identity
+                  ? { color: entry.sender.identity.color ?? undefined }
+                  : undefined,
+              }
+            : undefined,
+        }),
+      )
+      .filter((message): message is ChatMessage => message !== null)
+      // Kick returns newest first; the buffer wants chronological order.
+      .sort((left, right) => left.sentAt - right.sentAt)
+      .slice(-this.historyLimit);
+    for (const message of mapped) {
+      if (generation !== this.connectGeneration) return;
+      this.onMessage({ ...message, historical: true });
+    }
   }
 
   /** The room the live connection is subscribed to, if any. */

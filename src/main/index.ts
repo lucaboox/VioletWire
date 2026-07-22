@@ -1495,6 +1495,7 @@ onTrusted("chat:set-history-limit", (_event, rawLimit: unknown) => {
   const result = chatHistoryLimitSchema.safeParse(rawLimit);
   if (result.success) {
     twitchChatService.setHistoryLimit(result.data);
+    kickChatService.setHistoryLimit(result.data);
     multiChatService.setHistoryLimit(result.data);
   }
 });
