@@ -4,7 +4,47 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
-## [0.3.3-alpha.3] - 2026-07-21
+## [0.3.3-alpha.4] - 2026-07-22
+
+### Additions
+
+- Added a video stats panel to the Native player, opened from an info button in
+  the player controls. It reports resolution, frame rate, codec, hardware
+  decoder, bitrate, dropped frames, buffer, and A/V sync, read live from the
+  player while the panel is open.
+- Added a title bar of VioletWire's own in place of the system one. It follows
+  OLED mode and names where you are, showing Home, Browse, the category you are
+  browsing, the channel you are watching, or Multistream.
+
+### Improvements
+
+- Updates now install silently. Choosing Restart applies the update in a few
+  seconds and reopens VioletWire instead of running the installer again.
+  Per-machine installations still show a Windows elevation prompt.
+- The stream picture is noticeably sharper above 100% display scaling. Video is
+  now rendered at the display's real pixel count rather than being drawn smaller
+  and scaled back up, and downscaling to smaller windows uses a filter matched
+  to the scale instead of discarding most of the source.
+- Theater mode floats the channel information over the video and fades it with
+  the player controls, so the picture fills the height.
+- Chat now runs the full height of the page rather than starting below an empty
+  strip, and its header lines up with the player toolbar.
+- Player toggles show their state in the icon rather than tinting the button
+  purple, so the audio compressor, chat overlay, and theater each read at a
+  glance.
+- The chat layout menu is now a single button that turns the overlay on and off.
+  Hiding chat entirely is unchanged, from the toolbar button or the C shortcut.
+- Settings dialogs dim the window instead of blurring it, which the system
+  window buttons could not follow.
+
+### Fixes
+
+- Fixed the chat-on-left layout putting chat in the wide column and squeezing
+  the video into the narrow one.
+- Fixed the chat-on-left header controls, sidebar collapse, restore-chat tab,
+  and chat settings panel opening on the wrong side or off screen, and restored
+  the app name hidden behind the top bar in that layout.
+- Fixed the audio compressor icon shifting slightly when toggled.
 
 ### Additions
 
