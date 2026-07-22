@@ -1495,10 +1495,11 @@ input {
    so an enabled control is not also tinted. .active is left for buttons whose
    icon cannot show it, which is only the ones holding a menu open. */
 
-/* Stands in for the "off" icons lucide does not ship, e.g. AudioLines. The
-   wrapper is always present and only the slash toggles, so the icon cannot
-   shift as the state changes. The dark edge keeps the stroke readable where it
-   crosses the icon. */
+/* Stands in for the "off" icons lucide does not ship, e.g. AudioLines. Drawn
+   top-left to bottom-right to match the direction lucide uses in the off
+   glyphs it does ship, such as MessageSquareOff. The wrapper is always present
+   and only the slash toggles, so the icon cannot shift as the state changes,
+   and the dark edge keeps the stroke readable where it crosses the icon. */
 .icon-toggle {
   position: relative;
   display: grid;
@@ -1514,7 +1515,7 @@ input {
   background: currentColor;
   box-shadow: 0 -2px 0 rgb(10 10 12 / 88%);
   content: "";
-  transform: rotate(-45deg);
+  transform: rotate(45deg);
 }
 
 
