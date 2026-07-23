@@ -136,7 +136,8 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .top-search-result small { margin-top: 3px; color: #a0a0aa; font-size: 11px; }
 .top-search-result strong i { display: inline-block; margin-left: 7px; padding: 2px 4px; border-radius: 3px; color: white; background: #e91916; font-size: 8px; font-style: normal; vertical-align: 1px; }
 .top-search-state { display: flex; min-height: 54px; align-items: center; justify-content: center; gap: 8px; padding: 10px; color: #92929c; font-size: 12px; }
-.top-search-direct { display: flex; width: 100%; min-height: 42px; align-items: center; gap: 9px; margin-top: 6px; padding: 0 9px; border: 0; border-top: 1px solid #2d2d34; color: #b8b8c1; background: transparent; cursor: pointer; text-align: left; }
+.top-search-direct { display: flex; width: 100%; min-height: 40px; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-bottom: 1px solid #2d2d34; color: #b8b8c1; background: transparent; cursor: pointer; text-align: left; }
+.top-search-direct svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .top-search-direct:hover { color: white; background: #292930; }
 .top-search-direct strong { min-width: 0; overflow: hidden; color: #d8b4fe; text-overflow: ellipsis; white-space: nowrap; }
 .top-actions { grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 7px; }

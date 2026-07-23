@@ -3204,6 +3204,40 @@ export function App() {
                   </div>
                 ) : (
                   <>
+                    {searchPlatformFilter !== "kick" && (
+                      <button
+                        className="top-search-direct"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setTopSearchOpen(false);
+                          const normalizedLogin = channelInput.trim().toLowerCase();
+                          void watchChannel(
+                            channelInput,
+                            topSearchResults.channels.find(
+                              (channel) => channel.login.toLowerCase() === normalizedLogin,
+                            ),
+                          );
+                        }}
+                        type="button"
+                      >
+                        <ProviderLogo name="twitch" />
+                        Go to <strong>{channelInput.trim()}</strong> on Twitch
+                      </button>
+                    )}
+                    {searchPlatformFilter !== "twitch" && (
+                      <button
+                        className="top-search-direct"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setTopSearchOpen(false);
+                          void watchChannel(channelKey("kick", channelInput.trim().toLowerCase()));
+                        }}
+                        type="button"
+                      >
+                        <ProviderLogo name="kick" />
+                        Go to <strong>{channelInput.trim()}</strong> on Kick
+                      </button>
+                    )}
                     {topSearchResults.categories.length > 0 && (
                       <section>
                         <span className="top-search-heading">Categories</span>
@@ -3226,7 +3260,7 @@ export function App() {
                     )}
                     {topSearchResults.channels.length > 0 && (
                       <section>
-                        <span className="top-search-heading">Channels</span>
+                        <span className="top-search-heading">Twitch</span>
                         {topSearchResults.channels.map((channel) => (
                           <button
                             className="top-search-result"
@@ -3310,40 +3344,6 @@ export function App() {
                       kickSearchResults.length === 0 && (
                         <div className="top-search-state">No channels or categories found.</div>
                       )}
-                    <button
-                      className="top-search-direct"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setTopSearchOpen(false);
-                        const normalizedLogin = channelInput.trim().toLowerCase();
-                        void watchChannel(
-                          channelInput,
-                          topSearchResults.channels.find(
-                            (channel) => channel.login.toLowerCase() === normalizedLogin,
-                          ),
-                        );
-                      }}
-                      type="button"
-                    >
-                      <Search size={16} />
-                      Go to <strong>{channelInput.trim()}</strong>
-                    </button>
-                    {/* Kick has no search or followed list wired up yet, so this
-                        is how a Kick channel is opened for now. */}
-                    <button
-                      className="top-search-direct"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setTopSearchOpen(false);
-                        void watchChannel(
-                          channelKey("kick", channelInput.trim().toLowerCase()),
-                        );
-                      }}
-                      type="button"
-                    >
-                      <Search size={16} />
-                      Open <strong>{channelInput.trim()}</strong> on Kick
-                    </button>
                   </>
                 )}
               </div>
