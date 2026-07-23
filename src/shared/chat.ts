@@ -148,6 +148,17 @@ export interface ChatBadgeAsset {
   color?: string;
 }
 
+/**
+ * Kick badge types VioletWire draws from Kick's own glyph artwork rather than a
+ * coloured chip. This is the single source of truth: the main process reads it
+ * to decide glyph-versus-chip, and the renderer's KickBadgeGlyph must carry the
+ * artwork for exactly these types (its map is typed against this list, so a new
+ * entry here fails the build until the SVG is pasted in). Anything not listed
+ * still falls back to a chip.
+ */
+export const KICK_GLYPH_BADGE_TYPES = ["moderator", "verified", "sub_gifter", "vip"] as const;
+export type KickGlyphBadge = (typeof KICK_GLYPH_BADGE_TYPES)[number];
+
 export interface TwitchPickerEmote {
   id: string;
   name: string;

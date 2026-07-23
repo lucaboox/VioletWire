@@ -924,4 +924,5 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-text-badge { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 4px; color: #0b0b0e; font-size: 8px; font-weight: 800; letter-spacing: .3px; line-height: 1; vertical-align: middle; }
 
 /* Kick's built-in badges, drawn from its own SVG artwork at the badge size. */
-.kick-badge-glyph { width: 17px; height: 17px; vertical-align: middle; }
+.kick-badge-glyph { display: inline-flex; width: 17px; height: 17px; vertical-align: middle; }
+.kick-badge-glyph svg { width: 100%; height: 100%; }

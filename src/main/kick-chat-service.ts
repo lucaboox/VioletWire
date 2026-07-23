@@ -5,7 +5,7 @@ import type {
   ChatRestrictions,
   TwitchChatEmoteRange,
 } from "../shared/chat";
-import { NO_CHAT_RESTRICTIONS } from "../shared/chat";
+import { KICK_GLYPH_BADGE_TYPES, NO_CHAT_RESTRICTIONS } from "../shared/chat";
 import type { KickService } from "./kick-service";
 
 type MessageListener = (message: ChatMessage) => void;
@@ -89,10 +89,10 @@ interface KickChatMessagePayload {
   sender?: KickChatSender;
 }
 
-// Kick renders these as built-in icons with no image in the chat payload, so
-// they show as small coloured chips instead.
-// Badges VioletWire draws as their Kick glyph. Others fall back to a chip.
-const KICK_GLYPH_BADGES = new Set(["moderator", "verified", "sub_gifter"]);
+// Kick renders these as built-in icons with no image in the chat payload. The
+// ones VioletWire has artwork for are drawn as that glyph; the rest fall back
+// to a small coloured chip below.
+const KICK_GLYPH_BADGES = new Set<string>(KICK_GLYPH_BADGE_TYPES);
 
 const KICK_TEXT_BADGE_COLORS: Record<string, string> = {
   broadcaster: "#fa5838",
