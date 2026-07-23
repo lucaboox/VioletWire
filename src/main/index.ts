@@ -635,39 +635,6 @@ async function openChannelActionWindow(
 // close its own window.
 const SUBSCRIPTION_CLOSE_URL = "https://violetwire.invalid/close";
 
-// Crops Twitch's /subs page down to just its subscription card, so the modal
-// shows the offer alone rather than the whole site chrome behind it.
-const SUBSCRIPTION_CROP_CSS = `
-  html, body {
-    overflow: hidden !important;
-    background: #0e0e10 !important;
-  }
-  [data-a-target="top-nav-container"],
-  nav[aria-label="Primary Navigation"] {
-    display: none !important;
-  }
-  [data-a-target="sub-modal"] {
-    position: fixed !important;
-    z-index: 2147483647 !important;
-    inset: 0 !important;
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: none !important;
-    height: 100% !important;
-    max-height: none !important;
-    margin: 0 !important;
-    box-sizing: border-box !important;
-    overflow: hidden !important;
-    background: #0e0e10 !important;
-    transform: none !important;
-  }
-  [data-a-target="sub-modal"] .sub-modal__support-panel {
-    height: 100% !important;
-    min-height: 0 !important;
-    overflow: hidden !important;
-  }
-`;
-
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -776,12 +743,6 @@ async function openSubscriptionModal(channel: string, title: string): Promise<vo
   page.on("will-navigate", blockNavigation);
   page.on("will-redirect", blockNavigation);
   page.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  // Crop to the subscription card on each load. dom-ready fires before Twitch's
-  // React has painted the card, but injected CSS persists for the document, so
-  // the card is styled the moment it mounts and never flashes the full page.
-  page.on("dom-ready", () => {
-    void page.insertCSS(SUBSCRIPTION_CROP_CSS).catch(() => undefined);
-  });
 
   // The header is the window's own page. Its close button navigates to a
   // sentinel we intercept here, and Escape closes too.
