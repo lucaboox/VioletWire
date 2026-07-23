@@ -5075,6 +5075,35 @@ export function App() {
               </div>
             ) : (
               <>
+                {channelInput.trim().length >= 2 && (
+                  <div className="search-direct-row">
+                    {searchPlatformFilter !== "kick" && (
+                      <button
+                        className="search-direct"
+                        onClick={() =>
+                          void watchChannel(
+                            channelInput,
+                            topSearchResults.channels.find(
+                              (channel) => channel.login.toLowerCase() === channelInput.trim().toLowerCase(),
+                            ),
+                          )
+                        }
+                        type="button"
+                      >
+                        <ProviderLogo name="twitch" /> Go to <strong>{channelInput.trim()}</strong> on Twitch
+                      </button>
+                    )}
+                    {searchPlatformFilter !== "twitch" && (
+                      <button
+                        className="search-direct"
+                        onClick={() => void watchChannel(channelKey("kick", channelInput.trim().toLowerCase()))}
+                        type="button"
+                      >
+                        <ProviderLogo name="kick" /> Go to <strong>{channelInput.trim()}</strong> on Kick
+                      </button>
+                    )}
+                  </div>
+                )}
                 {searchPlatformFilter !== "kick" && topSearchResults.categories.length > 0 && (
                   <section className="search-section">
                     <span className="search-section-heading">Categories</span>
@@ -5097,7 +5126,7 @@ export function App() {
                 {searchPlatformFilter !== "kick" && topSearchResults.channels.length > 0 && (
                   <section className="search-section">
                     <span className="search-section-heading">
-                      <ProviderLogo name="twitch" /> Twitch channels
+                      <ProviderLogo name="twitch" /> Twitch
                     </span>
                     <div className="search-channel-grid">
                       {topSearchResults.channels.map((channel) => (
@@ -5142,7 +5171,7 @@ export function App() {
                 {searchPlatformFilter !== "twitch" && kickSearchResults.length > 0 && (
                   <section className="search-section">
                     <span className="search-section-heading">
-                      <ProviderLogo name="kick" /> Kick channels
+                      <ProviderLogo name="kick" /> Kick
                     </span>
                     <div className="search-channel-grid">
                       {kickSearchResults.map((channel) => (
@@ -5170,22 +5199,6 @@ export function App() {
                       ))}
                     </div>
                   </section>
-                )}
-                {channelInput.trim().length >= 2 && searchPlatformFilter !== "kick" && (
-                  <button
-                    className="search-direct"
-                    onClick={() =>
-                      void watchChannel(
-                        channelInput,
-                        topSearchResults.channels.find(
-                          (channel) => channel.login.toLowerCase() === channelInput.trim().toLowerCase(),
-                        ),
-                      )
-                    }
-                    type="button"
-                  >
-                    <Search size={16} /> Go to <strong>{channelInput.trim()}</strong> on Twitch
-                  </button>
                 )}
                 {topSearchResults.categories.length === 0 &&
                   topSearchResults.channels.length === 0 &&

@@ -312,7 +312,9 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .search-channel-copy strong { display: flex; align-items: center; gap: 7px; overflow: hidden; color: #f4f4f5; font-size: 14px; white-space: nowrap; text-overflow: ellipsis; }
 .search-channel-copy small { overflow: hidden; color: #8a8a94; font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
 .search-live { flex: 0 0 auto; padding: 1px 6px; border-radius: 4px; color: #fff; background: #e0245e; font-size: 9px; font-style: normal; font-weight: 800; letter-spacing: 0.4px; }
-.search-direct { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; padding: 11px 16px; border: 1px solid #3b3b43; border-radius: 9px; color: #d6d6de; background: #17171b; cursor: pointer; font: inherit; font-size: 13px; }
+.search-direct-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 26px; }
+.search-direct { display: inline-flex; align-items: center; gap: 8px; padding: 11px 16px; border: 1px solid #3b3b43; border-radius: 9px; color: #d6d6de; background: #17171b; cursor: pointer; font: inherit; font-size: 13px; }
+.search-direct svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .search-direct:hover { border-color: #6d28d9; color: #fff; background: #1c1726; }
 .search-direct strong { color: #fff; }
 .browse-category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); align-items: start; gap: 27px 14px; }
