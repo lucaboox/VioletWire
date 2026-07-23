@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ChatBadgeAsset } from "../../shared/chat";
+import { KickBadgeGlyph } from "./KickBadgeGlyph";
 
 interface ChatBadgeProps {
   badge: ChatBadgeAsset;
@@ -15,7 +16,11 @@ export function ChatBadge({ badge, loading = "lazy" }: ChatBadgeProps) {
 
   const source = urls[urlIndex];
   if (!source) {
-    // A text-only badge (Kick) renders as a small coloured chip.
+    // Kick's built-in badges are drawn from their own artwork.
+    if (badge.glyph) {
+      return <KickBadgeGlyph glyph={badge.glyph} title={badge.title} />;
+    }
+    // A text-only badge with no glyph renders as a small coloured chip.
     if (badge.label) {
       return (
         <span

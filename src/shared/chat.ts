@@ -141,8 +141,9 @@ export interface ChatBadgeAsset {
   title: string;
   imageUrl: string;
   imageUrls?: string[];
-  // Kick has text-only badges (subscriber, moderator) with no image, shown as a
-  // small coloured chip instead.
+  // Kick's built-in badges have no image in its API. Recognised ones are drawn
+  // from a named glyph; the rest show as a small coloured chip.
+  glyph?: string;
   label?: string;
   color?: string;
 }

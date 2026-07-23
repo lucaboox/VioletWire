@@ -91,6 +91,9 @@ interface KickChatMessagePayload {
 
 // Kick renders these as built-in icons with no image in the chat payload, so
 // they show as small coloured chips instead.
+// Badges VioletWire draws as their Kick glyph. Others fall back to a chip.
+const KICK_GLYPH_BADGES = new Set(["moderator", "verified", "sub_gifter"]);
+
 const KICK_TEXT_BADGE_COLORS: Record<string, string> = {
   broadcaster: "#fa5838",
   moderator: "#00c9a7",
@@ -136,7 +139,11 @@ function kickBadges(
         continue;
       }
     }
-    // Everything else Kick draws as a built-in icon becomes a coloured chip.
+    if (KICK_GLYPH_BADGES.has(type)) {
+      assets.push({ key: `kick-${type}`, title: label, imageUrl: "", glyph: type });
+      continue;
+    }
+    // Anything without a glyph becomes a coloured chip.
     assets.push({
       key: `kick-${type}`,
       title: label,
