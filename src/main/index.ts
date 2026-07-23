@@ -675,6 +675,16 @@ function subscriptionShellHtml(title: string, headerHeight: number): string {
       display: flex; align-items: center; justify-content: center;
     }
     header button:hover { background: #2a2a31; color: #efeff1; }
+    .loading {
+      position: fixed; left: 0; right: 0; top: ${headerHeight}px; bottom: 0;
+      display: flex; align-items: center; justify-content: center; background: #0e0e10;
+    }
+    .spinner {
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 3px solid #2a2a31; border-top-color: #a970ff;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style></head><body>
     <header>
       <span class="title">${escapeHtml(title)}</span>
@@ -685,6 +695,7 @@ function subscriptionShellHtml(title: string, headerHeight: number): string {
         </svg>
       </button>
     </header>
+    <div class="loading" role="status" aria-label="Loading"><div class="spinner"></div></div>
   </body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
@@ -751,6 +762,9 @@ async function openSubscriptionModal(
     },
   });
   win.contentView.addChildView(view);
+  // Kept hidden so the shell's spinner shows through until the page has loaded,
+  // rather than revealing a half-rendered subscribe page.
+  view.setVisible(false);
   const layoutView = () => {
     if (win.isDestroyed()) return;
     const { width, height } = win.getContentBounds();
@@ -760,6 +774,18 @@ async function openSubscriptionModal(
   win.on("resize", layoutView);
 
   const page = view.webContents;
+  let revealed = false;
+  const revealPage = () => {
+    if (revealed || win.isDestroyed()) return;
+    revealed = true;
+    view.setVisible(true);
+  };
+  page.once("did-finish-load", revealPage);
+  page.on("did-fail-load", (_event, _code, _desc, _url, isMainFrame) => {
+    if (isMainFrame) revealPage();
+  });
+  // A stuck load never traps the spinner.
+  setTimeout(revealPage, 12_000);
   page.setUserAgent(page.getUserAgent().replace(/\sElectron\/[^\s]+/, ""));
   page.setAudioMuted(true);
   page.setWindowOpenHandler(({ url }) => {
