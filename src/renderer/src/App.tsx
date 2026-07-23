@@ -2677,11 +2677,6 @@ export function App() {
   async function openSubscribePage() {
     if (!activeChannel) return;
     const target = parseChannelKey(activeChannel);
-    if (target.platform === "kick") {
-      // Kick has no in-app subscribe flow, so open its subscribe page.
-      await window.desktop.system.openExternal(`${channelUrl("kick", target.login)}/subscribe`);
-      return;
-    }
     const name = streamMetadata?.displayName ?? target.login;
     try {
       await window.desktop.player.openSubscription(activeChannel, `${name} Subscription`);

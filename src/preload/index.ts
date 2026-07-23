@@ -220,7 +220,7 @@ const api: DesktopApi = {
     openChannelAction: (channel: string, action: ChannelAction) =>
       ipcRenderer.invoke("channel:open-action", channel, action),
     openSubscription: (channel: string, title: string) =>
-      ipcRenderer.invoke("twitch:open-subscription", channel, title),
+      ipcRenderer.invoke("subscription:open", channel, title),
     getNativeAvailability: () => ipcRenderer.invoke("native-player:get-availability"),
     getNativeQualities: (channel: string) => ipcRenderer.invoke("native-player:get-qualities", channel),
     setNativeQuality: (channel: string, quality: NativeQualityValue) =>

@@ -31,7 +31,7 @@ import {
   type PlayerMode,
 } from "../shared/player";
 import { z } from "zod";
-import { channelKeySchema, parseChannelKey } from "../shared/platform";
+import { channelKeySchema, parseChannelKey, type Platform } from "../shared/platform";
 import { NativePlayer } from "./native-player";
 import { TextureNativePlayer } from "./texture-native-player";
 import { MultiStreamManager } from "./multi-stream-manager";
@@ -340,6 +340,18 @@ function isAllowedTwitchNavigation(rawUrl: string): boolean {
     return false;
   }
 }
+
+function isAllowedKickNavigation(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "https:" && (url.hostname === "kick.com" || url.hostname.endsWith(".kick.com"));
+  } catch {
+    return false;
+  }
+}
+
+// The signed-in Kick website session, so its subscribe page acts as the user.
+const KICK_WEBSITE_PARTITION = "persist:violetwire-kick";
 
 function applyNativeControlsBounds(): void {
   if (
@@ -678,16 +690,33 @@ function subscriptionShellHtml(title: string, headerHeight: number): string {
 }
 
 /**
- * Opens Twitch's subscribe page for a channel in a modal window. The window's
- * own page is just a titled header with a close button; the subscribe page
- * itself is shown, unmodified, in a WebContentsView below it.
+ * Opens a channel's subscribe page in a modal window. The window's own page is
+ * just a titled header with a close button; the subscribe page itself is shown,
+ * unmodified, in a WebContentsView below it. Each service loads from its own
+ * signed-in session so the page acts as the logged-in user.
  */
-async function openSubscriptionModal(channel: string, title: string): Promise<void> {
+async function openSubscriptionModal(
+  platform: Platform,
+  login: string,
+  title: string,
+): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (subscriptionWindow && !subscriptionWindow.isDestroyed()) {
     subscriptionWindow.focus();
     return;
   }
+  const service =
+    platform === "kick"
+      ? {
+          url: `https://kick.com/${login}/subscribe`,
+          partition: KICK_WEBSITE_PARTITION,
+          isAllowed: isAllowedKickNavigation,
+        }
+      : {
+          url: `https://www.twitch.tv/subs/${login}`,
+          partition: TWITCH_WEBSITE_PARTITION,
+          isAllowed: isAllowedTwitchNavigation,
+        };
   const headerHeight = 44;
   const win = new BrowserWindow({
     parent: mainWindow,
@@ -715,7 +744,7 @@ async function openSubscriptionModal(channel: string, title: string): Promise<vo
 
   const view = new WebContentsView({
     webPreferences: {
-      partition: TWITCH_WEBSITE_PARTITION,
+      partition: service.partition,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -734,11 +763,11 @@ async function openSubscriptionModal(channel: string, title: string): Promise<vo
   page.setUserAgent(page.getUserAgent().replace(/\sElectron\/[^\s]+/, ""));
   page.setAudioMuted(true);
   page.setWindowOpenHandler(({ url }) => {
-    if (isAllowedTwitchNavigation(url)) void page.loadURL(url);
+    if (service.isAllowed(url)) void page.loadURL(url);
     return { action: "deny" };
   });
   const blockNavigation = (event: Electron.Event, url: string) => {
-    if (!isAllowedTwitchNavigation(url)) event.preventDefault();
+    if (!service.isAllowed(url)) event.preventDefault();
   };
   page.on("will-navigate", blockNavigation);
   page.on("will-redirect", blockNavigation);
@@ -762,7 +791,7 @@ async function openSubscriptionModal(channel: string, title: string): Promise<vo
 
   await win.webContents.loadURL(subscriptionShellHtml(title, headerHeight));
   if (win.isDestroyed()) return;
-  void page.loadURL(`https://www.twitch.tv/subs/${channel}`);
+  void page.loadURL(service.url);
   win.show();
   win.focus();
 }
@@ -1404,10 +1433,10 @@ handleTrusted("channel:open-action", async (_event, rawChannel: unknown, rawActi
   await openChannelActionWindow(channel, action);
 });
 
-handleTrusted("twitch:open-subscription", async (_event, rawChannel: unknown, rawTitle: unknown) => {
-  const channel = channelNameSchema.parse(rawChannel);
+handleTrusted("subscription:open", async (_event, rawChannel: unknown, rawTitle: unknown) => {
+  const { platform, login } = parseChannelKey(channelKeySchema.parse(rawChannel));
   const title = z.string().trim().min(1).max(80).parse(rawTitle);
-  await openSubscriptionModal(channel, title);
+  await openSubscriptionModal(platform, login, title);
 });
 
 handleTrusted("twitch:get-auth-state", () => twitchService.getAuthState());
