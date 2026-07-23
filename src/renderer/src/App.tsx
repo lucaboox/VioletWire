@@ -124,7 +124,7 @@ import "./controls.css";
 
 const NATIVE_CONTROLS_HIDE_DELAY = 5_000;
 
-type AppSection = "home" | "browse" | "settings";
+type AppSection = "home" | "browse" | "settings" | "search";
 type ChatLayout = "hidden" | ChatPresentation;
 type ChannelNavigationIdentity = {
   login: string;
@@ -468,12 +468,17 @@ export function App() {
   const [followedRefreshing, setFollowedRefreshing] = useState(false);
   const [kickFollowedChannels, setKickFollowedChannels] = useState<KickChannelDetails[]>([]);
   const [platformFilter, setPlatformFilter] = useState<"twitch" | "kick" | "both">("twitch");
+  const [searchPlatformFilter, setSearchPlatformFilter] =
+    useState<"twitch" | "kick" | "both">("both");
   const [topSearchResults, setTopSearchResults] =
     useState<TwitchSearchResults>(emptySearchResults);
   const [topSearchOpen, setTopSearchOpen] = useState(false);
   const [twitchSearchLoading, setTwitchSearchLoading] = useState(false);
   const [kickSearchLoading, setKickSearchLoading] = useState(false);
   const topSearchLoading = twitchSearchLoading || kickSearchLoading;
+  // Search runs while the typeahead dropdown is open or the results page is up,
+  // so both surfaces share one set of results for the current query.
+  const searchActive = topSearchOpen || activeSection === "search";
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [activeChannelIdentity, setActiveChannelIdentity] =
     useState<ChannelNavigationIdentity>();
@@ -805,6 +810,7 @@ export function App() {
     if (multiStreamActive) return "Multistream";
     if (activeChannel) return activeChannelDisplayName;
     if (activeSection === "settings") return "Settings";
+    if (activeSection === "search") return "Search";
     if (activeSection === "browse") return selectedBrowseCategory?.name ?? "Browse";
     return "Home";
   }, [
@@ -1122,6 +1128,7 @@ export function App() {
       setFavoriteChannels(new Set(preferences.favoriteChannels));
       setControlsHideDelay(preferences.controlsHideDelay);
       setPlatformFilter(preferences.platformFilter);
+      setSearchPlatformFilter(preferences.searchPlatformFilter);
       // Seed the volume slider from the saved level while nothing is actively
       // playing, so the first stream opens showing it rather than 100%.
       setNativeState((current) =>
@@ -1629,7 +1636,7 @@ export function App() {
 
   useEffect(() => {
     const query = channelInput.trim();
-    if (platformFilter === "twitch" || query.length < 2 || !topSearchOpen) {
+    if (searchPlatformFilter === "twitch" || query.length < 2 || !searchActive) {
       return;
     }
     let cancelled = false;
@@ -1653,12 +1660,12 @@ export function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [channelInput, platformFilter, topSearchOpen]);
+  }, [channelInput, searchPlatformFilter, searchActive]);
 
   useEffect(() => {
     const query = channelInput.trim();
-    if (platformFilter === "kick") return;
-    if (authState.status !== "signed-in" || query.length < 2 || !topSearchOpen) return;
+    if (searchPlatformFilter === "kick") return;
+    if (authState.status !== "signed-in" || query.length < 2 || !searchActive) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void window.desktop.twitch
@@ -1677,7 +1684,7 @@ export function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [authState.status, channelInput, platformFilter, topSearchOpen]);
+  }, [authState.status, channelInput, searchPlatformFilter, searchActive]);
 
   useEffect(() => {
     if (
@@ -2338,14 +2345,23 @@ export function App() {
     window.desktop.player.setChatVisible(true);
   }
 
+  function selectSearchPlatform(option: "twitch" | "kick" | "both") {
+    setSearchPlatformFilter(option);
+    // Drop whatever the new scope excludes so stale results don't linger.
+    if (option === "kick") setTopSearchResults(emptySearchResults);
+    if (option === "twitch") setKickSearchResults([]);
+    void window.desktop.preferences.update({ searchPlatformFilter: option });
+  }
+
+  // Enter opens the full results page rather than jumping straight to a channel;
+  // the page's "Go to <name>" button is there for opening an exact login.
   async function openChannel(event: FormEvent) {
     event.preventDefault();
+    if (channelInput.trim().length < 2) return;
     setTopSearchOpen(false);
-    const normalizedLogin = channelInput.trim().toLowerCase();
-    await watchChannel(
-      channelInput,
-      topSearchResults.channels.find((channel) => channel.login.toLowerCase() === normalizedLogin),
-    );
+    leaveMultiStream();
+    if (activeChannel) await closePlayer();
+    setActiveSection("search");
   }
 
   function updateTopSearch(value: string) {
@@ -2353,8 +2369,8 @@ export function App() {
     const longEnough = value.trim().length >= 2;
     // Twitch search needs its sign-in; Kick's does not, so a signed-out user
     // can still search Kick.
-    const searchesTwitch = platformFilter !== "kick" && authState.status === "signed-in";
-    const searchesKick = platformFilter !== "twitch";
+    const searchesTwitch = searchPlatformFilter !== "kick" && authState.status === "signed-in";
+    const searchesKick = searchPlatformFilter !== "twitch";
     const canSearch = longEnough && (searchesTwitch || searchesKick);
     setTopSearchOpen(canSearch);
     setTwitchSearchLoading(canSearch && searchesTwitch);
@@ -3048,8 +3064,6 @@ export function App() {
                 key={option}
                 onClick={() => {
                   setPlatformFilter(option);
-                  if (option === "kick") setTopSearchResults(emptySearchResults);
-                  if (option === "twitch") setKickSearchResults([]);
                   void window.desktop.preferences.update({ platformFilter: option });
                 }}
                 type="button"
@@ -3160,19 +3174,11 @@ export function App() {
                 <div className="top-search-platforms" role="group" aria-label="Services to search">
                   {(["twitch", "kick", "both"] as const).map((option) => (
                     <button
-                      aria-pressed={platformFilter === option}
-                      className={platformFilter === option ? "active" : ""}
+                      aria-pressed={searchPlatformFilter === option}
+                      className={searchPlatformFilter === option ? "active" : ""}
                       key={option}
                       onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setPlatformFilter(option);
-                        // Drop whatever the new scope excludes straight away,
-                        // rather than leaving the old service's results sitting
-                        // above the new ones until the next keystroke.
-                        if (option === "kick") setTopSearchResults(emptySearchResults);
-                        if (option === "twitch") setKickSearchResults([]);
-                        void window.desktop.preferences.update({ platformFilter: option });
-                      }}
+                      onClick={() => selectSearchPlatform(option)}
                       type="button"
                     >
                       {option === "both" ? (
@@ -3190,9 +3196,9 @@ export function App() {
                 {topSearchLoading ? (
                   <div className="top-search-state">
                     <RefreshCw className="spin" size={16} />{" "}
-                    {platformFilter === "kick"
+                    {searchPlatformFilter === "kick"
                       ? "Searching Kick…"
-                      : platformFilter === "both"
+                      : searchPlatformFilter === "both"
                         ? "Searching…"
                         : "Searching Twitch…"}
                   </div>
@@ -3264,7 +3270,7 @@ export function App() {
                         ))}
                       </section>
                     )}
-                    {platformFilter !== "twitch" && kickSearchResults.length > 0 && (
+                    {searchPlatformFilter !== "twitch" && kickSearchResults.length > 0 && (
                       <section>
                         <span className="top-search-heading">Kick</span>
                         {kickSearchResults.map((channel) => (
@@ -5026,6 +5032,176 @@ export function App() {
                 <span />
               </button>
             </div>
+          </section>
+        ) : activeSection === "search" ? (
+          <section className="search-page">
+            <header className="search-page-header">
+              <div>
+                <span className="following-home-kicker">SEARCH</span>
+                <h1>{channelInput.trim() ? `Results for “${channelInput.trim()}”` : "Search"}</h1>
+                <p>Channels and categories across the services you choose.</p>
+              </div>
+              <div className="top-search-platforms" role="group" aria-label="Services to search">
+                {(["twitch", "kick", "both"] as const).map((option) => (
+                  <button
+                    aria-pressed={searchPlatformFilter === option}
+                    className={searchPlatformFilter === option ? "active" : ""}
+                    key={option}
+                    onClick={() => selectSearchPlatform(option)}
+                    type="button"
+                  >
+                    {option === "both" ? (
+                      <span className="service-both">
+                        <ProviderLogo name="twitch" />
+                        <ProviderLogo name="kick" />
+                      </span>
+                    ) : (
+                      <ProviderLogo name={option} />
+                    )}
+                    {option === "twitch" ? "Twitch" : option === "kick" ? "Kick" : "Both"}
+                  </button>
+                ))}
+              </div>
+            </header>
+
+            {topSearchLoading ? (
+              <div className="browse-loading" role="status">
+                <RefreshCw className="spin" size={18} />{" "}
+                {searchPlatformFilter === "kick"
+                  ? "Searching Kick…"
+                  : searchPlatformFilter === "both"
+                    ? "Searching…"
+                    : "Searching Twitch…"}
+              </div>
+            ) : (
+              <>
+                {searchPlatformFilter !== "kick" && topSearchResults.categories.length > 0 && (
+                  <section className="search-section">
+                    <span className="search-section-heading">Categories</span>
+                    <div className="search-category-grid">
+                      {topSearchResults.categories.map((category) => (
+                        <button
+                          className="search-category-card"
+                          key={`search-cat-${category.id}`}
+                          onClick={() => void chooseSearchCategory(category)}
+                          title={category.name}
+                          type="button"
+                        >
+                          <img alt="" src={category.boxArtUrl} />
+                          <strong>{category.name}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {searchPlatformFilter !== "kick" && topSearchResults.channels.length > 0 && (
+                  <section className="search-section">
+                    <span className="search-section-heading">
+                      <ProviderLogo name="twitch" /> Twitch channels
+                    </span>
+                    <div className="search-channel-grid">
+                      {topSearchResults.channels.map((channel) => (
+                        <button
+                          className="search-channel-card"
+                          key={`search-tw-${channel.id}`}
+                          onClick={() => chooseSearchChannel(channel)}
+                          onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
+                          onMouseLeave={cancelPreresolve}
+                          type="button"
+                        >
+                          {channel.profileImageUrl ? (
+                            <img className="search-channel-avatar" alt="" src={channel.profileImageUrl} />
+                          ) : (
+                            <span className="search-channel-avatar search-channel-fallback">
+                              {channel.displayName.slice(0, 1).toUpperCase()}
+                            </span>
+                          )}
+                          <span className="search-channel-copy">
+                            <strong>
+                              {channel.displayName}
+                              {channel.isLive && <i className="search-live">LIVE</i>}
+                            </strong>
+                            <small>
+                              {channel.isLive
+                                ? [
+                                    channel.category || "Live channel",
+                                    channel.viewerCount !== undefined
+                                      ? `${Intl.NumberFormat("en-US").format(channel.viewerCount)} viewers`
+                                      : undefined,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")
+                                : "Offline"}
+                            </small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {searchPlatformFilter !== "twitch" && kickSearchResults.length > 0 && (
+                  <section className="search-section">
+                    <span className="search-section-heading">
+                      <ProviderLogo name="kick" /> Kick channels
+                    </span>
+                    <div className="search-channel-grid">
+                      {kickSearchResults.map((channel) => (
+                        <button
+                          className="search-channel-card"
+                          key={`search-kick-${channel.id}`}
+                          onClick={() => void watchChannel(channelKey("kick", channel.slug))}
+                          type="button"
+                        >
+                          {channel.profileImageUrl ? (
+                            <img className="search-channel-avatar" alt="" src={channel.profileImageUrl} />
+                          ) : (
+                            <span className="search-channel-avatar search-channel-fallback">
+                              {channel.displayName.slice(0, 1).toUpperCase()}
+                            </span>
+                          )}
+                          <span className="search-channel-copy">
+                            <strong>
+                              {channel.displayName}
+                              {channel.isLive && <i className="search-live">LIVE</i>}
+                            </strong>
+                            <small>{channel.isLive ? channel.category || "Live" : "Offline"}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {channelInput.trim().length >= 2 && searchPlatformFilter !== "kick" && (
+                  <button
+                    className="search-direct"
+                    onClick={() =>
+                      void watchChannel(
+                        channelInput,
+                        topSearchResults.channels.find(
+                          (channel) => channel.login.toLowerCase() === channelInput.trim().toLowerCase(),
+                        ),
+                      )
+                    }
+                    type="button"
+                  >
+                    <Search size={16} /> Go to <strong>{channelInput.trim()}</strong> on Twitch
+                  </button>
+                )}
+                {topSearchResults.categories.length === 0 &&
+                  topSearchResults.channels.length === 0 &&
+                  kickSearchResults.length === 0 && (
+                    <div className="home-empty-state">
+                      <span><Search size={24} /></span>
+                      <h2>No results</h2>
+                      <p>
+                        {channelInput.trim().length < 2
+                          ? "Type at least two characters to search."
+                          : "No channels or categories matched your search."}
+                      </p>
+                    </div>
+                  )}
+              </>
+            )}
           </section>
         ) : (
           <section className="following-home">

@@ -287,6 +287,34 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .browse-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: #f4f4f5; background: transparent; }
 .browse-search button { display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 5px; color: #92929c; background: transparent; cursor: pointer; }
 .browse-search button:hover { color: white; background: #29292f; }
+/* Search results page */
+.search-page { height: calc(100% - 68px); padding: 29px 30px 50px; overflow-x: hidden; overflow-y: auto; background: radial-gradient(circle at 82% -12%, #21142c 0, transparent 26%), #0e0e10; }
+.search-page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 25px; margin-bottom: 22px; }
+.search-page-header h1 { margin: 0; color: #f4f4f5; font-size: 30px; letter-spacing: -1px; }
+.search-page-header p { margin: 5px 0 0; color: #85858f; font-size: 13px; }
+.search-page-header .top-search-platforms { flex: 0 0 auto; margin: 0; padding: 0; border: 0; }
+.search-page-header .top-search-platforms button { flex: 0 0 auto; padding: 7px 12px; }
+.search-section { margin-bottom: 30px; }
+.search-section-heading { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 13px; color: #c8c8d0; font-size: 13px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; }
+.search-section-heading svg { width: 15px; height: 15px; }
+.search-category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); align-items: start; gap: 18px 14px; }
+.search-category-card { min-width: 0; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
+.search-category-card img { display: block; width: 100%; aspect-ratio: 3 / 4; margin-bottom: 8px; border-radius: 6px; object-fit: cover; background: #19191e; transition: transform 140ms ease; }
+.search-category-card strong { display: block; overflow: hidden; color: #e9e9ee; font-size: 13px; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
+.search-category-card:hover img { transform: translateY(-3px); }
+.search-category-card:hover strong { color: #fff; }
+.search-channel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.search-channel-card { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 11px 13px; border: 1px solid #26262d; border-radius: 10px; color: inherit; background: #16161a; cursor: pointer; text-align: left; transition: border-color 130ms ease, background 130ms ease; }
+.search-channel-card:hover { border-color: #6d28d9; background: #1c1726; }
+.search-channel-avatar { width: 42px; height: 42px; flex: 0 0 auto; border-radius: 50%; object-fit: cover; background: #26262d; }
+.search-channel-fallback { display: grid; place-items: center; color: #d8d8de; font-weight: 700; }
+.search-channel-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.search-channel-copy strong { display: flex; align-items: center; gap: 7px; overflow: hidden; color: #f4f4f5; font-size: 14px; white-space: nowrap; text-overflow: ellipsis; }
+.search-channel-copy small { overflow: hidden; color: #8a8a94; font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.search-live { flex: 0 0 auto; padding: 1px 6px; border-radius: 4px; color: #fff; background: #e0245e; font-size: 9px; font-style: normal; font-weight: 800; letter-spacing: 0.4px; }
+.search-direct { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; padding: 11px 16px; border: 1px solid #3b3b43; border-radius: 9px; color: #d6d6de; background: #17171b; cursor: pointer; font: inherit; font-size: 13px; }
+.search-direct:hover { border-color: #6d28d9; color: #fff; background: #1c1726; }
+.search-direct strong { color: #fff; }
 .browse-category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); align-items: start; gap: 27px 14px; }
 .browse-category-card { min-width: 0; padding: 0; border: 0; outline: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
 .browse-category-art { position: relative; display: block; aspect-ratio: 3 / 4; margin-bottom: 9px; background: #19191e; isolation: isolate; }

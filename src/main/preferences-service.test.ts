@@ -103,6 +103,7 @@ describe("PreferencesService", () => {
       emoteFavorites: [],
       favoriteChannels: [],
       platformFilter: "twitch",
+      searchPlatformFilter: "both",
       emotePickerWidth: 390,
       emotePickerHeight: 500,
       emoteSearchAllProviders: false,

@@ -43,9 +43,11 @@ export const appPreferencesSchema = z.object({
   emoteFavorites: z.array(z.string().max(200)).max(1_000),
   // Followed-channel logins pinned to a Favorites group above the live list.
   favoriteChannels: z.array(z.string().max(40)).max(500),
-  // Which services the followed list and search cover. Shared by both so the
-  // sidebar and the search results never disagree about what is in scope.
+  // Which services the followed list covers.
   platformFilter: z.enum(["twitch", "kick", "both"]),
+  // Which services search covers, kept separate from the followed list so the
+  // two can be scoped independently.
+  searchPlatformFilter: z.enum(["twitch", "kick", "both"]),
   emotePickerWidth: z.number().int().min(330).max(600),
   emotePickerHeight: z.number().int().min(360).max(700),
   emoteSearchAllProviders: z.boolean(),
@@ -84,6 +86,7 @@ export const defaultAppPreferences: AppPreferences = {
   emoteFavorites: [],
   favoriteChannels: [],
   platformFilter: "twitch",
+  searchPlatformFilter: "both",
   emotePickerWidth: 390,
   emotePickerHeight: 500,
   emoteSearchAllProviders: false,
