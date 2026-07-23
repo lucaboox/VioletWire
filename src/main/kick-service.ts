@@ -681,50 +681,82 @@ export class KickService {
    * be done in the app. Needs the session and the same CSRF token as sending.
    */
   async setFollowing(slug: string, follow: boolean): Promise<void> {
-    const token = await this.readXsrfToken();
     const bearer = await this.readSessionToken();
-    if (token === null || bearer === null) throw new Error("Not signed in to Kick.");
+    if (bearer === null) throw new Error("Not signed in to Kick.");
 
-    // Confirm the session backing this request is actually logged in. If the
-    // account endpoint returns a user but the follow still fails, the request
-    // is authenticated and Kick is refusing it, not us sending it anonymously.
-    const account = await this.getUser();
-    this.log(
-      `follow ${slug}: session ${account ? `is signed in as ${account.username}` : "is NOT signed in"}, ` +
-        `xsrf token ${token.length} chars`,
+    // The follow route is guarded by Kasada, whose x-kpsdk-* tokens are produced
+    // by obfuscated page scripts and cannot be reproduced from here. Running the
+    // request inside a Kick page lets Kasada's patched fetch attach them, the
+    // same way the site's own follow button does.
+    const status = await this.pageFetch(
+      `/api/v2/channels/${encodeURIComponent(slug)}/follow`,
+      follow ? "POST" : "DELETE",
+      bearer,
     );
 
-    const response = await this.kickSession().fetch(
-      `${KICK_ORIGIN}/api/v2/channels/${encodeURIComponent(slug)}/follow`,
-      {
-        method: follow ? "POST" : "DELETE",
-        headers: {
-          Accept: "application/json",
-          "User-Agent": this.userAgent(),
-          Referer: `${KICK_ORIGIN}/`,
-          "X-XSRF-TOKEN": token,
-          Authorization: `Bearer ${bearer}`,
-        },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      },
-    );
-
-    this.log(`follow ${slug}: ${follow ? "POST" : "DELETE"} returned ${response.status}`);
-    // The channel detail refetch that follows will reflect the change, so a
-    // stale detail cache must not mask it.
+    this.log(`follow ${slug}: ${follow ? "POST" : "DELETE"} returned ${status}`);
     this.detailCache.delete(slug.toLowerCase());
-    if (response.status === 401 || response.status === 403) {
+    if (status === 401 || status === 403) {
       throw new Error("Sign in to Kick to follow channels.");
     }
-    if (response.status === 429) {
-      // Kick guards this route against follow bots and returns a bare 429 with
-      // no Retry-After, so the penalty length is unknown. Fail cleanly rather
-      // than retrying, which would only extend it.
+    if (status === 429) {
       throw new Error("Kick is limiting follow requests right now. Try again later.");
     }
     // 409 means already in the requested state, which is success here.
-    if (!response.ok && response.status !== 409) {
+    if (!(status >= 200 && status < 300) && status !== 409) {
       throw new Error("Kick would not change the follow state.");
+    }
+  }
+
+  /**
+   * Runs a write request from inside a hidden Kick page. Endpoints behind
+   * Kasada need the x-kpsdk-* headers its script attaches to every fetch on the
+   * page, which cannot be generated outside one.
+   */
+  private async pageFetch(path: string, method: string, bearer: string): Promise<number> {
+    const window = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        partition: KICK_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        images: false,
+      },
+    });
+    window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+    try {
+      await Promise.race([
+        window.loadURL(`${KICK_ORIGIN}/`),
+        new Promise((resolve) => setTimeout(resolve, CHALLENGE_TIMEOUT_MS)),
+      ]);
+      // Let Kasada's script initialize and patch fetch before the call.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+
+      // JSON.stringify escapes the interpolated values so they cannot break out
+      // of the script. Cookies are carried by the page; only the bearer, which
+      // is HttpOnly and unavailable to page scripts, has to be supplied.
+      const script = `(async () => {
+        try {
+          const response = await fetch(${JSON.stringify(path)}, {
+            method: ${JSON.stringify(method)},
+            headers: {
+              "Accept": "application/json",
+              "Authorization": "Bearer " + ${JSON.stringify(bearer)},
+              "X-App-Platform": "web",
+            },
+          });
+          return response.status;
+        } catch (error) {
+          return -1;
+        }
+      })()`;
+      const status: unknown = await window.webContents.executeJavaScript(script, true);
+      return typeof status === "number" ? status : -1;
+    } catch {
+      return -1;
+    } finally {
+      if (!window.isDestroyed()) window.destroy();
     }
   }
 
