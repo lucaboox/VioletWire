@@ -456,6 +456,7 @@ export function App() {
   const [kickSearchResults, setKickSearchResults] = useState<KickChannelResult[]>([]);
   const [kickAccount, setKickAccount] = useState<KickUserAccount | null>(null);
   const [kickAuthBusy, setKickAuthBusy] = useState(false);
+  const [followPending, setFollowPending] = useState(false);
   const [kickFollowedChannels, setKickFollowedChannels] = useState<KickChannelDetails[]>([]);
   const [platformFilter, setPlatformFilter] = useState<"twitch" | "kick" | "both">("twitch");
   const [topSearchResults, setTopSearchResults] =
@@ -2674,33 +2675,19 @@ export function App() {
         setNotice("Sign in to Kick from Settings to follow channels.");
         return;
       }
+      if (followPending) return;
       const nextFollow = !activeChannelIsFollowed;
-      // The sidebar list is the source of truth for follow state, so update it
-      // at once and let the refetch confirm.
-      const previousList = kickFollowedChannels;
-      setKickFollowedChannels((current) =>
-        nextFollow
-          ? current.some((channel) => channel.slug === target.login)
-            ? current
-            : [
-                ...current,
-                {
-                  id: streamMetadata?.broadcasterId ?? target.login,
-                  slug: target.login,
-                  displayName: streamMetadata?.displayName ?? target.login,
-                  profileImageUrl: streamMetadata?.profileImageUrl ?? "",
-                  isLive: streamMetadata?.isLive ?? false,
-                  viewerCount: streamMetadata?.viewerCount ?? 0,
-                },
-              ]
-          : current.filter((channel) => channel.slug !== target.login),
-      );
+      // The Kick follow round-trips through a hidden page and takes a moment, so
+      // the button shows a spinner and the list only changes once it confirms,
+      // rather than updating optimistically and risking a spammed toggle.
+      setFollowPending(true);
       try {
         await window.desktop.kick.setFollowing(target.login, nextFollow);
         setKickFollowedChannels(await window.desktop.kick.getFollowedChannels());
       } catch (reason) {
-        setKickFollowedChannels(previousList);
         setNotice(reason instanceof Error ? reason.message : "Could not update follow.");
+      } finally {
+        setFollowPending(false);
       }
       return;
     }
@@ -3811,17 +3798,24 @@ export function App() {
                   aria-label={activeChannelIsFollowed ? "Following channel" : "Follow channel"}
                   aria-pressed={activeChannelIsFollowed}
                   className={activeChannelIsFollowed ? "toolbar-icon follow-action active" : "toolbar-icon follow-action"}
+                  disabled={followPending}
                   onClick={() => void handleFollow()}
                   title={
-                    streamMetadata?.isFollowed
-                      ? "You follow this channel"
-                      : activeChannel && parseChannelKey(activeChannel).platform === "kick"
-                        ? "Follow on Kick"
-                        : "Follow on Twitch"
+                    followPending
+                      ? "Updating…"
+                      : streamMetadata?.isFollowed
+                        ? "You follow this channel"
+                        : activeChannel && parseChannelKey(activeChannel).platform === "kick"
+                          ? "Follow on Kick"
+                          : "Follow on Twitch"
                   }
                   type="button"
                 >
-                  <Heart fill={activeChannelIsFollowed ? "currentColor" : "none"} size={17} />
+                  {followPending ? (
+                    <RefreshCw className="spin" size={16} />
+                  ) : (
+                    <Heart fill={activeChannelIsFollowed ? "currentColor" : "none"} size={17} />
+                  )}
                 </button>
                 <button
                   aria-label={
