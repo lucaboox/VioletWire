@@ -645,7 +645,8 @@ export class KickService {
    */
   async sendMessage(chatroomId: string, content: string): Promise<void> {
     const token = await this.readXsrfToken();
-    if (token === null) throw new Error("Not signed in to Kick.");
+    const bearer = await this.readSessionToken();
+    if (token === null || bearer === null) throw new Error("Not signed in to Kick.");
 
     const response = await this.kickSession().fetch(
       `${KICK_ORIGIN}/api/v2/messages/send/${encodeURIComponent(chatroomId)}`,
@@ -657,6 +658,7 @@ export class KickService {
           "User-Agent": this.userAgent(),
           Referer: `${KICK_ORIGIN}/`,
           "X-XSRF-TOKEN": token,
+          Authorization: `Bearer ${bearer}`,
         },
         body: JSON.stringify({ content, type: "message" }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -680,7 +682,8 @@ export class KickService {
    */
   async setFollowing(slug: string, follow: boolean): Promise<void> {
     const token = await this.readXsrfToken();
-    if (token === null) throw new Error("Not signed in to Kick.");
+    const bearer = await this.readSessionToken();
+    if (token === null || bearer === null) throw new Error("Not signed in to Kick.");
 
     // Confirm the session backing this request is actually logged in. If the
     // account endpoint returns a user but the follow still fails, the request
@@ -700,6 +703,7 @@ export class KickService {
           "User-Agent": this.userAgent(),
           Referer: `${KICK_ORIGIN}/`,
           "X-XSRF-TOKEN": token,
+          Authorization: `Bearer ${bearer}`,
         },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       },
@@ -721,6 +725,19 @@ export class KickService {
     // 409 means already in the requested state, which is success here.
     if (!response.ok && response.status !== 409) {
       throw new Error("Kick would not change the follow state.");
+    }
+  }
+
+  private async readSessionToken(): Promise<string | null> {
+    try {
+      const [cookie] = await this.kickSession().cookies.get({
+        url: KICK_ORIGIN,
+        name: "session_token",
+      });
+      // Stored URL-encoded; the Bearer header wants the raw "id|secret".
+      return cookie ? decodeURIComponent(cookie.value) : null;
+    } catch {
+      return null;
     }
   }
 
@@ -908,6 +925,7 @@ export class KickService {
     // No Cookie header: the session carries its own jar, and setting one here
     // would override it with the cached anonymous value, which is stale the
     // moment somebody signs in.
+    const bearer = await this.readSessionToken();
     try {
       // Node's fetch is refused here. Kick sits behind a check that a plain
       // request cannot pass regardless of the headers or cookie it carries,
@@ -920,6 +938,9 @@ export class KickService {
           "Accept-Language": "en-US,en;q=0.9",
           "User-Agent": this.userAgent(),
           Referer: `${KICK_ORIGIN}/`,
+          // Kick authenticates its API with this bearer, not the session
+          // cookie, so signed-in fields depend on it being sent.
+          ...(bearer === null ? {} : { Authorization: `Bearer ${bearer}` }),
         },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
