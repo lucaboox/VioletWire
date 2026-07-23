@@ -47,12 +47,16 @@ describe("playerBoundsSchema", () => {
 });
 
 describe("channelActionSchema", () => {
-  it.each(["channel", "subscribe", "clip"])("accepts allowlisted action %s", (action) => {
+  it.each(["channel", "clip"])("accepts allowlisted action %s", (action) => {
     expect(channelActionSchema.parse(action)).toBe(action);
   });
 
   it("rejects arbitrary external actions", () => {
     expect(() => channelActionSchema.parse("https://example.com")).toThrow();
+  });
+
+  it("rejects subscribe, which now has its own window", () => {
+    expect(() => channelActionSchema.parse("subscribe")).toThrow();
   });
 });
 

@@ -50,7 +50,6 @@ import {
 import {
   formatQualityLabel,
   type ChatPresentation,
-  type ChannelActionWindowState,
   type MultiStreamTileState,
   type NativePlayerAvailability,
   type NativeRenderBackend,
@@ -478,8 +477,6 @@ export function App() {
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [activeChannelIdentity, setActiveChannelIdentity] =
     useState<ChannelNavigationIdentity>();
-  const [subscriptionDrawerState, setSubscriptionDrawerState] =
-    useState<ChannelActionWindowState>("closed");
   const [error, setError] = useState<string | null>(null);
   const [chatVisible, setChatVisible] = useState(true);
   const [chatPresentation, setChatPresentation] = useState<ChatPresentation>("side");
@@ -1608,14 +1605,6 @@ export function App() {
     updateStatus.state,
   ]);
 
-  useEffect(
-    () =>
-      window.desktop.player.onChannelActionState((action, state) => {
-        if (action === "subscribe") setSubscriptionDrawerState(state);
-      }),
-    [],
-  );
-
   useEffect(() => {
     if (authState.status !== "signed-in") return;
     void loadFollowedChannels();
@@ -2670,21 +2659,6 @@ export function App() {
     }
   }
 
-  async function openChannelAction(action: "channel" | "subscribe" | "clip", label: string) {
-    if (!activeChannel) return;
-    try {
-      await window.desktop.player.openChannelAction(activeChannel, action);
-      if (authState.status === "signed-in") {
-        setStreamMetadata(await window.desktop.twitch.getStreamMetadata(activeChannel));
-      }
-      if (action !== "subscribe") {
-        setNotice(`${label} opened in VioletWire's isolated Twitch window.`);
-      }
-    } catch {
-      setNotice(`Unable to open ${label.toLowerCase()}.`);
-    }
-  }
-
   async function openChannelInBrowser() {
     if (!activeChannel) return;
     const target = parseChannelKey(activeChannel);
@@ -2708,7 +2682,12 @@ export function App() {
       await window.desktop.system.openExternal(`${channelUrl("kick", target.login)}/subscribe`);
       return;
     }
-    await openChannelAction("subscribe", "Subscription");
+    const name = streamMetadata?.displayName ?? target.login;
+    try {
+      await window.desktop.player.openSubscription(activeChannel, `${name} Subscription`);
+    } catch {
+      setNotice("Unable to open the subscription page.");
+    }
   }
 
   async function handleFollow() {
@@ -3870,41 +3849,25 @@ export function App() {
                 </button>
                 <button
                   aria-label={
-                    subscriptionDrawerState === "loading"
-                      ? "Loading subscription panel"
-                      : subscriptionDrawerState === "open"
-                        ? "Close subscription panel"
-                        : streamMetadata?.subscription?.isSubscribed
-                          ? "Subscribed"
-                          : "Subscribe"
+                    streamMetadata?.subscription?.isSubscribed ? "Subscribed" : "Subscribe"
                   }
-                  aria-expanded={subscriptionDrawerState !== "closed"}
                   className={[
                     "toolbar-icon",
                     "subscribe-action",
                     streamMetadata?.subscription?.isSubscribed ? "active" : "",
-                    subscriptionDrawerState !== "closed" ? "panel-open" : "",
                   ].filter(Boolean).join(" ")}
                   onClick={() => void openSubscribePage()}
                   title={
                     activeChannel && parseChannelKey(activeChannel).platform === "kick"
                       ? "Open the Kick subscription page"
-                      : subscriptionDrawerState === "loading"
-                        ? "Loading Twitch subscription panel…"
-                        : subscriptionDrawerState === "open"
-                          ? "Close Twitch subscription panel"
-                          : "Open Twitch subscription panel"
+                      : "Open the Twitch subscription page"
                   }
                   type="button"
                 >
-                  {subscriptionDrawerState === "loading" ? (
-                    <RefreshCw className="spin" size={16} />
-                  ) : (
-                    <Star
-                      fill={streamMetadata?.subscription?.isSubscribed ? "currentColor" : "none"}
-                      size={17}
-                    />
-                  )}
+                  <Star
+                    fill={streamMetadata?.subscription?.isSubscribed ? "currentColor" : "none"}
+                    size={17}
+                  />
                 </button>
                 <button
                   className="toolbar-action"

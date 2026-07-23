@@ -1,7 +1,6 @@
 import { contextBridge, ipcRenderer, sharedTexture } from "electron";
 import type {
   ChannelAction,
-  ChannelActionWindowState,
   ChatPresentation,
   DesktopApi,
   MultiStreamTileState,
@@ -222,17 +221,8 @@ const api: DesktopApi = {
     },
     openChannelAction: (channel: string, action: ChannelAction) =>
       ipcRenderer.invoke("channel:open-action", channel, action),
-    onChannelActionState: (
-      listener: (action: ChannelAction, state: ChannelActionWindowState) => void,
-    ) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        action: ChannelAction,
-        state: ChannelActionWindowState,
-      ) => listener(action, state);
-      ipcRenderer.on("channel-action:state", handler);
-      return () => ipcRenderer.removeListener("channel-action:state", handler);
-    },
+    openSubscription: (channel: string, title: string) =>
+      ipcRenderer.invoke("twitch:open-subscription", channel, title),
     getNativeAvailability: () => ipcRenderer.invoke("native-player:get-availability"),
     getNativeQualities: (channel: string) => ipcRenderer.invoke("native-player:get-qualities", channel),
     setNativeQuality: (channel: string, quality: NativeQualityValue) =>

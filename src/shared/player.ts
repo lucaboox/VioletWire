@@ -46,7 +46,9 @@ export const playerBoundsSchema = z.object({
   scale: z.number().positive().max(4).optional(),
 });
 
-export const channelActionSchema = z.enum(["channel", "subscribe", "clip"]);
+// Subscribing has its own window (a modal showing Twitch's subscribe page), so
+// it is no longer one of these isolated-window actions.
+export const channelActionSchema = z.enum(["channel", "clip"]);
 export const playerModeSchema = z.enum(["official", "native"]);
 export const nativeRenderBackendSchema = z.enum(["window", "texture"]);
 export const chatPresentationSchema = z.enum(["side", "overlay"]);
@@ -91,7 +93,6 @@ export const nativePlayerCommandSchema = z.discriminatedUnion("command", [
 
 export type PlayerBounds = z.infer<typeof playerBoundsSchema>;
 export type ChannelAction = z.infer<typeof channelActionSchema>;
-export type ChannelActionWindowState = "closed" | "loading" | "open";
 export type PlayerMode = z.infer<typeof playerModeSchema>;
 export type NativeRenderBackend = z.infer<typeof nativeRenderBackendSchema>;
 export type ChatPresentation = z.infer<typeof chatPresentationSchema>;
@@ -241,9 +242,8 @@ export interface DesktopApi {
     setFullscreen(fullscreen: boolean): Promise<boolean>;
     onFullscreenChanged(listener: (fullscreen: boolean) => void): () => void;
     openChannelAction(channel: string, action: ChannelAction): Promise<void>;
-    onChannelActionState(
-      listener: (action: ChannelAction, state: ChannelActionWindowState) => void,
-    ): () => void;
+    // Opens Twitch's subscribe page for the channel in a titled modal window.
+    openSubscription(channel: string, title: string): Promise<void>;
     getNativeAvailability(): Promise<NativePlayerAvailability>;
     getNativeQualities(channel: string): Promise<NativeQuality[]>;
     setNativeQuality(channel: string, quality: NativeQualityValue): Promise<void>;

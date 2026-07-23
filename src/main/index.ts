@@ -26,12 +26,11 @@ import {
   isNativeStreamUnavailable,
   MAX_MULTISTREAM_TILES,
   type ChatPresentation,
-  type ChannelAction,
-  type ChannelActionWindowState,
   type NativeControlsContext,
   type NativeRenderBackend,
   type PlayerMode,
 } from "../shared/player";
+import { z } from "zod";
 import { channelKeySchema, parseChannelKey } from "../shared/platform";
 import { NativePlayer } from "./native-player";
 import { TextureNativePlayer } from "./texture-native-player";
@@ -88,7 +87,7 @@ let chatView: WebContentsView | null = null;
 let chatOverlayWindow: BaseWindow | null = null;
 let nativeControlsWindow: BrowserWindow | null = null;
 let channelActionWindow: BrowserWindow | null = null;
-let channelActionKind: ChannelAction | null = null;
+let subscriptionWindow: BrowserWindow | null = null;
 let nativeControlsVisible = true;
 let nativeControlsExpanded = false;
 let nativePlayerPaused = false;
@@ -120,12 +119,6 @@ function sendToWindow(window: BrowserWindow | null, channel: string, ...args: un
   window.webContents.send(channel, ...args);
 }
 
-function sendChannelActionState(
-  action: ChannelAction,
-  state: ChannelActionWindowState,
-): void {
-  sendToWindow(mainWindow, "channel-action:state", action, state);
-}
 const updateService = new UpdateService(
   () => mainWindow,
   (status) => sendToWindow(mainWindow, "updates:status", status),
@@ -200,13 +193,6 @@ function suspendDetachedNativeSurfaces(): void {
   if (activeNativeBackend === "window") nativePlayer.suspendSurface();
   if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) nativeControlsWindow.hide();
   if (chatOverlayWindow && !chatOverlayWindow.isDestroyed()) chatOverlayWindow.hide();
-  if (
-    channelActionKind === "subscribe" &&
-    channelActionWindow &&
-    !channelActionWindow.isDestroyed()
-  ) {
-    channelActionWindow.hide();
-  }
 }
 
 function restoreDetachedNativeSurfaces(): void {
@@ -230,15 +216,6 @@ function restoreDetachedNativeSurfaces(): void {
   ) {
     nativeControlsWindow.showInactive();
     nativeControlsWindow.moveTop();
-  }
-  if (
-    channelActionKind === "subscribe" &&
-    channelActionWindow &&
-    !channelActionWindow.isDestroyed()
-  ) {
-    applySubscriptionDrawerBounds();
-    channelActionWindow.show();
-    channelActionWindow.moveTop();
   }
 }
 
@@ -585,38 +562,34 @@ async function openKickWindow(slug: string, title: string): Promise<void> {
 
 async function openChannelActionWindow(
   channel: string,
-  action: "channel" | "subscribe" | "clip",
+  action: "channel" | "clip",
 ): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (channelActionWindow && !channelActionWindow.isDestroyed()) {
     channelActionWindow.close();
-    if (action === "subscribe") return;
   }
   const destinations = {
     channel: `https://www.twitch.tv/${channel}`,
-    subscribe: `https://www.twitch.tv/subs/${channel}`,
     clip: `https://www.twitch.tv/${channel}/clip`,
   } as const;
-  const subscriptionDrawer = action === "subscribe";
   const actionWindow = new BrowserWindow({
     parent: mainWindow,
     icon: applicationIcon,
-    modal: !subscriptionDrawer,
-    frame: !subscriptionDrawer,
-    show: !subscriptionDrawer,
+    modal: true,
+    frame: true,
+    show: true,
     focusable: true,
-    skipTaskbar: subscriptionDrawer,
-    resizable: !subscriptionDrawer,
-    width: subscriptionDrawer ? 430 : 1040,
-    height: subscriptionDrawer ? 700 : 760,
-    minWidth: subscriptionDrawer ? undefined : 720,
-    minHeight: subscriptionDrawer ? undefined : 560,
-    title: action === "channel" ? `Follow ${channel} on Twitch` : `${action} ${channel} on Twitch`,
+    resizable: true,
+    width: 1040,
+    height: 760,
+    minWidth: 720,
+    minHeight: 560,
+    title: action === "channel" ? `Follow ${channel} on Twitch` : `Clip ${channel} on Twitch`,
     autoHideMenuBar: true,
     backgroundColor: "#0e0e10",
     hasShadow: true,
     roundedCorners: true,
-    thickFrame: !subscriptionDrawer,
+    thickFrame: true,
     webPreferences: {
       partition: TWITCH_WEBSITE_PARTITION,
       contextIsolation: true,
@@ -625,9 +598,7 @@ async function openChannelActionWindow(
     },
   });
   channelActionWindow = actionWindow;
-  channelActionKind = action;
-  if (subscriptionDrawer) sendChannelActionState(action, "loading");
-  if (!subscriptionDrawer && nativeControlsWindow && !nativeControlsWindow.isDestroyed()) {
+  if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) {
     nativeControlsWindow.hide();
   }
   const closed = new Promise<void>((resolve) => actionWindow.once("closed", resolve));
@@ -653,118 +624,147 @@ async function openChannelActionWindow(
   });
   actionWindow.on("closed", () => {
     if (channelActionWindow === actionWindow) channelActionWindow = null;
-    if (channelActionKind === action) channelActionKind = null;
-    if (subscriptionDrawer) sendChannelActionState(action, "closed");
     if (activePlayerMode === "native" && nativeControlsVisible) applyNativeControlsBounds();
   });
   await actionWindow.loadURL(destinations[action]);
-  if (subscriptionDrawer && !actionWindow.isDestroyed()) {
-    await actionWindow.webContents.insertCSS(`
-      html, body {
-        overflow: hidden !important;
-        background: #0e0e10 !important;
-      }
-      [data-a-target="top-nav-container"],
-      nav[aria-label="Primary Navigation"] {
-        display: none !important;
-      }
-      [data-a-target="sub-modal"] {
-        position: fixed !important;
-        z-index: 2147483647 !important;
-        inset: 0 !important;
-        width: 100% !important;
-        min-width: 0 !important;
-        max-width: none !important;
-        height: 100% !important;
-        max-height: none !important;
-        margin: 0 !important;
-        box-sizing: border-box !important;
-        overflow: hidden !important;
-        border: 1px solid #303038 !important;
-        border-radius: 10px !important;
-        background: #0e0e10 !important;
-        box-shadow: 0 18px 55px #000b !important;
-        transform: none !important;
-      }
-      [data-a-target="sub-modal"] .sub-modal__support-panel {
-        height: 100% !important;
-        min-height: 0 !important;
-        overflow: hidden !important;
-      }
-    `);
-    applySubscriptionDrawerBounds();
-    const modalFound = await actionWindow.webContents
-      .executeJavaScript(`
-        new Promise((resolve) => {
-          const find = () => document.querySelector('[data-a-target="sub-modal"]');
-          if (find()) return resolve(true);
-          const observer = new MutationObserver(() => {
-            if (!find()) return;
-            observer.disconnect();
-            resolve(true);
-          });
-          observer.observe(document.documentElement, { childList: true, subtree: true });
-          setTimeout(() => {
-            observer.disconnect();
-            resolve(Boolean(find()));
-          }, 8000);
-        })
-      `)
-      .catch(() => false);
-    if (!actionWindow.isDestroyed()) {
-      // Keep the frameless drawer hidden until Twitch's actual subscription
-      // surface exists. This avoids flashing the underlying /subs page and its
-      // navigation while React finishes rendering the modal.
-      actionWindow.show();
-      actionWindow.focus();
-      actionWindow.moveTop();
-      sendChannelActionState(action, "open");
-      if (modalFound) {
-        void actionWindow.webContents
-          .executeJavaScript(`
-            new Promise((resolve) => {
-              const observer = new MutationObserver(() => {
-                if (document.querySelector('[data-a-target="sub-modal"]')) return;
-                observer.disconnect();
-                resolve(true);
-              });
-              observer.observe(document.documentElement, { childList: true, subtree: true });
-            })
-          `)
-          .then(() => {
-            if (!actionWindow.isDestroyed()) actionWindow.close();
-          })
-          .catch(() => undefined);
-      }
-    }
-  }
   await closed;
 }
 
-function applySubscriptionDrawerBounds(): void {
-  if (
-    channelActionKind !== "subscribe" ||
-    !channelActionWindow ||
-    channelActionWindow.isDestroyed() ||
-    !mainWindow ||
-    mainWindow.isDestroyed()
-  ) {
+// A navigation to this URL never happens for real; the modal's header uses it
+// as a signal that the close button was pressed, since a sandboxed page cannot
+// close its own window.
+const SUBSCRIPTION_CLOSE_URL = "https://violetwire.invalid/close";
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** The modal's own chrome: a titled bar with a close button, above the page. */
+function subscriptionShellHtml(title: string, headerHeight: number): string {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0e0e10; overflow: hidden; }
+    header {
+      height: ${headerHeight}px; display: flex; align-items: center; gap: 10px;
+      padding: 0 6px 0 14px; background: #17171b;
+      border-bottom: 1px solid #2a2a31;
+      font: 600 13px/1 "Segoe UI", system-ui, sans-serif; color: #efeff1;
+      -webkit-user-select: none; user-select: none;
+    }
+    header .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    header button {
+      appearance: none; border: 0; background: transparent; color: #adadb8;
+      width: 32px; height: 32px; border-radius: 6px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    header button:hover { background: #2a2a31; color: #efeff1; }
+  </style></head><body>
+    <header>
+      <span class="title">${escapeHtml(title)}</span>
+      <button id="close" title="Close" aria-label="Close"
+        onclick="location.href='${SUBSCRIPTION_CLOSE_URL}'">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+          <path d="M3 3l9 9M12 3l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </header>
+  </body></html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+/**
+ * Opens Twitch's subscribe page for a channel in a modal window. The window's
+ * own page is just a titled header with a close button; the subscribe page
+ * itself is shown, unmodified, in a WebContentsView below it.
+ */
+async function openSubscriptionModal(channel: string, title: string): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (subscriptionWindow && !subscriptionWindow.isDestroyed()) {
+    subscriptionWindow.focus();
     return;
   }
-  const contentBounds = mainWindow.getContentBounds();
-  const playerBounds = lastPlayerBounds;
-  const availableWidth = playerBounds?.width ?? contentBounds.width;
-  const width = Math.max(340, Math.min(440, Math.round(availableWidth * 0.42)));
-  const availableHeight = playerBounds?.height ?? contentBounds.height - 122;
-  // Twitch's subscription panel is designed as a compact, internally
-  // scrollable drawer. Matching the entire player height leaves a large empty
-  // region below channels with shorter benefit lists.
-  const height = Math.max(480, Math.min(820, availableHeight));
-  const right = playerBounds
-    ? contentBounds.x + playerBounds.x + playerBounds.width
-    : contentBounds.x + contentBounds.width;
-  const y = playerBounds ? contentBounds.y + playerBounds.y : contentBounds.y + 122;
-  channelActionWindow.setBounds({ x: right - width, y, width, height });
+  const headerHeight = 44;
+  const win = new BrowserWindow({
+    parent: mainWindow,
+    icon: applicationIcon,
+    modal: true,
+    frame: false,
+    show: false,
+    resizable: true,
+    width: 900,
+    height: 820,
+    minWidth: 620,
+    minHeight: 540,
+    title,
+    autoHideMenuBar: true,
+    backgroundColor: "#0e0e10",
+    hasShadow: true,
+    roundedCorners: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  subscriptionWindow = win;
+
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: TWITCH_WEBSITE_PARTITION,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.contentView.addChildView(view);
+  const layoutView = () => {
+    if (win.isDestroyed()) return;
+    const { width, height } = win.getContentBounds();
+    view.setBounds({ x: 0, y: headerHeight, width, height: Math.max(0, height - headerHeight) });
+  };
+  layoutView();
+  win.on("resize", layoutView);
+
+  const page = view.webContents;
+  page.setUserAgent(page.getUserAgent().replace(/\sElectron\/[^\s]+/, ""));
+  page.setAudioMuted(true);
+  page.setWindowOpenHandler(({ url }) => {
+    if (isAllowedTwitchNavigation(url)) void page.loadURL(url);
+    return { action: "deny" };
+  });
+  const blockNavigation = (event: Electron.Event, url: string) => {
+    if (!isAllowedTwitchNavigation(url)) event.preventDefault();
+  };
+  page.on("will-navigate", blockNavigation);
+  page.on("will-redirect", blockNavigation);
+  page.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+
+  // The header is the window's own page. Its close button navigates to a
+  // sentinel we intercept here, and Escape closes too.
+  win.webContents.on("will-navigate", (event, url) => {
+    event.preventDefault();
+    if (url.startsWith(SUBSCRIPTION_CLOSE_URL) && !win.isDestroyed()) win.close();
+  });
+  win.webContents.on("before-input-event", (_event, input) => {
+    if (input.key === "Escape" && !win.isDestroyed()) win.close();
+  });
+  win.on("closed", () => {
+    if (subscriptionWindow === win) subscriptionWindow = null;
+    if (activePlayerMode === "native" && nativeControlsVisible) applyNativeControlsBounds();
+  });
+
+  if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) nativeControlsWindow.hide();
+
+  await win.webContents.loadURL(subscriptionShellHtml(title, headerHeight));
+  if (win.isDestroyed()) return;
+  void page.loadURL(`https://www.twitch.tv/subs/${channel}`);
+  win.show();
+  win.focus();
 }
 
 function applyChatBounds(): void {
@@ -833,7 +833,8 @@ function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false)
   if (invalidatePendingOpen) playerOpenGeneration += 1;
   if (channelActionWindow && !channelActionWindow.isDestroyed()) channelActionWindow.close();
   channelActionWindow = null;
-  channelActionKind = null;
+  if (subscriptionWindow && !subscriptionWindow.isDestroyed()) subscriptionWindow.close();
+  subscriptionWindow = null;
   nativePlayer.destroy();
   // A native→native channel switch keeps the texture session so mpv can swap
   // streams in place instead of rebuilding the whole graphics pipeline.
@@ -964,15 +965,9 @@ async function createWindow(): Promise<void> {
     mainWindow = null;
   });
   mainWindow.on("will-move", suspendDetachedNativeSurfaces);
-  mainWindow.on("moved", () => {
-    restoreDetachedNativeSurfaces();
-    applySubscriptionDrawerBounds();
-  });
+  mainWindow.on("moved", restoreDetachedNativeSurfaces);
   mainWindow.on("will-resize", suspendDetachedNativeSurfaces);
-  mainWindow.on("resized", () => {
-    restoreDetachedNativeSurfaces();
-    applySubscriptionDrawerBounds();
-  });
+  mainWindow.on("resized", restoreDetachedNativeSurfaces);
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl) {
@@ -1090,7 +1085,6 @@ onTrusted("player:set-bounds", (_event, input: unknown) => {
     if (activeNativeBackend === "window") nativePlayer.setBounds(result.data);
     applyNativeControlsBounds();
   }
-  applySubscriptionDrawerBounds();
 });
 
 onTrusted("player:set-chat-bounds", (_event, input: unknown) => {
@@ -1408,6 +1402,12 @@ handleTrusted("channel:open-action", async (_event, rawChannel: unknown, rawActi
   const channel = channelNameSchema.parse(rawChannel);
   const action = channelActionSchema.parse(rawAction);
   await openChannelActionWindow(channel, action);
+});
+
+handleTrusted("twitch:open-subscription", async (_event, rawChannel: unknown, rawTitle: unknown) => {
+  const channel = channelNameSchema.parse(rawChannel);
+  const title = z.string().trim().min(1).max(80).parse(rawTitle);
+  await openSubscriptionModal(channel, title);
 });
 
 handleTrusted("twitch:get-auth-state", () => twitchService.getAuthState());

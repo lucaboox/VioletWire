@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.send("player:set-chat-presentation", presentation),
     setFullscreen: (fullscreen) => ipcRenderer.invoke("window:set-fullscreen", fullscreen),
     openChannelAction: (channel, action) => ipcRenderer.invoke("channel:open-action", channel, action),
+    openSubscription: (channel, title) => ipcRenderer.invoke("twitch:open-subscription", channel, title),
     getNativeAvailability: () => ipcRenderer.invoke("native-player:get-availability"),
     getNativeQualities: (channel) => ipcRenderer.invoke("native-player:get-qualities", channel),
     setNativeQuality: (channel, quality) =>
