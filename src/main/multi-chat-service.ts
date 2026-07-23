@@ -40,6 +40,8 @@ export class MultiChatService {
           this.onMessage(channel, message);
         },
         (state) => this.onState(channel, state),
+        // Multistream tiles have no composer, so restrictions are not surfaced.
+        () => undefined,
       );
       service.setHistoryLimit(this.historyLimit);
       service.connect(channel);

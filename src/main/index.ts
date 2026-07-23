@@ -251,6 +251,10 @@ const twitchChatService = new TwitchChatService(
     sendToWindow(mainWindow, "chat:state", state);
     sendToWindow(nativeControlsWindow, "chat:state", state);
   },
+  (restrictions) => {
+    sendToWindow(mainWindow, "chat:restrictions", restrictions);
+    sendToWindow(nativeControlsWindow, "chat:restrictions", restrictions);
+  },
 );
 const nativePlayer = new NativePlayer(
   () => mainWindow,
@@ -292,6 +296,10 @@ const kickChatService = new KickChatService(
   (state) => {
     sendToWindow(mainWindow, "chat:state", state);
     sendToWindow(nativeControlsWindow, "chat:state", state);
+  },
+  (restrictions) => {
+    sendToWindow(mainWindow, "chat:restrictions", restrictions);
+    sendToWindow(nativeControlsWindow, "chat:restrictions", restrictions);
   },
 );
 const textureNativePlayer = new TextureNativePlayer(

@@ -1,8 +1,10 @@
 import type {
   ChatConnectionState,
   ChatMessage,
+  ChatRestrictions,
   TwitchChatEmoteRange,
 } from "../shared/chat";
+import { NO_CHAT_RESTRICTIONS } from "../shared/chat";
 
 type MessageListener = (message: ChatMessage) => void;
 type StateListener = (state: ChatConnectionState) => void;
@@ -26,6 +28,7 @@ export class TwitchChatService {
   private readonly recentMessageIds = new Set<string>();
   private readonly recentMessageOrder: string[] = [];
   private historyLimit = 20;
+  private restrictions: ChatRestrictions = { ...NO_CHAT_RESTRICTIONS };
   private lastActivityAt = 0;
   private keepalivePingSentAt = 0;
   private watchdogTimer: NodeJS.Timeout | null = null;
@@ -33,6 +36,7 @@ export class TwitchChatService {
   constructor(
     private readonly onMessage: MessageListener,
     private readonly onState: StateListener,
+    private readonly onRestrictions: (restrictions: ChatRestrictions) => void,
   ) {}
 
   connect(channel: string): void {
@@ -41,6 +45,7 @@ export class TwitchChatService {
     this.manuallyClosed = false;
     this.recentMessageIds.clear();
     this.recentMessageOrder.length = 0;
+    this.onRestrictions(NO_CHAT_RESTRICTIONS);
     this.open("connecting");
     void this.loadRecentMessages(this.channel);
   }
@@ -152,9 +157,64 @@ export class TwitchChatService {
         this.socket?.send(line.replace(/^PING/, "PONG") + "\r\n");
         continue;
       }
+      if (this.handleRoomState(line) || this.handleNotice(line)) continue;
       const message = this.parseMessageLine(line);
       if (message) this.emitMessage(message);
     }
+  }
+
+  private handleRoomState(line: string): boolean {
+    const match = /^(?:@([^ ]+) )?:tmi\.twitch\.tv ROOMSTATE #([^ ]+)/.exec(line);
+    if (!match) return false;
+    const tags = this.parseTags(match[1] ?? "");
+    // ROOMSTATE arrives in full on join and as deltas on change, so absent tags
+    // keep their current value rather than resetting.
+    const followers = tags["followers-only"];
+    const slow = tags["slow"];
+    const next: ChatRestrictions = { ...this.restrictions };
+    if (followers !== undefined) {
+      // -1 off, 0 any follower, N minutes of following required.
+      const minutes = Number(followers);
+      next.followersOnly = minutes >= 0;
+      next.followersMinMinutes = minutes > 0 ? minutes : undefined;
+    }
+    if (tags["subs-only"] !== undefined) next.subscribersOnly = tags["subs-only"] === "1";
+    if (tags["emote-only"] !== undefined) next.emoteOnly = tags["emote-only"] === "1";
+    if (slow !== undefined) {
+      const seconds = Number(slow);
+      next.slowModeSeconds = seconds > 0 ? seconds : undefined;
+    }
+    this.restrictions = next;
+    this.onRestrictions(next);
+    return true;
+  }
+
+  private handleNotice(line: string): boolean {
+    const match =
+      /^(?:@([^ ]+) )?:tmi\.twitch\.tv NOTICE #([^ ]+) :?([\s\S]*)$/.exec(line);
+    if (!match) return false;
+    const tags = this.parseTags(match[1] ?? "");
+    const id = tags["msg-id"] ?? "";
+    // Only the send-refusal notices matter here; the rest are routine.
+    if (/^msg_(followersonly|subsonly|emoteonly|slowmode|banned|timedout|rejected|duplicate|r9k)/.test(id)) {
+      this.emitMessage(this.systemNotice(match[3]?.trim() || "Your message was not sent."));
+    }
+    return true;
+  }
+
+  private systemNotice(text: string): ChatMessage {
+    return {
+      id: `notice-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      channel: this.channel ?? "",
+      login: "",
+      displayName: "",
+      color: "",
+      text: "",
+      badges: [],
+      sentAt: Date.now(),
+      twitchEmotes: [],
+      notice: { type: "other", systemMessage: text },
+    };
   }
 
   private async loadRecentMessages(channel: string): Promise<void> {

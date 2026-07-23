@@ -68,6 +68,9 @@ export const nativeControlsContextSchema = z.object({
   chatVisible: z.boolean(),
   chatPresentation: chatPresentationSchema,
   viewerLogin: z.string().max(25).regex(/^[a-z0-9_]*$/).optional(),
+  // Whether the viewer follows the channel, so the overlay composer can block a
+  // followers-only chat it is certain the viewer cannot post to.
+  isFollowed: z.boolean().optional(),
 });
 export const nativeQualitySchema = z
   .string()
@@ -108,6 +111,7 @@ export interface NativeControlsContext {
   chatVisible: boolean;
   chatPresentation: ChatPresentation;
   viewerLogin?: string;
+  isFollowed?: boolean;
 }
 
 export function formatQualityLabel(quality: NativeQualityValue): string {

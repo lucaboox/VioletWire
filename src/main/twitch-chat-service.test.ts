@@ -45,7 +45,7 @@ afterEach(() => {
 
 describe("TwitchChatService action messages", () => {
   it("unwraps CTCP ACTION and marks the message as an action", () => {
-    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const service = new TwitchChatService(vi.fn(), vi.fn(), vi.fn());
     const internals = service as unknown as TwitchChatServiceInternals;
     const message = internals.parseMessageLine(
       "@color=#8A2BE2;display-name=NightBot;id=51d6bd60-6c94-4f43-b78f-1c125fb51694;tmi-sent-ts=1720000000000 :nightbot!nightbot@nightbot.tmi.twitch.tv PRIVMSG #channel :\u0001ACTION Song request opened!\u0001",
@@ -59,7 +59,7 @@ describe("TwitchChatService action messages", () => {
   });
 
   it("leaves ordinary messages unmarked", () => {
-    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const service = new TwitchChatService(vi.fn(), vi.fn(), vi.fn());
     const internals = service as unknown as TwitchChatServiceInternals;
     const message = internals.parseMessageLine(
       "@color=#8A2BE2;display-name=Someone;id=61d6bd60-6c94-4f43-b78f-1c125fb51694 :someone!someone@someone.tmi.twitch.tv PRIVMSG #channel :hello",
@@ -75,7 +75,7 @@ describe("TwitchChatService connection watchdog", () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", FakeWebSocket);
     const onState = vi.fn();
-    const service = new TwitchChatService(vi.fn(), onState);
+    const service = new TwitchChatService(vi.fn(), onState, vi.fn());
     // loadRecentMessages runs fire-and-forget; a resolved dummy keeps it inert.
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 200 })));
     service.connect("somechannel");
@@ -135,7 +135,7 @@ describe("TwitchChatService connection watchdog", () => {
 
 describe("TwitchChatService replies", () => {
   it("keeps Twitch reply and thread metadata from IRC tags", () => {
-    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const service = new TwitchChatService(vi.fn(), vi.fn(), vi.fn());
     const internals = service as unknown as TwitchChatServiceInternals;
     const message = internals.parseMessageLine(
       "@badges=;color=#9147FF;display-name=Responder;id=51d6bd60-6c94-4f43-b78f-1c125fb51694;reply-parent-display-name=Parent;reply-parent-msg-body=hello\\sworld;reply-parent-msg-id=719e45c4-5861-4c3f-932d-e34141177b0e;reply-parent-user-login=parent;reply-thread-parent-msg-id=719e45c4-5861-4c3f-932d-e34141177b0e;reply-thread-parent-user-login=parent;tmi-sent-ts=1720000000000 :responder!responder@responder.tmi.twitch.tv PRIVMSG #channel :A reply",
@@ -152,7 +152,7 @@ describe("TwitchChatService replies", () => {
   });
 
   it("parses timeout duration and permanent bans from CLEARCHAT", () => {
-    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const service = new TwitchChatService(vi.fn(), vi.fn(), vi.fn());
     const internals = service as unknown as TwitchChatServiceInternals;
     const timeout = internals.parseMessageLine(
       "@ban-duration=600;target-user-id=42;tmi-sent-ts=1720000000000 :tmi.twitch.tv CLEARCHAT #channel :TroubleMaker",
@@ -174,7 +174,7 @@ describe("TwitchChatService replies", () => {
   });
 
   it("parses subscription USERNOTICE metadata and the subscriber message", () => {
-    const service = new TwitchChatService(vi.fn(), vi.fn());
+    const service = new TwitchChatService(vi.fn(), vi.fn(), vi.fn());
     const internals = service as unknown as TwitchChatServiceInternals;
     const message = internals.parseMessageLine(
       "@badge-info=subscriber/14;badges=subscriber/12;color=#00FF7F;display-name=VioletFan;emotes=;id=51d6bd60-6c94-4f43-b78f-1c125fb51694;login=violetfan;msg-id=resub;msg-param-cumulative-months=14;msg-param-streak-months=4;msg-param-sub-plan=1000;system-msg=VioletFan\\ssubscribed\\sat\\sTier\\s1.\\sThey've\\ssubscribed\\sfor\\s14\\smonths!;tmi-sent-ts=1720000000000 :tmi.twitch.tv USERNOTICE #channel :Love the stream!",

@@ -914,3 +914,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
   font-weight: 650;
   font-style: italic;
 }
+
+/* Explains an active chat restriction above the composer. Amber when it merely
+   informs, red when the composer is disabled because we are sure sending would
+   be refused. */
+.chat-restriction { display: flex; align-items: center; gap: 7px; margin: 0 7px 6px; padding: 7px 10px; border-radius: 8px; color: #e8c37a; background: #2a2212; font-size: 11px; line-height: 1.35; }
+.chat-restriction.blocked { color: #f0a9a0; background: #2c1614; }
+.chat-restriction svg { flex: 0 0 auto; }

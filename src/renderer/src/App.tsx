@@ -21,6 +21,7 @@ import {
   Copy,
   ExternalLink,
   Heart,
+  Lock,
   History,
   Home,
   LayoutGrid,
@@ -74,6 +75,7 @@ import type { EmoteProvider, ProviderEmote } from "../../shared/emotes";
 import type {
   ChatBadgeAsset,
   ChatConnectionState,
+  ChatRestrictions,
   ChatMessage,
   TwitchPickerEmote,
 } from "../../shared/chat";
@@ -84,6 +86,7 @@ import {
   messageMentionsLogin,
 } from "../../shared/chat";
 import { getChatMentionCandidates } from "../../shared/chat-content";
+import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
 import {
   mergeChangelogEntries,
   parseChangelog,
@@ -163,6 +166,16 @@ function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>
 
 function emptyProviderChannelNames(): Map<EmoteProvider, Set<string>> {
   return new Map(emoteProviders.map((provider) => [provider, new Set()]));
+}
+
+function formatFollowDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"}`;
+  const months = Math.round(days / 30);
+  return `${months} month${months === 1 ? "" : "s"}`;
 }
 
 function formatUptime(startedAt: string | undefined, now: number): string {
@@ -501,6 +514,9 @@ export function App() {
   const [sevenTvBusy, setSevenTvBusy] = useState(false);
   const [chatConnectionState, setChatConnectionState] =
     useState<ChatConnectionState>("disconnected");
+  const [chatRestrictions, setChatRestrictions] = useState<ChatRestrictions>(
+    NO_CHAT_RESTRICTIONS,
+  );
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -1190,6 +1206,7 @@ export function App() {
   }, [mentionSoundEnabled, mentionSoundVolume, mentionSoundId, viewerLogin]);
 
   useEffect(() => window.desktop.chat.onState(setChatConnectionState), []);
+  useEffect(() => window.desktop.chat.onRestrictions(setChatRestrictions), []);
 
   useEffect(() => {
     const removePickerListener = window.desktop.player.onNativeEmotePicker(
@@ -2037,6 +2054,7 @@ export function App() {
       chatVisible,
       chatPresentation,
       viewerLogin,
+      isFollowed: streamMetadata?.isFollowed,
     });
     window.desktop.player.setNativeControlsVisible(nativeControlsVisible);
   }, [
@@ -2046,6 +2064,7 @@ export function App() {
     chatVisible,
     fullscreen,
     nativeControlsVisible,
+    streamMetadata?.isFollowed,
     theaterMode,
     viewerLogin,
   ]);
@@ -2693,8 +2712,13 @@ export function App() {
   async function sendChatMessage(event: FormEvent) {
     event.preventDefault();
     if (!chatChannel || !chatInput.trim()) return;
-    if (authState.status !== "signed-in") {
-      setNotice("Sign in with Twitch to send chat messages.");
+    const platform = parseChannelKey(chatChannel).platform;
+    if (platform === "kick" ? kickAccount === null : authState.status !== "signed-in") {
+      setNotice(
+        platform === "kick"
+          ? "Sign in to Kick from Settings to send chat messages."
+          : "Sign in with Twitch to send chat messages.",
+      );
       return;
     }
     const message = chatInput.trim();
@@ -2709,6 +2733,36 @@ export function App() {
       setNotice(reason instanceof Error ? reason.message : "Unable to send the chat message.");
     }
   }
+
+  // The active chat restriction as a line the composer can show, and whether we
+  // are certain the viewer cannot send (followers-only while not following at
+  // all). Anything less certain is left to the server to reject.
+  const chatRestrictionLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (chatRestrictions.followersOnly) {
+      const minutes = chatRestrictions.followersMinMinutes;
+      parts.push(
+        minutes && minutes > 0
+          ? `Followers-only · follow for ${formatFollowDuration(minutes)} to chat`
+          : "Followers-only chat",
+      );
+    }
+    if (chatRestrictions.subscribersOnly) parts.push("Subscribers-only chat");
+    if (chatRestrictions.emoteOnly) parts.push("Emote-only chat");
+    if (chatRestrictions.slowModeSeconds) {
+      parts.push(`Slow mode · ${chatRestrictions.slowModeSeconds}s between messages`);
+    }
+    return parts.length > 0 ? parts.join(" · ") : null;
+  }, [chatRestrictions]);
+
+  const chatBlocked =
+    chatRestrictions.followersOnly && streamMetadata?.isFollowed === false;
+  const activeChatPlatform = chatChannel
+    ? parseChannelKey(chatChannel).platform
+    : "twitch";
+  const chatSignedIn =
+    activeChatPlatform === "kick" ? kickAccount !== null : authState.status === "signed-in";
+  const singleChatDisabled = !chatSignedIn || chatBlocked;
 
   // Both services in one list, in scope order, keyed by channel key so a Kick
   // and a Twitch channel sharing a name stay distinct.
@@ -3886,6 +3940,7 @@ export function App() {
                           chatVisible,
                           chatPresentation,
                           viewerLogin,
+                          isFollowed: streamMetadata?.isFollowed,
                         }}
                         inlineVisible={nativeControlsVisible}
                       />
@@ -4254,6 +4309,16 @@ export function App() {
                       </button>
                     )}
                     <form className="native-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>
+                      {chatRestrictionLabel && (
+                        <div className={chatBlocked ? "chat-restriction blocked" : "chat-restriction"}>
+                          <Lock size={13} aria-hidden="true" />
+                          <span>
+                            {chatRestrictionLabel}
+                            {chatBlocked && activeChatPlatform === "kick" && ". Follow to chat."}
+                            {chatBlocked && activeChatPlatform === "twitch" && ". Follow on Twitch to chat."}
+                          </span>
+                        </div>
+                      )}
                       {replyingTo && (
                         <div className="chat-reply-composer">
                           <div className="chat-reply-heading">
@@ -4289,7 +4354,7 @@ export function App() {
                       <div className="chat-composer-box">
                         <ChatComposerInput
                           aria-label="Send a chat message"
-                          disabled={authState.status !== "signed-in"}
+                          disabled={singleChatDisabled}
                           maxLength={500}
                           mentionCandidates={chatMentionCandidates}
                           onValueChange={setChatInput}
@@ -4469,7 +4534,7 @@ export function App() {
                         <span />
                         <button
                           className={chatIsKick ? "chat-send-button kick" : "chat-send-button"}
-                          disabled={authState.status !== "signed-in" || !chatInput.trim()}
+                          disabled={singleChatDisabled || !chatInput.trim()}
                           type="submit"
                         >
                           {replyingTo ? "Reply" : "Chat"}

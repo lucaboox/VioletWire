@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Check,
   Info,
+  Lock,
   MessageSquareOff,
   MessageSquareText,
   Maximize,
@@ -56,6 +57,8 @@ import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
 import { getChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
+import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
+import type { ChatRestrictions } from "../../shared/chat";
 import { EmotePicker } from "./EmotePicker";
 import { ReactTooltipLayer } from "./ReactTooltipLayer";
 import { ChatBadge } from "./ChatBadge";
@@ -497,6 +500,27 @@ export function NativeControls({
   const detachedPickerHost = useRef<HTMLDivElement>(null);
   const currentChannel = useRef<string | null>(null);
   const channel = context?.channel;
+  const [chatRestrictions, setChatRestrictions] = useState<ChatRestrictions>(
+    NO_CHAT_RESTRICTIONS,
+  );
+  useEffect(() => window.desktop.chat.onRestrictions(setChatRestrictions), []);
+  const chatRestrictionLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (chatRestrictions.followersOnly) {
+      const minutes = chatRestrictions.followersMinMinutes;
+      parts.push(
+        minutes && minutes > 0 ? "Followers-only chat" : "Followers-only chat",
+      );
+    }
+    if (chatRestrictions.subscribersOnly) parts.push("Subscribers-only chat");
+    if (chatRestrictions.emoteOnly) parts.push("Emote-only chat");
+    if (chatRestrictions.slowModeSeconds) {
+      parts.push(`Slow mode · ${chatRestrictions.slowModeSeconds}s`);
+    }
+    return parts.length > 0 ? parts.join(" · ") : null;
+  }, [chatRestrictions]);
+  const chatBlocked =
+    chatRestrictions.followersOnly && context?.isFollowed === false;
   const chatProviderEmotes = useMemo(() => {
     const combined = new Map<string, ProviderEmote>();
     for (const provider of emoteProviders) {
@@ -1437,6 +1461,15 @@ export function NativeControls({
             </button>
           )}
           <form className="native-video-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>
+            {chatRestrictionLabel && (
+              <div className={chatBlocked ? "chat-restriction blocked" : "chat-restriction"}>
+                <Lock size={13} aria-hidden="true" />
+                <span>
+                  {chatRestrictionLabel}
+                  {chatBlocked && " · Follow to chat"}
+                </span>
+              </div>
+            )}
             {replyingTo && (
               <div className="native-chat-reply-composer">
                 <div className="chat-reply-heading">
@@ -1630,7 +1663,7 @@ export function NativeControls({
               <span />
               <button
                 className="native-chat-send-button"
-                disabled={!chatInput.trim()}
+                disabled={!chatInput.trim() || chatBlocked}
                 type="submit"
               >
                 {replyingTo ? "Reply" : "Chat"}

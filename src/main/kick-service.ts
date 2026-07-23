@@ -74,7 +74,17 @@ const kickChannelSchema = z.object({
       profile_pic: z.string().nullish(),
     })
     .optional(),
-  chatroom: z.object({ id: z.number().nullish() }).optional(),
+  chatroom: z
+    .object({
+      id: z.number().nullish(),
+      followers_mode: z.boolean().nullish(),
+      subscribers_mode: z.boolean().nullish(),
+      emotes_mode: z.boolean().nullish(),
+      slow_mode: z.boolean().nullish(),
+      message_interval: z.number().nullish(),
+      following_min_duration: z.number().nullish(),
+    })
+    .optional(),
   livestream: kickLivestreamSchema.nullable().optional(),
   // Only returned to a signed-in caller; absent otherwise.
   following: z.boolean().nullish(),
@@ -224,6 +234,14 @@ export interface KickEmoteSet {
   emotes: KickEmote[];
 }
 
+export interface KickChatRestrictions {
+  followersOnly: boolean;
+  followersMinMinutes?: number;
+  subscribersOnly: boolean;
+  slowModeSeconds?: number;
+  emoteOnly: boolean;
+}
+
 export interface KickChannel {
   id: string;
   /** Kick's user id, which is what 7TV indexes a Kick channel by. */
@@ -235,6 +253,7 @@ export interface KickChannel {
   chatroomId?: string;
   /** Whether the signed-in account follows this channel; undefined if unknown. */
   following?: boolean;
+  restrictions?: KickChatRestrictions;
   isLive: boolean;
   title?: string;
   category?: string;
@@ -839,6 +858,15 @@ export class KickService {
       profileImageUrl: channel.user?.profile_pic ?? "",
       chatroomId: channel.chatroom?.id === undefined ? undefined : String(channel.chatroom.id),
       following: channel.following ?? undefined,
+      restrictions: {
+        followersOnly: Boolean(channel.chatroom?.followers_mode),
+        followersMinMinutes: channel.chatroom?.following_min_duration ?? undefined,
+        subscribersOnly: Boolean(channel.chatroom?.subscribers_mode),
+        slowModeSeconds: channel.chatroom?.slow_mode
+          ? (channel.chatroom.message_interval ?? undefined)
+          : undefined,
+        emoteOnly: Boolean(channel.chatroom?.emotes_mode),
+      },
       // A null livestream is how Kick reports an offline channel.
       isLive: Boolean(livestream?.is_live),
       title: livestream?.session_title ?? undefined,

@@ -1,8 +1,10 @@
 import type {
   ChatConnectionState,
   ChatMessage,
+  ChatRestrictions,
   TwitchChatEmoteRange,
 } from "../shared/chat";
+import { NO_CHAT_RESTRICTIONS } from "../shared/chat";
 import type { KickService } from "./kick-service";
 
 type MessageListener = (message: ChatMessage) => void;
@@ -103,6 +105,7 @@ export class KickChatService {
     private readonly getKickService: () => KickService,
     private readonly onMessage: MessageListener,
     private readonly onState: StateListener,
+    private readonly onRestrictions: (restrictions: ChatRestrictions) => void,
   ) {}
 
   /** `slug` is the bare Kick channel name, without the platform prefix. */
@@ -111,6 +114,7 @@ export class KickChatService {
     this.channel = slug.toLowerCase();
     this.manuallyClosed = false;
     const generation = ++this.connectGeneration;
+    this.onRestrictions(NO_CHAT_RESTRICTIONS);
     this.onState("connecting");
 
     // The chat socket is keyed by chatroom id, which only the channel endpoint
@@ -123,6 +127,7 @@ export class KickChatService {
       return;
     }
     this.chatroomId = channel.chatroomId;
+    if (channel.restrictions) this.onRestrictions(channel.restrictions);
     this.openSocket();
     // Load recent chat once the socket is opening, so history and live messages
     // both flow to the same buffer. The channel id, not the chatroom id, keys

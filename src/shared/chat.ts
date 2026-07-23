@@ -113,6 +113,27 @@ export function messageMentionsLogin(message: ChatMessage, login: string): boole
 
 export type ChatConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting";
 
+/**
+ * A channel's active chat modes, so the composer can explain why a message
+ * might be refused. Which of these a viewer actually meets (follow age, sub
+ * status) is not always knowable, so this describes the room, not the viewer.
+ */
+export interface ChatRestrictions {
+  followersOnly: boolean;
+  /** Minutes of following required, when the channel sets one. */
+  followersMinMinutes?: number;
+  subscribersOnly: boolean;
+  /** Seconds between messages in slow mode. */
+  slowModeSeconds?: number;
+  emoteOnly: boolean;
+}
+
+export const NO_CHAT_RESTRICTIONS: ChatRestrictions = {
+  followersOnly: false,
+  subscribersOnly: false,
+  emoteOnly: false,
+};
+
 export interface ChatBadgeAsset {
   key: string;
   title: string;
@@ -145,4 +166,5 @@ export interface ChatApi {
   setHistoryLimit(limit: number): void;
   onMessage(listener: (message: ChatMessage) => void): () => void;
   onState(listener: (state: ChatConnectionState) => void): () => void;
+  onRestrictions(listener: (restrictions: ChatRestrictions) => void): () => void;
 }

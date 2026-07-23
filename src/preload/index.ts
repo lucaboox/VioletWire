@@ -22,7 +22,12 @@ import type {
   KickUserAccount,
 } from "../shared/platform";
 import type { EmoteApi } from "../shared/emotes";
-import type { ChatApi, ChatConnectionState, ChatMessage } from "../shared/chat";
+import type {
+  ChatApi,
+  ChatConnectionState,
+  ChatMessage,
+  ChatRestrictions,
+} from "../shared/chat";
 import type { AppUpdateStatus, UpdateApi } from "../shared/updates";
 import type {
   AppPreferences,
@@ -165,6 +170,12 @@ const api: DesktopApi = {
         listener(state);
       ipcRenderer.on("chat:state", handler);
       return () => ipcRenderer.removeListener("chat:state", handler);
+    },
+    onRestrictions: (listener: (restrictions: ChatRestrictions) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, restrictions: ChatRestrictions) =>
+        listener(restrictions);
+      ipcRenderer.on("chat:restrictions", handler);
+      return () => ipcRenderer.removeListener("chat:restrictions", handler);
     },
   } satisfies ChatApi,
   updates: {
