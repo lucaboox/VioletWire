@@ -1880,7 +1880,7 @@ export function App() {
             category: channel.category,
             viewerCount: channel.viewerCount,
             startedAt: channel.startedAt,
-            isFollowed: channel.following,
+            isFollowed: channel.following ?? undefined,
           });
         })
         .catch(() => undefined);
@@ -2042,6 +2042,18 @@ export function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [multiStreamActive, fullscreen, multiTheater]);
 
+  const activeChannelIsFollowed = useMemo(() => {
+    if (!activeChannel) return false;
+    const target = parseChannelKey(activeChannel);
+    if (target.platform === "kick") {
+      return (
+        kickFollowedChannels.some((channel) => channel.slug === target.login) ||
+        streamMetadata?.isFollowed === true
+      );
+    }
+    return streamMetadata?.isFollowed === true;
+  }, [activeChannel, kickFollowedChannels, streamMetadata?.isFollowed]);
+
   useEffect(() => {
     if (!activeChannel || activeMode !== "native") {
       window.desktop.player.setNativeControlsVisible(false);
@@ -2054,7 +2066,7 @@ export function App() {
       chatVisible,
       chatPresentation,
       viewerLogin,
-      isFollowed: streamMetadata?.isFollowed,
+      isFollowed: activeChannelIsFollowed,
     });
     window.desktop.player.setNativeControlsVisible(nativeControlsVisible);
   }, [
@@ -2063,8 +2075,8 @@ export function App() {
     chatPresentation,
     chatVisible,
     fullscreen,
+    activeChannelIsFollowed,
     nativeControlsVisible,
-    streamMetadata?.isFollowed,
     theaterMode,
     viewerLogin,
   ]);
@@ -2662,23 +2674,32 @@ export function App() {
         setNotice("Sign in to Kick from Settings to follow channels.");
         return;
       }
-      const nextFollow = !streamMetadata?.isFollowed;
-      // Reflect the change at once; the detail refresh confirms it.
-      setStreamMetadata((current) =>
-        current ? { ...current, isFollowed: nextFollow } : current,
+      const nextFollow = !activeChannelIsFollowed;
+      // The sidebar list is the source of truth for follow state, so update it
+      // at once and let the refetch confirm.
+      const previousList = kickFollowedChannels;
+      setKickFollowedChannels((current) =>
+        nextFollow
+          ? current.some((channel) => channel.slug === target.login)
+            ? current
+            : [
+                ...current,
+                {
+                  id: streamMetadata?.broadcasterId ?? target.login,
+                  slug: target.login,
+                  displayName: streamMetadata?.displayName ?? target.login,
+                  profileImageUrl: streamMetadata?.profileImageUrl ?? "",
+                  isLive: streamMetadata?.isLive ?? false,
+                  viewerCount: streamMetadata?.viewerCount ?? 0,
+                },
+              ]
+          : current.filter((channel) => channel.slug !== target.login),
       );
       try {
         await window.desktop.kick.setFollowing(target.login, nextFollow);
-        const channel = await window.desktop.kick.getChannel(target.login);
-        setStreamMetadata((current) =>
-          current ? { ...current, isFollowed: channel?.following ?? nextFollow } : current,
-        );
-        // The sidebar list changed, so refresh it.
         setKickFollowedChannels(await window.desktop.kick.getFollowedChannels());
       } catch (reason) {
-        setStreamMetadata((current) =>
-          current ? { ...current, isFollowed: !nextFollow } : current,
-        );
+        setKickFollowedChannels(previousList);
         setNotice(reason instanceof Error ? reason.message : "Could not update follow.");
       }
       return;
@@ -2756,7 +2777,7 @@ export function App() {
   }, [chatRestrictions]);
 
   const chatBlocked =
-    chatRestrictions.followersOnly && streamMetadata?.isFollowed === false;
+    chatRestrictions.followersOnly && !activeChannelIsFollowed;
   const activeChatPlatform = chatChannel
     ? parseChannelKey(chatChannel).platform
     : "twitch";
@@ -3785,9 +3806,9 @@ export function App() {
 
               <div className="player-actions" aria-label="Channel and player actions">
                 <button
-                  aria-label={streamMetadata?.isFollowed ? "Following channel" : "Follow channel"}
-                  aria-pressed={Boolean(streamMetadata?.isFollowed)}
-                  className={streamMetadata?.isFollowed ? "toolbar-icon follow-action active" : "toolbar-icon follow-action"}
+                  aria-label={activeChannelIsFollowed ? "Following channel" : "Follow channel"}
+                  aria-pressed={activeChannelIsFollowed}
+                  className={activeChannelIsFollowed ? "toolbar-icon follow-action active" : "toolbar-icon follow-action"}
                   onClick={() => void handleFollow()}
                   title={
                     streamMetadata?.isFollowed
@@ -3798,7 +3819,7 @@ export function App() {
                   }
                   type="button"
                 >
-                  <Heart fill={streamMetadata?.isFollowed ? "currentColor" : "none"} size={17} />
+                  <Heart fill={activeChannelIsFollowed ? "currentColor" : "none"} size={17} />
                 </button>
                 <button
                   aria-label={
@@ -3940,7 +3961,7 @@ export function App() {
                           chatVisible,
                           chatPresentation,
                           viewerLogin,
-                          isFollowed: streamMetadata?.isFollowed,
+                          isFollowed: activeChannelIsFollowed,
                         }}
                         inlineVisible={nativeControlsVisible}
                       />

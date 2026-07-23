@@ -696,14 +696,17 @@ export class KickService {
       },
     );
 
-    if (response.status === 401 || response.status === 403) {
-      throw new Error("Sign in to Kick to follow channels.");
-    }
     // The channel detail refetch that follows will reflect the change, so a
     // stale detail cache must not mask it.
     this.detailCache.delete(slug.toLowerCase());
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("Sign in to Kick to follow channels.");
+    }
+    if (response.status === 429) {
+      throw new Error("Kick is rate limiting follows. Try again in a moment.");
+    }
+    // 409 means already in the requested state, which is success here.
     if (!response.ok && response.status !== 409) {
-      // 409 means already in the requested state, which is a success for us.
       throw new Error("Kick would not change the follow state.");
     }
   }
