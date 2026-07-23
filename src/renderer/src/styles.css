@@ -223,6 +223,9 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .oled-mode .window-preview,
 .oled-mode .window-bar,
 .oled-mode .mini-chat,
+.oled-mode .search-page,
+.oled-mode .search-channel-card,
+.oled-mode .search-direct,
 .oled-mode .stream-card-media,
 .oled-mode .stream-card-placeholder {
   background: #000;
@@ -238,7 +241,9 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .oled-mode .chat-panel-header,
 .oled-mode .native-chat-input,
 .oled-mode .settings-card,
-.oled-mode .settings-preview {
+.oled-mode .settings-preview,
+.oled-mode .search-channel-card,
+.oled-mode .search-direct {
   border-color: #242429;
 }
 .oled-mode * {
