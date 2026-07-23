@@ -209,6 +209,5 @@ export interface TwitchApi {
   getStreamMetadata(channel: string): Promise<StreamMetadata | null>;
   getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile>;
   createClip(channel: string): Promise<ClipCreationResult>;
-  openSubscription(channel: string): Promise<void>;
   openChannel(channel: string): Promise<void>;
 }

@@ -1487,9 +1487,6 @@ handleTrusted(
 handleTrusted("twitch:create-clip", (_event, rawChannel: unknown) =>
   twitchService.createClip(channelNameSchema.parse(rawChannel)),
 );
-handleTrusted("twitch:open-subscription", (_event, rawChannel: unknown) =>
-  twitchService.openSubscription(channelNameSchema.parse(rawChannel)),
-);
 handleTrusted("twitch:open-channel", (_event, rawChannel: unknown) =>
   twitchService.openChannel(channelNameSchema.parse(rawChannel)),
 );

@@ -966,10 +966,6 @@ export class TwitchService {
     });
   }
 
-  async openSubscription(channel: string): Promise<void> {
-    await shell.openExternal(`https://www.twitch.tv/subs/${encodeURIComponent(channel)}`);
-  }
-
   async openChannel(channel: string): Promise<void> {
     await shell.openExternal(`https://www.twitch.tv/${encodeURIComponent(channel)}`);
   }

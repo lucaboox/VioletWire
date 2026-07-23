@@ -122,8 +122,6 @@ const api: DesktopApi = {
     getChatUserProfile: (channel: string, login: string) =>
       ipcRenderer.invoke("twitch:get-chat-user-profile", channel, login),
     createClip: (channel: string) => ipcRenderer.invoke("twitch:create-clip", channel),
-    openSubscription: (channel: string) =>
-      ipcRenderer.invoke("twitch:open-subscription", channel),
     openChannel: (channel: string) => ipcRenderer.invoke("twitch:open-channel", channel),
   } satisfies TwitchApi,
   emotes: {
