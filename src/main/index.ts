@@ -780,7 +780,22 @@ async function openSubscriptionModal(
     revealed = true;
     view.setVisible(true);
   };
-  page.once("did-finish-load", revealPage);
+  // did-finish-load only means the document loaded; these pages keep rendering
+  // their content afterwards. Once loaded, wait until the DOM has stopped
+  // changing for a short spell (or a cap) so the subscribe card is painted
+  // before the view is revealed, rather than popping in behind the spinner.
+  const waitUntilSettled = `new Promise((resolve) => {
+    let timer = null;
+    const settle = () => { try { observer.disconnect(); } catch (e) {} resolve(true); };
+    const bump = () => { if (timer) clearTimeout(timer); timer = setTimeout(settle, 650); };
+    const observer = new MutationObserver(bump);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    bump();
+    setTimeout(settle, 8000);
+  })`;
+  page.once("did-finish-load", () => {
+    page.executeJavaScript(waitUntilSettled).then(revealPage).catch(revealPage);
+  });
   page.on("did-fail-load", (_event, _code, _desc, _url, isMainFrame) => {
     if (isMainFrame) revealPage();
   });
