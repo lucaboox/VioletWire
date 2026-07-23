@@ -25,6 +25,8 @@ export interface ChatMessage {
   color: string;
   text: string;
   badges: string[];
+  /** Pre-resolved badges (Kick), used in place of the keyed `badges` when set. */
+  badgeAssets?: ChatBadgeAsset[];
   sentAt: number;
   twitchEmotes: TwitchChatEmoteRange[];
   notice?: {
@@ -139,6 +141,10 @@ export interface ChatBadgeAsset {
   title: string;
   imageUrl: string;
   imageUrls?: string[];
+  // Kick has text-only badges (subscriber, moderator) with no image, shown as a
+  // small coloured chip instead.
+  label?: string;
+  color?: string;
 }
 
 export interface TwitchPickerEmote {

@@ -14,7 +14,21 @@ export function ChatBadge({ badge, loading = "lazy" }: ChatBadgeProps) {
   const [urlIndex, setUrlIndex] = useState(0);
 
   const source = urls[urlIndex];
-  if (!source) return null;
+  if (!source) {
+    // A text-only badge (Kick) renders as a small coloured chip.
+    if (badge.label) {
+      return (
+        <span
+          className="chat-text-badge"
+          style={{ backgroundColor: badge.color ?? "#7a7a85" }}
+          title={badge.title}
+        >
+          {badge.label}
+        </span>
+      );
+    }
+    return null;
+  }
 
   return (
     <img

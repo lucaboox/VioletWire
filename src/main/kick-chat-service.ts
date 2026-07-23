@@ -1,4 +1,5 @@
 import type {
+  ChatBadgeAsset,
   ChatConnectionState,
   ChatMessage,
   ChatRestrictions,
@@ -71,6 +72,7 @@ export function parseKickEmotes(raw: string): {
 interface KickChatIdentity {
   color?: string;
   badges?: { type?: string; text?: string }[];
+  badges_v2?: { name?: string; image_url?: string }[];
 }
 
 interface KickChatSender {
@@ -85,6 +87,53 @@ interface KickChatMessagePayload {
   content?: string;
   created_at?: string;
   sender?: KickChatSender;
+}
+
+// Kick renders these as built-in icons with no image in the chat payload, so
+// they show as small coloured chips instead.
+const KICK_TEXT_BADGE_COLORS: Record<string, string> = {
+  broadcaster: "#fa5838",
+  moderator: "#00c9a7",
+  verified: "#1475e1",
+  vip: "#e0559c",
+  og: "#d17ee6",
+  founder: "#e0a944",
+  staff: "#8a5cf6",
+  subscriber: "#5a9bff",
+  sub_gifter: "#5a9bff",
+};
+
+function kickBadges(identity: KickChatIdentity | undefined): ChatBadgeAsset[] {
+  if (!identity) return [];
+  const assets: ChatBadgeAsset[] = [];
+  // Image badges (level, and any others Kick gives a URL) render as images.
+  for (const badge of identity.badges_v2 ?? []) {
+    if (!badge.image_url) continue;
+    assets.push({
+      key: `kick-img-${badge.name ?? assets.length}`,
+      title: badge.name ?? "Badge",
+      imageUrl: badge.image_url,
+    });
+  }
+  // Text badges become coloured chips.
+  for (const badge of identity.badges ?? []) {
+    const type = badge.type ?? "";
+    if (type.length === 0) continue;
+    const label = badge.text ?? type;
+    assets.push({
+      key: `kick-${type}`,
+      title: label,
+      imageUrl: "",
+      label: label
+        .split(/\s+/)
+        .map((word) => word[0] ?? "")
+        .join("")
+        .slice(0, 3)
+        .toUpperCase(),
+      color: KICK_TEXT_BADGE_COLORS[type] ?? "#7a7a85",
+    });
+  }
+  return assets;
 }
 
 export class KickChatService {
@@ -278,10 +327,8 @@ export class KickChatService {
       displayName: sender.username ?? login,
       color: sender.identity?.color ?? "",
       text: rendered,
-      // Kick's badges are its own set with no Twitch equivalent, and the
-      // renderer resolves badge art from Twitch's assets, so they are dropped
-      // rather than rendered as broken images.
       badges: [],
+      badgeAssets: kickBadges(payload.sender?.identity),
       sentAt: Number.isFinite(sentAt) ? sentAt : Date.now(),
       twitchEmotes: emotes,
     };

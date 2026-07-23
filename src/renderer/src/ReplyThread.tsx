@@ -71,10 +71,14 @@ export function ReplyThread({
           >
             <div className="reply-thread-author">
               <span>
-                {message.badges.slice(0, 3).map((badgeKey) => {
-                  const badge = badges.get(badgeKey);
-                  return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
-                })}
+                {message.badgeAssets && message.badgeAssets.length > 0
+                  ? message.badgeAssets.slice(0, 3).map((badge) => (
+                      <ChatBadge badge={badge} key={badge.key} />
+                    ))
+                  : message.badges.slice(0, 3).map((badgeKey) => {
+                      const badge = badges.get(badgeKey);
+                      return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
+                    })}
                 <button
                   className="chat-username"
                   onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}

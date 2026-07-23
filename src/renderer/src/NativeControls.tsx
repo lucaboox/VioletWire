@@ -329,13 +329,21 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
           {formatChatTimestamp(message.sentAt)}
         </time>
       )}
-      {message.badges.length > 0 && (
+      {message.badgeAssets && message.badgeAssets.length > 0 ? (
         <span className="native-video-chat-badges">
-          {message.badges.slice(0, 4).map((badgeKey) => {
-            const badge = badges.get(badgeKey);
-            return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
-          })}
+          {message.badgeAssets.slice(0, 4).map((badge) => (
+            <ChatBadge badge={badge} key={badge.key} />
+          ))}
         </span>
+      ) : (
+        message.badges.length > 0 && (
+          <span className="native-video-chat-badges">
+            {message.badges.slice(0, 4).map((badgeKey) => {
+              const badge = badges.get(badgeKey);
+              return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
+            })}
+          </span>
+        )
       )}
       <button
         className="chat-username"
