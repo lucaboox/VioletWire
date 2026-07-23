@@ -103,6 +103,7 @@ import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
 import {
   channelKey,
+  channelUrl,
   parseChannelKey,
   type KickChannelDetails,
   type KickChannelResult,
@@ -2678,12 +2679,28 @@ export function App() {
 
   async function openChannelInBrowser() {
     if (!activeChannel) return;
+    const target = parseChannelKey(activeChannel);
     try {
-      await window.desktop.twitch.openChannel(activeChannel);
+      if (target.platform === "kick") {
+        await window.desktop.system.openExternal(channelUrl("kick", target.login));
+      } else {
+        await window.desktop.twitch.openChannel(activeChannel);
+      }
       setNotice("Opened the channel in your default browser.");
     } catch {
       setNotice("Unable to open the channel in your browser.");
     }
+  }
+
+  async function openSubscribePage() {
+    if (!activeChannel) return;
+    const target = parseChannelKey(activeChannel);
+    if (target.platform === "kick") {
+      // Kick has no in-app subscribe flow, so open its subscribe page.
+      await window.desktop.system.openExternal(`${channelUrl("kick", target.login)}/subscribe`);
+      return;
+    }
+    await openChannelAction("subscribe", "Subscription");
   }
 
   async function handleFollow() {
@@ -3853,13 +3870,15 @@ export function App() {
                     streamMetadata?.subscription?.isSubscribed ? "active" : "",
                     subscriptionDrawerState !== "closed" ? "panel-open" : "",
                   ].filter(Boolean).join(" ")}
-                  onClick={() => void openChannelAction("subscribe", "Subscription")}
+                  onClick={() => void openSubscribePage()}
                   title={
-                    subscriptionDrawerState === "loading"
-                      ? "Loading Twitch subscription panel…"
-                      : subscriptionDrawerState === "open"
-                        ? "Close Twitch subscription panel"
-                        : "Open Twitch subscription panel"
+                    activeChannel && parseChannelKey(activeChannel).platform === "kick"
+                      ? "Open the Kick subscription page"
+                      : subscriptionDrawerState === "loading"
+                        ? "Loading Twitch subscription panel…"
+                        : subscriptionDrawerState === "open"
+                          ? "Close Twitch subscription panel"
+                          : "Open Twitch subscription panel"
                   }
                   type="button"
                 >
@@ -3874,8 +3893,18 @@ export function App() {
                 </button>
                 <button
                   className="toolbar-action"
+                  disabled={
+                    (activeChannel && parseChannelKey(activeChannel).platform === "kick") ||
+                    authState.status !== "signed-in"
+                  }
                   onClick={() => void createClip()}
-                  title="Create a clip with Twitch's official API"
+                  title={
+                    activeChannel && parseChannelKey(activeChannel).platform === "kick"
+                      ? "Clips are not available on Kick yet"
+                      : authState.status !== "signed-in"
+                        ? "Sign in with Twitch to create clips"
+                        : "Create a clip with Twitch's official API"
+                  }
                   type="button"
                 >
                   <Scissors size={16} /> <span>Clip</span>
@@ -3904,10 +3933,18 @@ export function App() {
                   </>
                 )}
                 <button
-                  aria-label="Open channel on Twitch"
+                  aria-label={
+                    activeChannel && parseChannelKey(activeChannel).platform === "kick"
+                      ? "Open channel on Kick"
+                      : "Open channel on Twitch"
+                  }
                   className="toolbar-icon"
                   onClick={() => void openChannelInBrowser()}
-                  title="Open channel on Twitch"
+                  title={
+                    activeChannel && parseChannelKey(activeChannel).platform === "kick"
+                      ? "Open channel on Kick"
+                      : "Open channel on Twitch"
+                  }
                   type="button"
                 >
                   <ExternalLink size={16} />

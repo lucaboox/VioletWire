@@ -876,9 +876,11 @@ export function EmotePicker({
         )}
 
       <nav aria-label="Emote providers" className="vw-emote-providers">
-        {providers.map((item) => (
+        {providers.map((item) => {
+          const tabName = item.id === "twitch" ? platformLabel : providerLabel(item.id);
+          return (
           <button
-            aria-label={`${providerLabel(item.id)}${item.disabled ? " (coming soon)" : ""}`}
+            aria-label={`${tabName}${item.disabled ? " (coming soon)" : ""}`}
             aria-pressed={provider === item.id}
             className={provider === item.id ? "active" : ""}
             disabled={item.disabled}
@@ -889,18 +891,19 @@ export function EmotePicker({
               setQuery("");
               scrollHost.current?.scrollTo({ top: 0 });
             }}
-            title={`${providerLabel(item.id)}${item.disabled ? " · Coming soon" : ""}`}
+            title={`${tabName}${item.disabled ? " · Coming soon" : ""}`}
             type="button"
           >
             <ProviderMark icon={item.icon} label={item.mark} logo={item.logo} />
           </button>
-        ))}
+          );
+        })}
       </nav>
 
       <div className="vw-emote-search">
         <Search size={17} />
         <input
-          aria-label={searchAllProviders ? "Search all available emotes" : `Search ${providerLabel(provider)} emotes`}
+          aria-label={searchAllProviders ? "Search all available emotes" : `Search ${provider === "twitch" ? platformLabel : providerLabel(provider)} emotes`}
           autoFocus
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search emotes…"
