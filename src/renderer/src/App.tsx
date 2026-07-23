@@ -2350,6 +2350,11 @@ export function App() {
     // Drop whatever the new scope excludes so stale results don't linger.
     if (option === "kick") setTopSearchResults(emptySearchResults);
     if (option === "twitch") setKickSearchResults([]);
+    // Show the loading state for the services the new scope will re-fetch,
+    // otherwise the page briefly reads "No results" until the fetch lands.
+    const canSearch = channelInput.trim().length >= 2;
+    setTwitchSearchLoading(canSearch && option !== "kick" && authState.status === "signed-in");
+    setKickSearchLoading(canSearch && option !== "twitch");
     void window.desktop.preferences.update({ searchPlatformFilter: option });
   }
 
