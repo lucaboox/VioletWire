@@ -293,6 +293,14 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .browse-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: #f4f4f5; background: transparent; }
 .browse-search button { display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 5px; color: #92929c; background: transparent; cursor: pointer; }
 .browse-search button:hover { color: white; background: #29292f; }
+/* Browse service toggle */
+.browse-platforms { display: flex; gap: 7px; margin-bottom: 18px; }
+.browse-platforms button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 16px; border: 1px solid #2f2f37; border-radius: 8px; color: #a1a1aa; background: #16161a; cursor: pointer; font: inherit; font-size: 13px; font-weight: 650; }
+.browse-platforms button svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.browse-platforms button:hover { color: #f4f4f5; background: #1f1f25; }
+.browse-platforms button.active { border-color: #6d28d9; color: #f4f4f5; background: #2a1f3d; }
+.oled-mode .browse-platforms button { border-color: #242429; background: #000; }
+
 /* Search results page */
 .search-page { height: calc(100% - 68px); padding: 29px 30px 50px; overflow-x: hidden; overflow-y: auto; background: radial-gradient(circle at 82% -12%, #21142c 0, transparent 26%), #0e0e10; }
 .search-page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 25px; margin-bottom: 22px; }

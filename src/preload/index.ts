@@ -13,7 +13,7 @@ import type {
   PlayerBounds,
   PlayerMode,
 } from "../shared/player";
-import type { TwitchApi } from "../shared/twitch";
+import type { TwitchApi, BrowseCategory, BrowseStream, BrowsePage } from "../shared/twitch";
 import type {
   KickChannelDetails,
   KickChannelResult,
@@ -151,6 +151,10 @@ const api: DesktopApi = {
     setFollowing: (slug: string, follow: boolean): Promise<void> =>
       ipcRenderer.invoke("kick:set-following", slug, follow),
     openWindow: (slug: string): Promise<void> => ipcRenderer.invoke("kick:open-window", slug),
+    getCategories: (query: string, cursor?: string): Promise<BrowsePage<BrowseCategory>> =>
+      ipcRenderer.invoke("kick:get-categories", query, cursor),
+    getCategoryStreams: (slug: string, cursor?: string): Promise<BrowsePage<BrowseStream>> =>
+      ipcRenderer.invoke("kick:get-category-streams", slug, cursor),
   },
   chat: {
     send: (channel: string, message: string, replyParentMessageId?: string) =>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { BrowseCategory, BrowseStream, BrowsePage } from "./twitch";
 
 /**
  * VioletWire watches more than one service. Twitch remains the default so
@@ -155,4 +156,10 @@ export interface KickApi {
   getEmoteSets(slug: string): Promise<KickEmoteGroup[]>;
   setFollowing(slug: string, follow: boolean): Promise<void>;
   openWindow(slug: string): Promise<void>;
+  // Browse: Kick's own categories and the live channels within one. These reuse
+  // the Twitch browse shapes so the renderer's grid can render either service.
+  // A category's `id` carries its Kick slug, which is what getCategoryStreams
+  // takes. The cursor is an opaque page token.
+  getCategories(query: string, cursor?: string): Promise<BrowsePage<BrowseCategory>>;
+  getCategoryStreams(slug: string, cursor?: string): Promise<BrowsePage<BrowseStream>>;
 }

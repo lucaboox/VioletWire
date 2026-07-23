@@ -48,6 +48,9 @@ export const appPreferencesSchema = z.object({
   // Which services search covers, kept separate from the followed list so the
   // two can be scoped independently.
   searchPlatformFilter: z.enum(["twitch", "kick", "both"]),
+  // Which service the browse directory shows. One at a time — the two services'
+  // category directories do not combine meaningfully.
+  browsePlatform: z.enum(["twitch", "kick"]),
   emotePickerWidth: z.number().int().min(330).max(600),
   emotePickerHeight: z.number().int().min(360).max(700),
   emoteSearchAllProviders: z.boolean(),
@@ -87,6 +90,7 @@ export const defaultAppPreferences: AppPreferences = {
   favoriteChannels: [],
   platformFilter: "twitch",
   searchPlatformFilter: "both",
+  browsePlatform: "twitch",
   emotePickerWidth: 390,
   emotePickerHeight: 500,
   emoteSearchAllProviders: false,

@@ -1,5 +1,6 @@
 import { BrowserWindow, session, type Session } from "electron";
 import { z } from "zod";
+import type { BrowseCategory, BrowseStream, BrowsePage } from "../shared/twitch";
 
 /**
  * Kick's public API does not expose enough to run a viewer: there is no
@@ -304,6 +305,88 @@ function toIsoTimestamp(value: string | null | undefined): string | undefined {
   return `${match[1]}T${match[2]}Z`;
 }
 
+const kickBannerSchema = z
+  .object({
+    responsive: z.string().nullish(),
+    srcset: z.string().nullish(),
+    url: z.string().nullish(),
+    src: z.string().nullish(),
+  })
+  .nullish();
+
+const kickCategorySchema = z.object({
+  name: z.string().nullish(),
+  slug: z.string().nullish(),
+  banner: kickBannerSchema,
+});
+
+const kickCategoryListSchema = z.object({
+  data: z.array(kickCategorySchema).nullish(),
+  current_page: z.number().nullish(),
+  next_page_url: z.string().nullish(),
+});
+
+const kickCategorySearchSchema = z.object({
+  categories: z.array(kickCategorySchema).nullish(),
+});
+
+const kickLiveStreamSchema = z.object({
+  id: z.number().nullish(),
+  session_title: z.string().nullish(),
+  start_time: z.string().nullish(),
+  created_at: z.string().nullish(),
+  language: z.string().nullish(),
+  is_mature: z.boolean().nullish(),
+  viewer_count: z.number().nullish(),
+  viewers: z.number().nullish(),
+  tags: z.array(z.string()).nullish(),
+  thumbnail: z.object({ src: z.string().nullish() }).nullish(),
+  channel: z
+    .object({
+      id: z.number().nullish(),
+      slug: z.string().nullish(),
+      user: z
+        .object({
+          username: z.string().nullish(),
+          profilepic: z.string().nullish(),
+          profile_pic: z.string().nullish(),
+        })
+        .nullish(),
+    })
+    .nullish(),
+});
+
+const kickLiveStreamListSchema = z.object({
+  data: z.array(kickLiveStreamSchema).nullish(),
+  next_page_url: z.string().nullish(),
+});
+
+/** Kick's images come as a `srcset` string or a plain URL; take the first URL. */
+function firstSrcsetUrl(...candidates: (string | null | undefined)[]): string {
+  for (const value of candidates) {
+    if (!value) continue;
+    const first = value.split(",")[0]?.trim().split(/\s+/)[0];
+    if (first) return first;
+  }
+  return "";
+}
+
+/** A Kick subcategory shaped into the shared BrowseCategory. Its slug becomes
+ *  the id, since that is what the category-streams route is keyed by. */
+function mapKickCategory(entry: z.infer<typeof kickCategorySchema>): BrowseCategory | null {
+  if (!entry.slug || !entry.name) return null;
+  return {
+    id: entry.slug,
+    name: entry.name,
+    boxArtUrl: firstSrcsetUrl(
+      entry.banner?.responsive,
+      entry.banner?.srcset,
+      entry.banner?.url,
+      entry.banner?.src,
+    ),
+  };
+}
+
 export class KickService {
   private sessionCookie: string | null = null;
   private sessionFetchedAt = 0;
@@ -516,6 +599,82 @@ export class KickService {
       });
     }
     return results;
+  }
+
+  /**
+   * Kick's category directory. With a query it searches categories; without
+   * one it pages through the full list. The returned cursor is the next page.
+   */
+  async getCategories(query: string, cursor?: string): Promise<BrowsePage<BrowseCategory>> {
+    const search = query.trim();
+    if (search.length > 0) {
+      const payload = await this.requestJson(
+        `/api/search?searched_word=${encodeURIComponent(search)}`,
+      );
+      const parsed = kickCategorySearchSchema.safeParse(payload);
+      if (!parsed.success) return { items: [] };
+      return {
+        items: (parsed.data.categories ?? []).flatMap((entry) => {
+          const category = mapKickCategory(entry);
+          return category ? [category] : [];
+        }),
+      };
+    }
+
+    const page = cursor ?? "1";
+    const payload = await this.requestJson(
+      `/api/v1/subcategories?page=${encodeURIComponent(page)}`,
+    );
+    const parsed = kickCategoryListSchema.safeParse(payload);
+    if (!parsed.success) return { items: [] };
+    return {
+      items: (parsed.data.data ?? []).flatMap((entry) => {
+        const category = mapKickCategory(entry);
+        return category ? [category] : [];
+      }),
+      cursor: parsed.data.next_page_url
+        ? String((parsed.data.current_page ?? Number(page)) + 1)
+        : undefined,
+    };
+  }
+
+  /** The live channels in a category, keyed by the category's Kick slug. */
+  async getCategoryStreams(slug: string, cursor?: string): Promise<BrowsePage<BrowseStream>> {
+    const clean = slug.trim().toLowerCase();
+    if (clean.length === 0) return { items: [] };
+    const page = cursor ?? "1";
+    const payload = await this.requestJson(
+      `/stream/livestreams/${encodeURIComponent(clean)}?page=${encodeURIComponent(page)}`,
+    );
+    const parsed = kickLiveStreamListSchema.safeParse(payload);
+    if (!parsed.success) return { items: [] };
+
+    const items: BrowseStream[] = [];
+    for (const entry of parsed.data.data ?? []) {
+      const channelSlug = entry.channel?.slug;
+      if (!channelSlug) continue;
+      items.push({
+        id: entry.id == null ? channelSlug : String(entry.id),
+        broadcasterId: entry.channel?.id == null ? channelSlug : String(entry.channel.id),
+        login: channelSlug,
+        displayName: entry.channel?.user?.username ?? channelSlug,
+        title: entry.session_title ?? "",
+        // The whole page is one category, so the card need not repeat it.
+        category: "",
+        language: entry.language ?? "",
+        tags: entry.tags ?? [],
+        isMature: Boolean(entry.is_mature),
+        profileImageUrl:
+          entry.channel?.user?.profilepic ?? entry.channel?.user?.profile_pic ?? "",
+        thumbnailUrl: entry.thumbnail?.src ?? "",
+        viewerCount: entry.viewer_count ?? entry.viewers ?? 0,
+        startedAt: toIsoTimestamp(entry.start_time ?? entry.created_at) ?? "",
+      });
+    }
+    return {
+      items,
+      cursor: parsed.data.next_page_url ? String(Number(page) + 1) : undefined,
+    };
   }
 
   /** The signed-in Kick account, or null when signed out. */

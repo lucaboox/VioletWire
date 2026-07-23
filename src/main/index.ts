@@ -1498,6 +1498,18 @@ handleTrusted("kick:search", (_event, rawQuery: unknown) => {
   return kickService.search(query);
 });
 
+handleTrusted("kick:get-categories", (_event, rawQuery: unknown, rawCursor: unknown) => {
+  const query = typeof rawQuery === "string" ? rawQuery.slice(0, 100) : "";
+  const cursor = typeof rawCursor === "string" ? rawCursor.slice(0, 12) : undefined;
+  return kickService.getCategories(query, cursor);
+});
+
+handleTrusted("kick:get-category-streams", (_event, rawSlug: unknown, rawCursor: unknown) => {
+  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 60).toLowerCase() : "";
+  const cursor = typeof rawCursor === "string" ? rawCursor.slice(0, 12) : undefined;
+  return slug.length === 0 ? { items: [] } : kickService.getCategoryStreams(slug, cursor);
+});
+
 handleTrusted("twitch:search", (_event, rawQuery: unknown) => {
   if (typeof rawQuery !== "string") throw new Error("Search text must be a string.");
   return twitchService.search(rawQuery.slice(0, 100));

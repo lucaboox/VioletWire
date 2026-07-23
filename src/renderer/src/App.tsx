@@ -509,6 +509,7 @@ export function App() {
     x: number;
     y: number;
   } | null>(null);
+  const [browsePlatform, setBrowsePlatform] = useState<"twitch" | "kick">("twitch");
   const [browseCategories, setBrowseCategories] = useState<BrowseCategory[]>([]);
   const [browseCategoryCursor, setBrowseCategoryCursor] = useState<string | undefined>();
   const [browseSearch, setBrowseSearch] = useState("");
@@ -845,6 +846,23 @@ export function App() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [changelogOpen, changelogReturnsToSettings, settingsOpen]);
 
+  // Browse can show either service's directory. These route a request to the
+  // chosen one; both return the same shape, so the grid renders either.
+  const fetchBrowseCategories = useCallback(
+    (query: string, cursor?: string) =>
+      browsePlatform === "kick"
+        ? window.desktop.kick.getCategories(query, cursor)
+        : window.desktop.twitch.getBrowseCategories(query, cursor),
+    [browsePlatform],
+  );
+  const fetchCategoryStreams = useCallback(
+    (id: string, cursor?: string) =>
+      browsePlatform === "kick"
+        ? window.desktop.kick.getCategoryStreams(id, cursor)
+        : window.desktop.twitch.getCategoryStreams(id, cursor),
+    [browsePlatform],
+  );
+
   const loadNextBrowseCategories = useCallback(async () => {
     if (!browseCategoryCursor || browseCategoryLoadPending.current) return;
     browseCategoryLoadPending.current = true;
@@ -852,10 +870,7 @@ export function App() {
     setBrowseError(null);
     const requestedCursor = browseCategoryCursor;
     try {
-      const result = await window.desktop.twitch.getBrowseCategories(
-        browseSearch,
-        requestedCursor,
-      );
+      const result = await fetchBrowseCategories(browseSearch, requestedCursor);
       setBrowseCategories((current) => {
         const existingIds = new Set(current.map((category) => category.id));
         return [...current, ...result.items.filter((category) => !existingIds.has(category.id))];
@@ -871,7 +886,7 @@ export function App() {
       browseCategoryLoadPending.current = false;
       setBrowseLoading(false);
     }
-  }, [browseCategoryCursor, browseSearch]);
+  }, [browseCategoryCursor, browseSearch, fetchBrowseCategories]);
 
   const loadNextCategoryStreams = useCallback(async () => {
     if (
@@ -886,10 +901,7 @@ export function App() {
     setBrowseError(null);
     const requestedCursor = categoryStreamCursor;
     try {
-      const result = await window.desktop.twitch.getCategoryStreams(
-        selectedBrowseCategory.id,
-        requestedCursor,
-      );
+      const result = await fetchCategoryStreams(selectedBrowseCategory.id, requestedCursor);
       setCategoryStreams((current) => {
         const existingIds = new Set(current.map((stream) => stream.id));
         return [...current, ...result.items.filter((stream) => !existingIds.has(stream.id))];
@@ -903,7 +915,7 @@ export function App() {
       categoryStreamLoadPending.current = false;
       setCategoryStreamsLoading(false);
     }
-  }, [categoryStreamCursor, selectedBrowseCategory]);
+  }, [categoryStreamCursor, selectedBrowseCategory, fetchCategoryStreams]);
 
   useEffect(() => {
     if (!activeChannel || !playerHost.current) return;
@@ -1129,6 +1141,7 @@ export function App() {
       setControlsHideDelay(preferences.controlsHideDelay);
       setPlatformFilter(preferences.platformFilter);
       setSearchPlatformFilter(preferences.searchPlatformFilter);
+      setBrowsePlatform(preferences.browsePlatform);
       // Seed the volume slider from the saved level while nothing is actively
       // playing, so the first stream opens showing it rather than 100%.
       setNativeState((current) =>
@@ -1687,15 +1700,15 @@ export function App() {
   }, [authState.status, channelInput, searchPlatformFilter, searchActive]);
 
   useEffect(() => {
+    const needsTwitchAuth = browsePlatform === "twitch" && authState.status !== "signed-in";
     if (
       activeSection === "browse" &&
-      authState.status === "signed-in" &&
+      !needsTwitchAuth &&
       !selectedBrowseCategory &&
       browseCategories.length === 0
     ) {
       let cancelled = false;
-      void window.desktop.twitch
-        .getBrowseCategories()
+      void fetchBrowseCategories(browseSearch)
         .then((result) => {
           if (cancelled) return;
           setBrowseCategories(result.items);
@@ -1704,7 +1717,7 @@ export function App() {
         .catch((reason: unknown) => {
           if (!cancelled) {
             setBrowseError(
-              reason instanceof Error ? reason.message : "Unable to load Twitch categories.",
+              reason instanceof Error ? reason.message : "Unable to load categories.",
             );
           }
         })
@@ -1716,7 +1729,15 @@ export function App() {
       };
     }
     return undefined;
-  }, [activeSection, authState.status, browseCategories.length, selectedBrowseCategory]);
+  }, [
+    activeSection,
+    authState.status,
+    browseCategories.length,
+    browsePlatform,
+    browseSearch,
+    fetchBrowseCategories,
+    selectedBrowseCategory,
+  ]);
 
   useEffect(() => {
     const sentinel = browseCategoryLoadSentinel.current;
@@ -2178,11 +2199,12 @@ export function App() {
   }
 
   async function loadBrowseCategories(query: string, append: boolean) {
-    if (authState.status !== "signed-in") return;
+    // Kick's directory needs no account; Twitch's needs its API session.
+    if (browsePlatform === "twitch" && authState.status !== "signed-in") return;
     setBrowseLoading(true);
     setBrowseError(null);
     try {
-      const result = await window.desktop.twitch.getBrowseCategories(
+      const result = await fetchBrowseCategories(
         query,
         append ? browseCategoryCursor : undefined,
       );
@@ -2203,6 +2225,29 @@ export function App() {
     void loadBrowseCategories(browseSearch, false);
   }
 
+  function selectBrowsePlatform(platform: "twitch" | "kick") {
+    if (platform === browsePlatform) return;
+    setBrowsePlatform(platform);
+    // Reset the directory so it reloads from the newly chosen service.
+    setSelectedBrowseCategory(null);
+    setCategoryStreams([]);
+    setCategoryStreamCursor(undefined);
+    setBrowseCategories([]);
+    setBrowseCategoryCursor(undefined);
+    setBrowseSearch("");
+    setBrowseError(null);
+    setBrowseLoading(true);
+    void window.desktop.preferences.update({ browsePlatform: platform });
+  }
+
+  function openBrowseStream(stream: BrowseStream) {
+    if (browsePlatform === "kick") {
+      void watchChannel(channelKey("kick", stream.login));
+    } else {
+      void watchChannel(stream.login, stream);
+    }
+  }
+
   async function openBrowseCategory(category: BrowseCategory) {
     setSelectedBrowseCategory(category);
     setCategoryStreams([]);
@@ -2210,7 +2255,7 @@ export function App() {
     setCategoryStreamsLoading(true);
     setBrowseError(null);
     try {
-      const result = await window.desktop.twitch.getCategoryStreams(category.id);
+      const result = await fetchCategoryStreams(category.id);
       setCategoryStreams(result.items);
       setCategoryStreamCursor(result.cursor);
     } catch (reason) {
@@ -4606,7 +4651,20 @@ export function App() {
           </section>
         ) : activeSection === "browse" ? (
           <section className="browse-page">
-            {authState.status !== "signed-in" ? (
+            <div className="browse-platforms" role="group" aria-label="Service to browse">
+              {(["twitch", "kick"] as const).map((option) => (
+                <button
+                  aria-pressed={browsePlatform === option}
+                  className={browsePlatform === option ? "active" : ""}
+                  key={option}
+                  onClick={() => selectBrowsePlatform(option)}
+                  type="button"
+                >
+                  <ProviderLogo name={option} /> {option === "twitch" ? "Twitch" : "Kick"}
+                </button>
+              ))}
+            </div>
+            {browsePlatform === "twitch" && authState.status !== "signed-in" ? (
               <div className="browse-signed-out">
                 <span><Compass size={26} /></span>
                 <h1>Browse Twitch categories</h1>
@@ -4651,9 +4709,13 @@ export function App() {
                       <button
                         className="stream-card"
                         key={stream.id}
-                        onClick={() => void watchChannel(stream.login, stream)}
-                        onMouseEnter={() => schedulePreresolve(stream.login)}
-                        onMouseLeave={cancelPreresolve}
+                        onClick={() => openBrowseStream(stream)}
+                        onMouseEnter={
+                          browsePlatform === "twitch"
+                            ? () => schedulePreresolve(stream.login)
+                            : undefined
+                        }
+                        onMouseLeave={browsePlatform === "twitch" ? cancelPreresolve : undefined}
                         title={`Watch ${stream.displayName}`}
                         type="button"
                       >
