@@ -8,6 +8,7 @@ import type {
   EmoteSetResult,
   ProviderEmote,
 } from "../shared/emotes";
+import { emptyEmoteSet } from "../shared/emotes";
 
 const ffzEmoteSchema = z.object({
   id: z.union([z.string(), z.number()]),
@@ -70,7 +71,10 @@ export class ThirdPartyEmoteService {
   }
 
   getFfzChannel(broadcasterId: string): Promise<EmoteSetResult> {
-    const id = z.string().regex(/^\d+$/).parse(broadcasterId);
+    // FFZ keys by numeric Twitch id; a non-numeric value (a Kick slug can stand
+    // in) has no room to fetch, so return empty rather than throw at the caller.
+    if (!/^\d+$/.test(broadcasterId)) return Promise.resolve(emptyEmoteSet("ffz"));
+    const id = broadcasterId;
     return this.getSet(`ffz:channel:${id}`, "ffz", "channel", async () => {
       const response = await this.fetchChannelJson(
         `https://api.frankerfacez.com/v1/room/id/${encodeURIComponent(id)}`,
@@ -98,7 +102,10 @@ export class ThirdPartyEmoteService {
   }
 
   getBttvChannel(broadcasterId: string): Promise<EmoteSetResult> {
-    const id = z.string().regex(/^\d+$/).parse(broadcasterId);
+    // Same as FFZ: BetterTTV keys by numeric Twitch id, so a non-numeric value
+    // resolves to nothing rather than a thrown ZodError.
+    if (!/^\d+$/.test(broadcasterId)) return Promise.resolve(emptyEmoteSet("bttv"));
+    const id = broadcasterId;
     return this.getSet(`bttv:v2:channel:${id}`, "bttv", "channel", async () => {
       const response = await this.fetchChannelJson(
         `https://api.betterttv.net/3/cached/users/twitch/${encodeURIComponent(id)}`,

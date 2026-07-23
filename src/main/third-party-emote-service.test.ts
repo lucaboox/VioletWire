@@ -91,16 +91,13 @@ describe("ThirdPartyEmoteService", () => {
     );
   });
 
-  it("rejects invalid broadcaster IDs before calling a provider", async () => {
+  it("returns empty for a non-numeric broadcaster id without calling a provider", async () => {
     const request = vi.fn();
     vi.stubGlobal("fetch", request);
 
-    expect(() =>
-      new ThirdPartyEmoteService().getFfzChannel("../bad"),
-    ).toThrow();
-    expect(() =>
-      new ThirdPartyEmoteService().getBttvChannel("../bad"),
-    ).toThrow();
+    const service = new ThirdPartyEmoteService();
+    expect((await service.getFfzChannel("../bad")).emotes).toEqual([]);
+    expect((await service.getBttvChannel("../bad")).emotes).toEqual([]);
     expect(request).not.toHaveBeenCalled();
   });
 });

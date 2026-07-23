@@ -7,6 +7,7 @@ import type {
   EmoteSetResult,
   ProviderEmote,
 } from "../shared/emotes";
+import { emptyEmoteSet } from "../shared/emotes";
 
 const sevenTvFileSchema = z.object({
   name: z.string(),
@@ -69,7 +70,12 @@ export class SevenTvService {
     broadcasterId: string,
     platform: "twitch" | "kick" = "twitch",
   ): Promise<EmoteSetResult> {
-    const id = z.string().regex(/^\d+$/).parse(broadcasterId);
+    // These services key channels by a numeric user id. A caller can hand us a
+    // non-numeric value — a Kick slug stands in when Kick omits the id — and
+    // that simply has no channel set to fetch, so return empty rather than
+    // throwing a ZodError up through the IPC handler.
+    if (!/^\d+$/.test(broadcasterId)) return emptyEmoteSet("7tv");
+    const id = broadcasterId;
     return this.getSet(
       `channel:${platform}:${id}`,
       `https://7tv.io/v3/users/${platform}/${encodeURIComponent(id)}`,

@@ -29,6 +29,11 @@ export interface EmoteSetResult {
   stale: boolean;
 }
 
+/** An empty channel set, for when there is simply nothing to fetch. */
+export function emptyEmoteSet(provider: EmoteProvider): EmoteSetResult {
+  return { provider, scope: "channel", emotes: [], cachedAt: Date.now(), stale: false };
+}
+
 export interface EmoteApi {
   getSevenTvGlobal(): Promise<EmoteSetResult>;
   /** `platform` selects which service's id space 7TV should look the user up in. */

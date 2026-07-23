@@ -79,11 +79,13 @@ describe("SevenTvService", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects invalid broadcaster identifiers before requesting 7TV", async () => {
+  it("returns an empty set for a non-numeric id without requesting 7TV", async () => {
     const request = vi.fn();
     vi.stubGlobal("fetch", request);
 
-    await expect(new SevenTvService().getChannel("../bad")).rejects.toThrow();
+    const result = await new SevenTvService().getChannel("../bad");
+    expect(result.emotes).toEqual([]);
+    expect(result.scope).toBe("channel");
     expect(request).not.toHaveBeenCalled();
   });
 
