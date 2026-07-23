@@ -703,7 +703,10 @@ export class KickService {
       throw new Error("Sign in to Kick to follow channels.");
     }
     if (response.status === 429) {
-      throw new Error("Kick is rate limiting follows. Try again in a moment.");
+      // Kick guards this route against follow bots and returns a bare 429 with
+      // no Retry-After, so the penalty length is unknown. Fail cleanly rather
+      // than retrying, which would only extend it.
+      throw new Error("Kick is limiting follow requests right now. Try again later.");
     }
     // 409 means already in the requested state, which is success here.
     if (!response.ok && response.status !== 409) {
