@@ -4,6 +4,41 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.5] - 2026-07-23
+
+### Additions
+
+- Added Kick.com alongside Twitch. Kick channels play in the Native player, and
+  the header, viewer count, category, uptime, thumbnail, and offline state all
+  read the same as a Twitch channel.
+- Search now covers Kick. A selector by the search box chooses Twitch, Kick, or
+  both, and each result is marked with the service it belongs to.
+- Kick sign-in lives in Settings. Once signed in, your followed Kick channels
+  join the sidebar, and the Both filter rings each avatar in purple for a Twitch
+  follow or green for a Kick follow so the two stay legible when collapsed.
+- Kick chat reads and sends, with history loaded on connect, Kick and 7TV emotes
+  (grouped by set in the picker), and Kick's built-in badges — moderator,
+  verified, VIP, sub gifter, and subscriber tiers — drawn from its own artwork.
+- Following a Kick channel now works from the player, with a spinner while it is
+  in flight and the button settling on the real follow state.
+
+### Improvements
+
+- The toolbar's open-in-browser, subscribe, and clip buttons follow the channel's
+  service: on Kick they open the channel, its subscribe page, and its clip editor
+  on kick.com. The emote picker and its tabs also name the right service.
+- Chat shows when a channel restricts posting — followers-only, subscribers-only,
+  slow mode, and the like — and blocks sending when it is certain a message would
+  be refused.
+
+### Fixes
+
+- Fixed search hanging on "Searching Twitch…" when the filter was set to Kick
+  only.
+- Fixed the chat-on-left layout breaking after the title-bar changes.
+- Fixed three errors logged every time a Kick channel loaded, from Twitch-only
+  emote lookups being handed a Kick channel identifier.
+
 ## [0.3.3-alpha.4] - 2026-07-22
 
 ### Additions
