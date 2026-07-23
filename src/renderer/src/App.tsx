@@ -457,6 +457,7 @@ export function App() {
   const [kickAccount, setKickAccount] = useState<KickUserAccount | null>(null);
   const [kickAuthBusy, setKickAuthBusy] = useState(false);
   const [followPending, setFollowPending] = useState(false);
+  const [followedRefreshing, setFollowedRefreshing] = useState(false);
   const [kickFollowedChannels, setKickFollowedChannels] = useState<KickChannelDetails[]>([]);
   const [platformFilter, setPlatformFilter] = useState<"twitch" | "kick" | "both">("twitch");
   const [topSearchResults, setTopSearchResults] =
@@ -2141,6 +2142,24 @@ export function App() {
       setNotice(reason instanceof Error ? reason.message : "Unable to read Twitch sign-in.");
     } finally {
       setAuthBusy(false);
+    }
+  }
+
+  async function refreshFollowedChannels() {
+    if (followedRefreshing) return;
+    setFollowedRefreshing(true);
+    try {
+      await Promise.all([
+        loadFollowedChannels(),
+        kickAccount !== null
+          ? window.desktop.kick
+              .getFollowedChannels()
+              .then(setKickFollowedChannels)
+              .catch(() => undefined)
+          : Promise.resolve(),
+      ]);
+    } finally {
+      setFollowedRefreshing(false);
     }
   }
 
@@ -5014,10 +5033,11 @@ export function App() {
               {authState.status === "signed-in" && (
                 <button
                   className="home-refresh"
-                  onClick={() => void loadFollowedChannels()}
+                  disabled={followedRefreshing}
+                  onClick={() => void refreshFollowedChannels()}
                   type="button"
                 >
-                  <RefreshCw size={15} />
+                  <RefreshCw className={followedRefreshing ? "spin" : undefined} size={15} />
                   Refresh
                 </button>
               )}
