@@ -779,27 +779,42 @@ async function openSubscriptionModal(
     if (revealed || win.isDestroyed()) return;
     revealed = true;
     view.setVisible(true);
+    try {
+      page.debugger.detach();
+    } catch {
+      // Not attached; nothing to detach.
+    }
   };
-  // did-finish-load only means the document loaded; these pages keep rendering
-  // their content afterwards. Once loaded, wait until the DOM has stopped
-  // changing for a short spell (or a cap) so the subscribe card is painted
-  // before the view is revealed, rather than popping in behind the spinner.
-  const waitUntilSettled = `new Promise((resolve) => {
-    let timer = null;
-    const settle = () => { try { observer.disconnect(); } catch (e) {} resolve(true); };
-    const bump = () => { if (timer) clearTimeout(timer); timer = setTimeout(settle, 650); };
-    const observer = new MutationObserver(bump);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    bump();
-    setTimeout(settle, 8000);
-  })`;
+  // did-finish-load only means the document loaded; the page then fetches the
+  // subscribe offer and renders it, so a DOM-quiet check settles in the gap
+  // before that fetch and the card still pops in. Instead, watch real network
+  // activity (via the debugger) and reveal once no new request has started for
+  // a short spell after the load — by then the offer has been fetched and drawn.
+  let loaded = false;
+  let quietTimer: ReturnType<typeof setTimeout> | null = null;
+  const bumpQuiet = () => {
+    if (!loaded) return;
+    if (quietTimer) clearTimeout(quietTimer);
+    quietTimer = setTimeout(revealPage, 750);
+  };
+  try {
+    page.debugger.attach("1.3");
+    page.debugger.on("message", (_event, method) => {
+      // Each new request pushes the reveal back; when they stop, the timer fires.
+      if (method === "Network.requestWillBeSent") bumpQuiet();
+    });
+    void page.debugger.sendCommand("Network.enable").catch(() => undefined);
+  } catch {
+    // Debugger unavailable — the load handler and the cap below still reveal.
+  }
   page.once("did-finish-load", () => {
-    page.executeJavaScript(waitUntilSettled).then(revealPage).catch(revealPage);
+    loaded = true;
+    bumpQuiet();
   });
   page.on("did-fail-load", (_event, _code, _desc, _url, isMainFrame) => {
     if (isMainFrame) revealPage();
   });
-  // A stuck load never traps the spinner.
+  // A stuck or endlessly-busy page never traps the spinner.
   setTimeout(revealPage, 12_000);
   page.setUserAgent(page.getUserAgent().replace(/\sElectron\/[^\s]+/, ""));
   page.setAudioMuted(true);
@@ -824,6 +839,7 @@ async function openSubscriptionModal(
     if (input.key === "Escape" && !win.isDestroyed()) win.close();
   });
   win.on("closed", () => {
+    if (quietTimer) clearTimeout(quietTimer);
     if (subscriptionWindow === win) subscriptionWindow = null;
     if (activePlayerMode === "native" && nativeControlsVisible) applyNativeControlsBounds();
   });
