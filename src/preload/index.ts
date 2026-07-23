@@ -153,6 +153,7 @@ const api: DesktopApi = {
       ipcRenderer.invoke("kick:get-emote-sets", slug),
     setFollowing: (slug: string, follow: boolean): Promise<void> =>
       ipcRenderer.invoke("kick:set-following", slug, follow),
+    openWindow: (slug: string): Promise<void> => ipcRenderer.invoke("kick:open-window", slug),
   },
   chat: {
     send: (channel: string, message: string, replyParentMessageId?: string) =>

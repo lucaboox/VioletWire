@@ -542,6 +542,47 @@ function destroyNativeControlsWindow(): void {
   nativeControlsContext = null;
 }
 
+let kickWindow: BrowserWindow | null = null;
+
+async function openKickWindow(slug: string, title: string): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (kickWindow && !kickWindow.isDestroyed()) {
+    kickWindow.focus();
+    return;
+  }
+  const window = new BrowserWindow({
+    parent: mainWindow,
+    icon: applicationIcon,
+    width: 1120,
+    height: 760,
+    minWidth: 720,
+    minHeight: 560,
+    title,
+    autoHideMenuBar: true,
+    backgroundColor: "#0b0b0e",
+    webPreferences: {
+      // The signed-in Kick partition, so the page acts as the logged-in user.
+      partition: "persist:violetwire-kick",
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  kickWindow = window;
+  window.setMenu(null);
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    // Kick opens its clip editor and similar in-page, but keep any external
+    // links in the default browser.
+    if (url.startsWith("https://kick.com/")) return { action: "allow" };
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  window.on("closed", () => {
+    kickWindow = null;
+  });
+  await window.loadURL(`https://kick.com/${slug}`);
+}
+
 async function openChannelActionWindow(
   channel: string,
   action: "channel" | "subscribe" | "clip",
@@ -1400,6 +1441,11 @@ handleTrusted("kick:get-user", () => kickService.getUser());
 handleTrusted("kick:sign-in", () => kickService.signIn());
 handleTrusted("kick:sign-out", () => kickService.signOut());
 handleTrusted("kick:get-followed", () => kickService.getFollowedChannels());
+handleTrusted("kick:open-window", (_event, rawSlug: unknown) => {
+  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
+  if (!/^[a-z0-9_-]+$/.test(slug)) throw new Error("A channel is required.");
+  return openKickWindow(slug, `${slug} on Kick`);
+});
 handleTrusted("kick:set-following", (_event, rawSlug: unknown, rawFollow: unknown) => {
   const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
   if (slug.length === 0) throw new Error("A channel is required.");

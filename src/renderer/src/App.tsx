@@ -2748,6 +2748,13 @@ export function App() {
 
   async function createClip() {
     if (!activeChannel) return;
+    const target = parseChannelKey(activeChannel);
+    if (target.platform === "kick") {
+      // Kick clips are made by picking a range in its own editor, so open the
+      // channel on Kick where that tool lives, signed in.
+      await window.desktop.kick.openWindow(target.login);
+      return;
+    }
     if (authState.status !== "signed-in") {
       await beginSignIn();
       return;
@@ -3902,13 +3909,14 @@ export function App() {
                 <button
                   className="toolbar-action"
                   disabled={
-                    (activeChannel && parseChannelKey(activeChannel).platform === "kick") ||
+                    activeChannel !== null &&
+                    parseChannelKey(activeChannel).platform === "twitch" &&
                     authState.status !== "signed-in"
                   }
                   onClick={() => void createClip()}
                   title={
                     activeChannel && parseChannelKey(activeChannel).platform === "kick"
-                      ? "Clips are not available on Kick yet"
+                      ? "Open Kick's clip editor"
                       : authState.status !== "signed-in"
                         ? "Sign in with Twitch to create clips"
                         : "Create a clip with Twitch's official API"

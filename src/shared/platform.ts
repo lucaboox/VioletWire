@@ -153,4 +153,5 @@ export interface KickApi {
   getFollowedChannels(): Promise<KickChannelDetails[]>;
   getEmoteSets(slug: string): Promise<KickEmoteGroup[]>;
   setFollowing(slug: string, follow: boolean): Promise<void>;
+  openWindow(slug: string): Promise<void>;
 }
