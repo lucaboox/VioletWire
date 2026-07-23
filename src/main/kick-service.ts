@@ -682,6 +682,15 @@ export class KickService {
     const token = await this.readXsrfToken();
     if (token === null) throw new Error("Not signed in to Kick.");
 
+    // Confirm the session backing this request is actually logged in. If the
+    // account endpoint returns a user but the follow still fails, the request
+    // is authenticated and Kick is refusing it, not us sending it anonymously.
+    const account = await this.getUser();
+    this.log(
+      `follow ${slug}: session ${account ? `is signed in as ${account.username}` : "is NOT signed in"}, ` +
+        `xsrf token ${token.length} chars`,
+    );
+
     const response = await this.kickSession().fetch(
       `${KICK_ORIGIN}/api/v2/channels/${encodeURIComponent(slug)}/follow`,
       {
@@ -696,6 +705,7 @@ export class KickService {
       },
     );
 
+    this.log(`follow ${slug}: ${follow ? "POST" : "DELETE"} returned ${response.status}`);
     // The channel detail refetch that follows will reflect the change, so a
     // stale detail cache must not mask it.
     this.detailCache.delete(slug.toLowerCase());
