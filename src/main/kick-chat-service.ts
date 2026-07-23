@@ -71,7 +71,7 @@ export function parseKickEmotes(raw: string): {
 
 interface KickChatIdentity {
   color?: string;
-  badges?: { type?: string; text?: string }[];
+  badges?: { type?: string; text?: string; count?: number }[];
   badges_v2?: { name?: string; image_url?: string }[];
 }
 
@@ -103,7 +103,10 @@ const KICK_TEXT_BADGE_COLORS: Record<string, string> = {
   sub_gifter: "#5a9bff",
 };
 
-function kickBadges(identity: KickChatIdentity | undefined): ChatBadgeAsset[] {
+function kickBadges(
+  identity: KickChatIdentity | undefined,
+  subscriberBadges: { months: number; imageUrl: string }[],
+): ChatBadgeAsset[] {
   if (!identity) return [];
   const assets: ChatBadgeAsset[] = [];
   // Image badges (level, and any others Kick gives a URL) render as images.
@@ -115,11 +118,25 @@ function kickBadges(identity: KickChatIdentity | undefined): ChatBadgeAsset[] {
       imageUrl: badge.image_url,
     });
   }
-  // Text badges become coloured chips.
   for (const badge of identity.badges ?? []) {
     const type = badge.type ?? "";
     if (type.length === 0) continue;
     const label = badge.text ?? type;
+    // Subscriber badges are real, channel-specific images tiered by months, so
+    // match the sub's month count to the best tier rather than a text chip.
+    if (type === "subscriber") {
+      const months = badge.count ?? 0;
+      const tier = subscriberBadges.find((entry) => months >= entry.months);
+      if (tier) {
+        assets.push({
+          key: "kick-subscriber",
+          title: `Subscriber (${months} month${months === 1 ? "" : "s"})`,
+          imageUrl: tier.imageUrl,
+        });
+        continue;
+      }
+    }
+    // Everything else Kick draws as a built-in icon becomes a coloured chip.
     assets.push({
       key: `kick-${type}`,
       title: label,
@@ -149,6 +166,7 @@ export class KickChatService {
   // moved to another channel.
   private connectGeneration = 0;
   private historyLimit = 20;
+  private subscriberBadges: { months: number; imageUrl: string }[] = [];
 
   constructor(
     private readonly getKickService: () => KickService,
@@ -176,6 +194,7 @@ export class KickChatService {
       return;
     }
     this.chatroomId = channel.chatroomId;
+    this.subscriberBadges = channel.subscriberBadges ?? [];
     if (channel.restrictions) this.onRestrictions(channel.restrictions);
     this.openSocket();
     // Load recent chat once the socket is opening, so history and live messages
@@ -204,7 +223,18 @@ export class KickChatService {
                 slug: entry.sender.slug ?? undefined,
                 username: entry.sender.username ?? undefined,
                 identity: entry.sender.identity
-                  ? { color: entry.sender.identity.color ?? undefined }
+                  ? {
+                      color: entry.sender.identity.color ?? undefined,
+                      badges: (entry.sender.identity.badges ?? []).map((badge) => ({
+                        type: badge.type ?? undefined,
+                        text: badge.text ?? undefined,
+                        count: badge.count ?? undefined,
+                      })),
+                      badges_v2: (entry.sender.identity.badges_v2 ?? []).map((badge) => ({
+                        name: badge.name ?? undefined,
+                        image_url: badge.image_url ?? undefined,
+                      })),
+                    }
                   : undefined,
               }
             : undefined,
@@ -328,7 +358,7 @@ export class KickChatService {
       color: sender.identity?.color ?? "",
       text: rendered,
       badges: [],
-      badgeAssets: kickBadges(payload.sender?.identity),
+      badgeAssets: kickBadges(payload.sender?.identity, this.subscriberBadges),
       sentAt: Number.isFinite(sentAt) ? sentAt : Date.now(),
       twitchEmotes: emotes,
     };

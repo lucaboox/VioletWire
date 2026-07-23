@@ -74,6 +74,9 @@ const kickChannelSchema = z.object({
       profile_pic: z.string().nullish(),
     })
     .optional(),
+  subscriber_badges: z
+    .array(z.object({ id: z.number().nullish(), months: z.number().nullish() }))
+    .nullish(),
   chatroom: z
     .object({
       id: z.number().nullish(),
@@ -182,7 +185,11 @@ export interface KickChatHistoryEntry {
   sender?: {
     slug?: string | null;
     username?: string | null;
-    identity?: { color?: string | null } | null;
+    identity?: {
+      color?: string | null;
+      badges?: { type?: string | null; text?: string | null; count?: number | null }[] | null;
+      badges_v2?: { name?: string | null; image_url?: string | null }[] | null;
+    } | null;
   } | null;
 }
 
@@ -199,7 +206,25 @@ const kickChatHistorySchema = z.object({
               .object({
                 slug: z.string().nullish(),
                 username: z.string().nullish(),
-                identity: z.object({ color: z.string().nullish() }).nullish(),
+                identity: z
+                  .object({
+                    color: z.string().nullish(),
+                    badges: z
+                      .array(
+                        z.object({
+                          type: z.string().nullish(),
+                          text: z.string().nullish(),
+                          count: z.number().nullish(),
+                        }),
+                      )
+                      .nullish(),
+                    badges_v2: z
+                      .array(
+                        z.object({ name: z.string().nullish(), image_url: z.string().nullish() }),
+                      )
+                      .nullish(),
+                  })
+                  .nullish(),
               })
               .nullish(),
           }),
@@ -254,6 +279,8 @@ export interface KickChannel {
   /** Whether the signed-in account follows this channel; undefined if unknown. */
   following?: boolean;
   restrictions?: KickChatRestrictions;
+  /** Sub badge tiers, newest-months first, so a sub's count picks its image. */
+  subscriberBadges?: { months: number; imageUrl: string }[];
   isLive: boolean;
   title?: string;
   category?: string;
@@ -926,6 +953,16 @@ export class KickService {
       profileImageUrl: channel.user?.profile_pic ?? "",
       chatroomId: channel.chatroom?.id === undefined ? undefined : String(channel.chatroom.id),
       following: channel.following ?? undefined,
+      subscriberBadges: (channel.subscriber_badges ?? [])
+        .filter((badge): badge is { id: number; months: number } =>
+          typeof badge.id === "number" && typeof badge.months === "number",
+        )
+        .map((badge) => ({
+          months: badge.months,
+          imageUrl: `https://files.kick.com/channel_subscriber_badges/${badge.id}/original`,
+        }))
+        // Highest month tier first, so matching a sub's months takes the best.
+        .sort((left, right) => right.months - left.months),
       restrictions: {
         followersOnly: Boolean(channel.chatroom?.followers_mode),
         followersMinMinutes: channel.chatroom?.following_min_duration ?? undefined,
