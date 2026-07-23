@@ -506,11 +506,9 @@ export function NativeControls({
   useEffect(() => window.desktop.chat.onRestrictions(setChatRestrictions), []);
   const chatRestrictionLabel = useMemo(() => {
     const parts: string[] = [];
-    if (chatRestrictions.followersOnly) {
-      const minutes = chatRestrictions.followersMinMinutes;
-      parts.push(
-        minutes && minutes > 0 ? "Followers-only chat" : "Followers-only chat",
-      );
+    // Followers-only no longer applies once you follow; the rest still do.
+    if (chatRestrictions.followersOnly && context?.isFollowed !== true) {
+      parts.push("Followers-only chat");
     }
     if (chatRestrictions.subscribersOnly) parts.push("Subscribers-only chat");
     if (chatRestrictions.emoteOnly) parts.push("Emote-only chat");
@@ -518,7 +516,7 @@ export function NativeControls({
       parts.push(`Slow mode · ${chatRestrictions.slowModeSeconds}s`);
     }
     return parts.length > 0 ? parts.join(" · ") : null;
-  }, [chatRestrictions]);
+  }, [chatRestrictions, context?.isFollowed]);
   const chatBlocked =
     chatRestrictions.followersOnly && context?.isFollowed === false;
   const chatProviderEmotes = useMemo(() => {

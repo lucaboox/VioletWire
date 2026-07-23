@@ -795,7 +795,10 @@ export class KickService {
     this.loginWindow = window;
     window.setMenu(null);
 
-    await window.loadURL(`${KICK_ORIGIN}/`);
+    // Kick's dedicated login page rather than the full site. Sign-in there
+    // establishes the same kick.com session, which the account poll below
+    // detects, and it loads far lighter than the homepage.
+    await window.loadURL("https://id.kick.com/login");
 
     return new Promise<KickUser | null>((resolve) => {
       let settled = false;

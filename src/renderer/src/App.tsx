@@ -2760,7 +2760,9 @@ export function App() {
   // all). Anything less certain is left to the server to reject.
   const chatRestrictionLabel = useMemo(() => {
     const parts: string[] = [];
-    if (chatRestrictions.followersOnly) {
+    // Followers-only does not apply once you follow, so drop it while keeping
+    // the modes that still do (slow, subs-only, emote-only).
+    if (chatRestrictions.followersOnly && !activeChannelIsFollowed) {
       const minutes = chatRestrictions.followersMinMinutes;
       parts.push(
         minutes && minutes > 0
@@ -2774,7 +2776,7 @@ export function App() {
       parts.push(`Slow mode · ${chatRestrictions.slowModeSeconds}s between messages`);
     }
     return parts.length > 0 ? parts.join(" · ") : null;
-  }, [chatRestrictions]);
+  }, [activeChannelIsFollowed, chatRestrictions]);
 
   const chatBlocked =
     chatRestrictions.followersOnly && !activeChannelIsFollowed;
