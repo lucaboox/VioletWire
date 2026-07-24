@@ -5,7 +5,7 @@
 <h1 align="center">VioletWire</h1>
 
 <p align="center">
-  A native-feeling Twitch viewer for Windows with official and experimental native playback, plus multistream.
+  A native-feeling Twitch and Kick viewer for Windows with official and experimental native playback, plus multistream.
 </p>
 
 <p align="center">
@@ -29,13 +29,15 @@
 
 ## What is VioletWire?
 
-VioletWire is an Electron, React, and TypeScript Twitch client designed to feel
-like a focused Windows application instead of a generic browser wrapper. Public
-streams can be watched without signing in. Twitch OAuth unlocks followed
-channels, account-aware chat, subscription status, and other authenticated data.
+VioletWire is an Electron, React, and TypeScript client for **Twitch and
+Kick.com**, designed to feel like a focused Windows application instead of a
+generic browser wrapper. Public streams on either service can be watched without
+signing in. Signing in unlocks followed channels, account-aware chat, following,
+subscription status, and other authenticated data — through Twitch's OAuth and,
+separately, a Kick sign-in.
 
 VioletWire is an independent project and is not affiliated with, endorsed by, or
-sponsored by Twitch, 7TV, Streamlink, or mpv.
+sponsored by Twitch, Kick, 7TV, Streamlink, or mpv.
 
 ## Screenshots
 
@@ -80,21 +82,27 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
 
 ## Features
 
+### Two services
+
+- Watch **Twitch and Kick** channels side by side in one app
+- Followed lists from both services, filtered to Twitch, Kick, or both, with each avatar ringed by its service colour
+- Kick chat, followed channels, sign-in, following, and native/7TV emotes, alongside the full Twitch feature set
+
 ### Browse and discover
 
-- Followed channels separated into live and offline groups
+- Followed channels separated into live and offline groups, with offline ones dimmed
 - Favorite channels, set from a right-click menu, marked with a star and pinned to the top of their group
-- Twitch-style live channel cards with thumbnails, titles, categories, viewers, and uptime
-- Browse popular Twitch categories
-- Open a category to view its live streams
-- Search channels and categories from the top navigation
+- Live channel cards with thumbnails, titles, categories, viewers, and uptime
+- Browse popular categories on Twitch or Kick, highest-viewer-first, and open one to view its live streams
+- A dedicated search page for channels and categories across Twitch and Kick, with an independent service scope
+- Type `twitch:` or `kick:` in the search box to jump straight to a channel on that service
 - Collapse the followed-channels sidebar to icons
 - Infinite pagination with loading and error states
 
 ### Playback
 
 - Twitch's official player for maximum website compatibility
-- Experimental Streamlink + mpv Native player
+- Experimental Streamlink + mpv Native player, which also plays Kick streams
 - Automatic and manual quality selection
 - Source quality when Twitch exposes it
 - Volume, mute, pause, fullscreen, theater mode, and picture-in-picture where available
@@ -112,18 +120,20 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
 - Audio focus so only the tile you pick plays sound; click another tile to move it
 - Per-tile mute, volume, audio compressor, and quality
 - Theater mode and fullscreen that hide the app chrome so the grid fills the window
-- Tabbed Stream Chat with every tile's chat connected at once, so switching tabs is instant
+- Mix Twitch and Kick streams in the same grid, each tile labelled with its service
+- Tabbed Stream Chat with every tile's chat connected at once (Twitch or Kick), so switching tabs is instant
 
 ### Chat and emotes
 
-- Native Twitch chat reading and sending
+- Native Twitch and Kick chat, reading and sending
 - Twitch badges, colors, emotes, replies, subscription notices, moderation events, and deleted messages
+- Kick chat with history on connect, its native emotes and badges (moderator, verified, VIP, sub gifter, subscriber tiers), and follower/subscriber chat restrictions
 - Clickable reply threads that keep their conversation context
 - Clickable usernames with an in-app profile card and that user's recent messages
 - Username and emote autocomplete
 - Mention highlighting with an optional notification sound and a choice of four alert tones
-- 7TV global and channel emotes
-- FrankerFaceZ and BetterTTV global and channel emotes
+- 7TV global and channel emotes on both Twitch and Kick
+- FrankerFaceZ and BetterTTV global and channel emotes on Twitch
 - Channel-aware Twitch emote picker with favorites and resizing
 - Searchable Twitch, 7TV, FrankerFaceZ, and BetterTTV emote groups
 - Rich emote tooltips with provider attribution
@@ -136,6 +146,8 @@ sponsored by Twitch, 7TV, Streamlink, or mpv.
 ### Account and privacy
 
 - Official Twitch Device Code OAuth flow
+- Separate Kick sign-in in its own isolated session, for following and account-aware Kick chat
+- Follow and subscribe on either service — subscribing opens the channel's real subscribe page in an in-app modal
 - Minimum-purpose Twitch scopes
 - Tokens encrypted using Electron `safeStorage` and Windows DPAPI
 - Separate, optional Twitch website playback session

@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VioletWire — a better way to watch Twitch on Windows</title>
+    <title>VioletWire — a better way to watch Twitch and Kick on Windows</title>
     <meta
       name="description"
-      content="VioletWire is an unofficial Twitch desktop client for Windows with followed channels, native playback, multistream, and chat with 7TV, FFZ, and BetterTTV emotes."
+      content="VioletWire is an unofficial Twitch and Kick desktop client for Windows with followed channels, native playback, multistream, search, and chat with 7TV, FFZ, and BetterTTV emotes."
     />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0a0a0e" />
@@ -23,7 +23,7 @@
     <meta property="og:title" content="VioletWire" />
     <meta
       property="og:description"
-      content="A better way to watch Twitch on Windows."
+      content="A better way to watch Twitch and Kick on Windows."
     />
     <meta property="og:url" content="https://violetwire.lucaboox.win/" />
     <meta
@@ -979,13 +979,13 @@
 
           <h1>VioletWire</h1>
 
-          <p class="tagline">A better way to watch Twitch on Windows.</p>
+          <p class="tagline">A better way to watch Twitch and Kick on Windows.</p>
 
           <p class="lede">
-            A desktop Twitch client built with Electron and React that behaves
-            like a real Windows app instead of a browser in a box. Followed
-            channels, native playback, up to four streams at once, and chat with
-            the emotes you actually use.
+            A desktop client for Twitch and Kick, built with Electron and React,
+            that behaves like a real Windows app instead of a browser in a box.
+            Followed channels from both, native playback, up to four streams at
+            once, search and browse, and chat with the emotes you actually use.
           </p>
 
           <div class="hero-actions">
@@ -1049,11 +1049,12 @@
                   <path d="M12 17.75 5.83 21l1.18-6.88L2 9.24l6.91-1L12 2l3.09 6.24 6.91 1-5.01 4.88L18.17 21z" />
                 </svg>
               </div>
-              <h3>Followed and live channels</h3>
+              <h3>Twitch and Kick, together</h3>
               <p>
-                Your follows split into live and offline, with thumbnails,
-                categories, viewers, and uptime. Right-click to favorite a
-                channel and it gets a star and sits at the top of its group.
+                Follow channels on both services and see them in one sidebar,
+                filtered to Twitch, Kick, or both. Each split into live and
+                offline with thumbnails, categories, viewers, and uptime.
+                Right-click to favorite one and it pins to the top.
               </p>
             </article>
 
@@ -1064,12 +1065,12 @@
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
               </div>
-              <h3>Sign in with Twitch, properly</h3>
+              <h3>Sign in the proper way</h3>
               <p>
                 Twitch's official Device Code flow, so you never type a password
-                into VioletWire. Tokens are encrypted with Windows DPAPI, and
-                signing out removes them. Public streams work without an account
-                at all.
+                into VioletWire, plus a separate Kick sign-in. Tokens are
+                encrypted with Windows DPAPI, and signing out removes them.
+                Public streams on either service work without an account at all.
               </p>
             </article>
 
@@ -1100,9 +1101,9 @@
               <h3>Two player modes, plus multistream</h3>
               <p>
                 Use Twitch's own player for maximum compatibility, or the
-                experimental Native player built on Streamlink and mpv. Native
-                mode also runs up to four streams in one grid, with audio
-                focused on whichever tile you pick.
+                experimental Native player built on Streamlink and mpv, which
+                also plays Kick. Native mode runs up to four streams in one
+                grid — Twitch and Kick mixed — with audio on the tile you pick.
               </p>
             </article>
 
@@ -1114,9 +1115,9 @@
               </div>
               <h3>Chat that isn't an afterthought</h3>
               <p>
-                Read and send messages with badges, colors, reply threads, and
-                moderation events. Click a name for a profile card, get
-                autocomplete for users and emotes, and pick a sound for
+                Read and send on Twitch and Kick, with badges, colors, reply
+                threads, and moderation events. Click a name for a profile card,
+                get autocomplete for users and emotes, and pick a sound for
                 mentions.
               </p>
             </article>
@@ -1129,10 +1130,11 @@
                   <path d="M9 9.5h.01M15 9.5h.01" />
                 </svg>
               </div>
-              <h3>7TV, FFZ, BetterTTV, and Twitch emotes</h3>
+              <h3>7TV, FFZ, BetterTTV, and native emotes</h3>
               <p>
-                Global and channel emotes from all four, in a searchable picker
-                grouped by provider, with favorites and a size you can adjust.
+                Global and channel emotes in a searchable picker grouped by
+                provider, with favorites and an adjustable size — 7TV, FFZ,
+                BetterTTV, and Twitch emotes, plus Kick's own emotes and 7TV.
                 Hover any emote to see where it came from.
               </p>
             </article>
@@ -1147,8 +1149,9 @@
               <h3>Local-first, no accounts of ours</h3>
               <p>
                 There is no VioletWire server and no VioletWire user database.
-                Settings live in a file on your PC, and the app talks to Twitch
-                and the emote providers directly — nothing is routed through us.
+                Settings live in a file on your PC, and the app talks to Twitch,
+                Kick, and the emote providers directly — nothing is routed
+                through us.
               </p>
             </article>
 
@@ -1202,7 +1205,7 @@
                   alt="VioletWire home screen listing followed live channels as cards with thumbnails, titles, categories, and viewer counts"
                   width="1600"
                   height="900"
-                  loading="lazy"
+                  loading="eager"
                 />
               </button>
             </figure>
@@ -1218,7 +1221,7 @@
                   alt="VioletWire browse page showing a grid of Twitch categories with box art and viewer counts"
                   width="1600"
                   height="900"
-                  loading="lazy"
+                  loading="eager"
                 />
               </button>
             </figure>
@@ -1234,7 +1237,7 @@
                   alt="VioletWire playing a stream in the standard Twitch player with chat docked beside it"
                   width="1600"
                   height="900"
-                  loading="lazy"
+                  loading="eager"
                 />
               </button>
             </figure>
@@ -1250,7 +1253,7 @@
                   alt="VioletWire playing a stream in its experimental Native player with chat docked beside it"
                   width="1600"
                   height="900"
-                  loading="lazy"
+                  loading="eager"
                 />
               </button>
             </figure>
@@ -1266,7 +1269,7 @@
                   alt="VioletWire multistream showing four streams in a two-by-two grid, with tabs above the chat panel for each channel"
                   width="1600"
                   height="900"
-                  loading="lazy"
+                  loading="eager"
                 />
               </button>
             </figure>
