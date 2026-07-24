@@ -1815,9 +1815,10 @@ export function App() {
   ]);
 
   // Kick's session persists in its own partition, so a previous sign-in is
-  // still valid on launch and the list can load without prompting.
+  // still valid on launch. The account is loaded regardless of the followed
+  // filter, since sign-in state drives chat, following, and settings too; only
+  // the heavier followed-channels list waits until Kick is actually shown.
   useEffect(() => {
-    if (platformFilter === "twitch") return;
     let cancelled = false;
 
     const load = () => {
@@ -1830,6 +1831,7 @@ export function App() {
             setKickFollowedChannels([]);
             return;
           }
+          if (platformFilter === "twitch") return;
           return window.desktop.kick.getFollowedChannels().then((channels) => {
             if (!cancelled) setKickFollowedChannels(channels);
           });
