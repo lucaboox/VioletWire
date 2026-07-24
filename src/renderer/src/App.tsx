@@ -1661,9 +1661,13 @@ export function App() {
       ])
         .then(([channels, categories]) => {
           if (cancelled) return;
-          setKickSearchResults(channels.status === "fulfilled" ? channels.value : []);
+          // Kick's search is unbounded; cap it to match Twitch's 6 channels and
+          // 4 categories so the results stay a shortlist, not a flood.
+          setKickSearchResults(
+            (channels.status === "fulfilled" ? channels.value : []).slice(0, 6),
+          );
           setKickSearchCategories(
-            categories.status === "fulfilled" ? categories.value.items : [],
+            (categories.status === "fulfilled" ? categories.value.items : []).slice(0, 4),
           );
         })
         .finally(() => {
