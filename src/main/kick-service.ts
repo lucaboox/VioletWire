@@ -14,6 +14,9 @@ import type { BrowseCategory, BrowseStream, BrowsePage } from "../shared/twitch"
  */
 
 const KICK_ORIGIN = "https://kick.com";
+// Kick's newer API host, which serves the category directory the site itself
+// pages through (viewer-sorted and cursor-paginated). It needs no account.
+const KICK_WEB_ORIGIN = "https://web.kick.com";
 // Kick issues a session cookie to anonymous visitors, and presenting it is
 // enough to satisfy the challenge that otherwise makes the API return 403.
 // Nothing about it identifies a person until someone signs in.
@@ -315,6 +318,7 @@ const kickBannerSchema = z
   .nullish();
 
 const kickCategorySchema = z.object({
+  id: z.number().nullish(),
   name: z.string().nullish(),
   slug: z.string().nullish(),
   banner: kickBannerSchema,
@@ -330,8 +334,8 @@ const kickCategorySearchSchema = z.object({
   categories: z.array(kickCategorySchema).nullish(),
 });
 
-// A live stream as it appears in a category page's server-rendered payload.
-const kickRscStreamSchema = z.object({
+// A live stream from Kick's web API (the one its category grid pages through).
+const kickWebStreamSchema = z.object({
   id: z.union([z.string(), z.number()]).nullish(),
   title: z.string().nullish(),
   start_time: z.string().nullish(),
@@ -351,44 +355,14 @@ const kickRscStreamSchema = z.object({
   category: z.object({ name: z.string().nullish() }).nullish(),
 });
 
-/**
- * Kick has no public JSON list of the live channels in a category — the site
- * renders that grid server-side — so its channels are pulled from the category
- * page's React flight payload. Find each `"livestreams":[…]` array (skipping
- * over string contents, since titles contain brackets) and keep the largest.
- */
-export function extractRscLivestreams(raw: string): unknown[] {
-  let best: unknown[] = [];
-  const marker = /"livestreams"\s*:\s*\[/g;
-  let match: RegExpExecArray | null;
-  while ((match = marker.exec(raw)) !== null) {
-    const start = raw.indexOf("[", match.index);
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    let end = start;
-    for (; end < raw.length; end += 1) {
-      const char = raw[end];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (char === "\\") escaped = true;
-        else if (char === '"') inString = false;
-      } else if (char === '"') inString = true;
-      else if (char === "[") depth += 1;
-      else if (char === "]") {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    try {
-      const parsed: unknown = JSON.parse(raw.slice(start, end + 1));
-      if (Array.isArray(parsed) && parsed.length > best.length) best = parsed;
-    } catch {
-      // Not the array we want; keep scanning.
-    }
-  }
-  return best;
-}
+const kickCategoryStreamsSchema = z.object({
+  data: z
+    .object({
+      livestreams: z.array(kickWebStreamSchema).nullish(),
+      pagination: z.object({ next_cursor: z.string().nullish() }).nullish(),
+    })
+    .nullish(),
+});
 
 /** Kick's images come as a `srcset` string or a plain URL; take the first URL. */
 function firstSrcsetUrl(...candidates: (string | null | undefined)[]): string {
@@ -400,12 +374,12 @@ function firstSrcsetUrl(...candidates: (string | null | undefined)[]): string {
   return "";
 }
 
-/** A Kick subcategory shaped into the shared BrowseCategory. Its slug becomes
- *  the id, since that is what the category-streams route is keyed by. */
+/** A Kick subcategory shaped into the shared BrowseCategory. Its numeric id
+ *  becomes the id, since that is what the category-streams route filters by. */
 function mapKickCategory(entry: z.infer<typeof kickCategorySchema>): BrowseCategory | null {
-  if (!entry.slug || !entry.name) return null;
+  if (entry.id == null || !entry.name) return null;
   return {
-    id: entry.slug,
+    id: String(entry.id),
     name: entry.name,
     boxArtUrl: firstSrcsetUrl(
       entry.banner?.responsive,
@@ -668,41 +642,47 @@ export class KickService {
   }
 
   /**
-   * The live channels in a category, keyed by its Kick slug. Read from the
-   * category page's server-rendered payload, since Kick exposes no filtered
-   * JSON list. That payload is the first page only, so there is no cursor.
+   * The live channels in a category, highest viewer count first, keyed by the
+   * category's numeric id. Paged through the same web API the site uses; the
+   * cursor is an opaque token from the previous page.
    */
-  async getCategoryStreams(slug: string): Promise<BrowsePage<BrowseStream>> {
-    const clean = slug.trim().toLowerCase();
-    if (clean.length === 0) return { items: [] };
+  async getCategoryStreams(categoryId: string, cursor?: string): Promise<BrowsePage<BrowseStream>> {
+    const id = categoryId.trim();
+    if (id.length === 0) return { items: [] };
 
-    let raw: string;
+    const params = new URLSearchParams({
+      language: "en",
+      limit: "24",
+      sort: "viewer_count_desc",
+      category_id: id,
+    });
+    if (cursor) params.set("after", cursor);
+
+    let payload: unknown;
     try {
       const response = await this.kickSession().fetch(
-        `${KICK_ORIGIN}/category/${encodeURIComponent(clean)}`,
+        `${KICK_WEB_ORIGIN}/api/v1/livestreams?${params.toString()}`,
         {
           headers: {
-            Accept: "*/*",
+            Accept: "application/json",
             "Accept-Language": "en-US,en;q=0.9",
             "User-Agent": this.userAgent(),
             Referer: `${KICK_ORIGIN}/`,
-            // Asks Next.js for the flight payload rather than the full HTML page.
-            RSC: "1",
           },
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         },
       );
       if (!response.ok) return { items: [] };
-      raw = await response.text();
+      payload = await response.json();
     } catch {
       return { items: [] };
     }
 
+    const parsed = kickCategoryStreamsSchema.safeParse(payload);
+    if (!parsed.success) return { items: [] };
+
     const items: BrowseStream[] = [];
-    for (const entry of extractRscLivestreams(raw)) {
-      const parsed = kickRscStreamSchema.safeParse(entry);
-      if (!parsed.success) continue;
-      const stream = parsed.data;
+    for (const stream of parsed.data.data?.livestreams ?? []) {
       const channelSlug = stream.channel?.slug;
       if (!channelSlug) continue;
       items.push({
@@ -721,7 +701,10 @@ export class KickService {
         startedAt: toIsoTimestamp(stream.start_time) ?? "",
       });
     }
-    return { items };
+    const next = parsed.data.data?.pagination?.next_cursor ?? undefined;
+    // Only advance when there is both a cursor and something on this page, so
+    // the scroll stops at the end instead of refetching the last page.
+    return { items, cursor: next && items.length > 0 ? next : undefined };
   }
 
   /** The signed-in Kick account, or null when signed out. */

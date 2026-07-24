@@ -1504,9 +1504,12 @@ handleTrusted("kick:get-categories", (_event, rawQuery: unknown, rawCursor: unkn
   return kickService.getCategories(query, cursor);
 });
 
-handleTrusted("kick:get-category-streams", (_event, rawSlug: unknown) => {
-  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 60).toLowerCase() : "";
-  return slug.length === 0 ? { items: [] } : kickService.getCategoryStreams(slug);
+handleTrusted("kick:get-category-streams", (_event, rawCategoryId: unknown, rawCursor: unknown) => {
+  const categoryId = typeof rawCategoryId === "string" ? rawCategoryId.slice(0, 20) : "";
+  const cursor = typeof rawCursor === "string" ? rawCursor.slice(0, 200) : undefined;
+  return categoryId.length === 0
+    ? { items: [] }
+    : kickService.getCategoryStreams(categoryId, cursor);
 });
 
 handleTrusted("twitch:search", (_event, rawQuery: unknown) => {

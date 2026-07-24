@@ -300,6 +300,7 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .browse-platforms button:hover { color: #f4f4f5; background: #1f1f25; }
 .browse-platforms button.active { border-color: #6d28d9; color: #f4f4f5; background: #2a1f3d; }
 .oled-mode .browse-platforms button { border-color: #242429; background: #000; }
+.oled-mode .browse-platforms button.active { border-color: #6d28d9; background: #2a1f3d; }
 
 /* Search results page */
 .search-page { height: calc(100% - 68px); padding: 29px 30px 50px; overflow-x: hidden; overflow-y: auto; background: radial-gradient(circle at 82% -12%, #21142c 0, transparent 26%), #0e0e10; }
