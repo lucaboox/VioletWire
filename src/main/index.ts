@@ -5,6 +5,7 @@ import {
   ipcMain,
   Menu,
   powerMonitor,
+  screen,
   shell,
   WebContentsView,
   type IpcMainEvent,
@@ -718,6 +719,25 @@ async function openSubscriptionModal(
           isAllowed: isAllowedTwitchNavigation,
         };
   const headerHeight = 44;
+  // Center over the app's current window rather than letting Windows drop the
+  // modal on the primary monitor. Clamp to the work area of the display the app
+  // is on so a tall modal is not pushed off-screen.
+  const parentBounds = mainWindow.getBounds();
+  const workArea = screen.getDisplayMatching(parentBounds).workArea;
+  const width = 560;
+  const height = Math.min(940, workArea.height - 40);
+  const x = Math.round(
+    Math.max(workArea.x, Math.min(
+      parentBounds.x + (parentBounds.width - width) / 2,
+      workArea.x + workArea.width - width,
+    )),
+  );
+  const y = Math.round(
+    Math.max(workArea.y, Math.min(
+      parentBounds.y + (parentBounds.height - height) / 2,
+      workArea.y + workArea.height - height,
+    )),
+  );
   const win = new BrowserWindow({
     parent: mainWindow,
     icon: applicationIcon,
@@ -725,8 +745,10 @@ async function openSubscriptionModal(
     frame: false,
     show: false,
     resizable: true,
-    width: 560,
-    height: 940,
+    x,
+    y,
+    width,
+    height,
     minWidth: 420,
     minHeight: 620,
     title,
