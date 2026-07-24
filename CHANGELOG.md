@@ -4,6 +4,38 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.6] - 2026-07-24
+
+### Additions
+
+- Search has its own results page. Pressing Enter opens a full page of matching
+  channels and categories, with "Go to <name>" shortcuts for opening an exact
+  login on Twitch or Kick. The quick type-ahead dropdown stays for fast picks.
+- Search now has its own Twitch/Kick/Both scope, separate from the followed
+  list, and remembers it.
+- Browse now covers Kick. A service toggle switches the directory between Twitch
+  and Kick; Kick's categories and the live channels within one load without a
+  Twitch account, highest viewer count first, and keep loading as you scroll.
+- Search covers Kick categories too, so a query returns Kick categories
+  alongside its channels; choosing one opens it in Browse on the Kick tab.
+
+### Improvements
+
+- The subscribe button opens a titled modal showing the channel's real subscribe
+  page — Twitch or Kick, from that service's signed-in session — replacing the
+  cropped drawer that broke whenever Twitch renamed a class.
+- Search results group by service: the channel lists read "Twitch" and "Kick",
+  the category lists read "Twitch Categories" and "Kick Categories", and the
+  go-to shortcuts sit at the top.
+- Kick search is capped to a shortlist like Twitch's rather than returning every
+  match, so short queries no longer flood the results.
+
+### Fixes
+
+- The search page and the Browse service toggle now follow OLED mode instead of
+  keeping a dark-grey background, and the selected service stays visibly purple
+  in OLED.
+
 ## [0.3.3-alpha.5] - 2026-07-23
 
 ### Additions
