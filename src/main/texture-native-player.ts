@@ -283,6 +283,10 @@ export class TextureNativePlayer {
         gpuDevice?.vendorId,
         gpuDevice?.deviceId,
       );
+      // Silence libav/demuxer chatter (every HLS segment open, "duplicated MOOV
+      // Atom", etc.) that mpv otherwise routes to stderr. Diagnostics we care
+      // about come through the addon's own event channel, not mpv messages.
+      addon.command(["set", "msg-level", "all=no"]);
       // Start mpv at the restored volume so the very first audio matches, and
       // the level never audibly jumps from 100% down to the saved value.
       addon.command(["set", "volume", String(startVolume)]);

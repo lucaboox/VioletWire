@@ -328,6 +328,7 @@ export class NativePlayer {
       `--input-ipc-server=${escapedPipeName}`,
       "--no-config",
       "--terminal=no",
+      "--msg-level=all=no",
       "--osc=no",
       "--input-default-bindings=no",
       "--keep-open=no",

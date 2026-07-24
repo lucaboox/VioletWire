@@ -223,6 +223,10 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     if (!mpv_) throw Napi::Error::New(env, "libmpv could not create a playback context.");
     api_.set_option_string(mpv_, "vo", "libmpv");
     api_.set_option_string(mpv_, "terminal", "no");
+    // Suppress libav/demuxer logging (per-segment HLS opens, MOOV warnings) that
+    // would otherwise reach the process stderr; the addon reports what it needs
+    // through its own event channel.
+    api_.set_option_string(mpv_, "msg-level", "all=no");
     api_.set_option_string(mpv_, "input-default-bindings", "no");
     api_.set_option_string(mpv_, "osc", "no");
     api_.set_option_string(mpv_, "profile", "low-latency");
