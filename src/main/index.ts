@@ -329,6 +329,7 @@ const multiChatService = new MultiChatService(
   (channel, message) =>
     sendToWindow(mainWindow, "native-multi:chat-message", { channel, message }),
   (channel, state) => sendToWindow(mainWindow, "native-multi:chat-state", { channel, state }),
+  () => kickService,
 );
 const twitchService = new TwitchService();
 const linkPreviewService = new LinkPreviewService(twitchService);
