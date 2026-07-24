@@ -462,6 +462,7 @@ export function App() {
   const [playerReturnSection, setPlayerReturnSection] = useState<AppSection>("home");
   const [channelInput, setChannelInput] = useState("");
   const [kickSearchResults, setKickSearchResults] = useState<KickChannelResult[]>([]);
+  const [kickSearchCategories, setKickSearchCategories] = useState<BrowseCategory[]>([]);
   const [kickAccount, setKickAccount] = useState<KickUserAccount | null>(null);
   const [kickAuthBusy, setKickAuthBusy] = useState(false);
   const [followPending, setFollowPending] = useState(false);
@@ -1654,14 +1655,16 @@ export function App() {
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void window.desktop.kick
-        .search(query)
-        .then((results) => {
-          if (!cancelled) setKickSearchResults(results);
-        })
-        .catch(() => {
-          // Kick's API is unofficial; a failure leaves the Twitch group intact.
-          if (!cancelled) setKickSearchResults([]);
+      void Promise.allSettled([
+        window.desktop.kick.search(query),
+        window.desktop.kick.getCategories(query),
+      ])
+        .then(([channels, categories]) => {
+          if (cancelled) return;
+          setKickSearchResults(channels.status === "fulfilled" ? channels.value : []);
+          setKickSearchCategories(
+            categories.status === "fulfilled" ? categories.value.items : [],
+          );
         })
         .finally(() => {
           if (!cancelled) setKickSearchLoading(false);
@@ -2248,14 +2251,22 @@ export function App() {
     }
   }
 
-  async function openBrowseCategory(category: BrowseCategory) {
+  async function openBrowseCategory(
+    category: BrowseCategory,
+    platform: "twitch" | "kick" = browsePlatform,
+  ) {
     setSelectedBrowseCategory(category);
     setCategoryStreams([]);
     setCategoryStreamCursor(undefined);
     setCategoryStreamsLoading(true);
     setBrowseError(null);
     try {
-      const result = await fetchCategoryStreams(category.id);
+      // Opened from search, the platform is passed explicitly since the browse
+      // state may not have switched yet; otherwise it follows the browse tab.
+      const result =
+        platform === "kick"
+          ? await window.desktop.kick.getCategoryStreams(category.id)
+          : await window.desktop.twitch.getCategoryStreams(category.id);
       setCategoryStreams(result.items);
       setCategoryStreamCursor(result.cursor);
     } catch (reason) {
@@ -2394,7 +2405,10 @@ export function App() {
     setSearchPlatformFilter(option);
     // Drop whatever the new scope excludes so stale results don't linger.
     if (option === "kick") setTopSearchResults(emptySearchResults);
-    if (option === "twitch") setKickSearchResults([]);
+    if (option === "twitch") {
+      setKickSearchResults([]);
+      setKickSearchCategories([]);
+    }
     // Show the loading state for the services the new scope will re-fetch,
     // otherwise the page briefly reads "No results" until the fetch lands.
     const canSearch = channelInput.trim().length >= 2;
@@ -2428,16 +2442,26 @@ export function App() {
     if (!canSearch) {
       setTopSearchResults(emptySearchResults);
       setKickSearchResults([]);
+      setKickSearchCategories([]);
     }
   }
 
-  async function chooseSearchCategory(category: BrowseCategory) {
+  async function chooseSearchCategory(
+    category: BrowseCategory,
+    platform: "twitch" | "kick" = "twitch",
+  ) {
     setTopSearchOpen(false);
     setChannelInput("");
     leaveMultiStream();
     if (activeChannel) await closePlayer();
+    // Land on the browse tab for the category's own service so the header
+    // toggle and any load-more match it.
+    if (platform !== browsePlatform) {
+      setBrowsePlatform(platform);
+      void window.desktop.preferences.update({ browsePlatform: platform });
+    }
     setActiveSection("browse");
-    await openBrowseCategory(category);
+    await openBrowseCategory(category, platform);
   }
 
   async function chooseStreamCategory() {
@@ -2457,8 +2481,12 @@ export function App() {
       };
 
       await closePlayer();
+      if (browsePlatform !== "twitch") {
+        setBrowsePlatform("twitch");
+        void window.desktop.preferences.update({ browsePlatform: "twitch" });
+      }
       setActiveSection("browse");
-      await openBrowseCategory(category);
+      await openBrowseCategory(category, "twitch");
     } catch (reason) {
       setNotice(
         reason instanceof Error
@@ -3290,13 +3318,33 @@ export function App() {
                     )}
                     {topSearchResults.categories.length > 0 && (
                       <section>
-                        <span className="top-search-heading">Categories</span>
+                        <span className="top-search-heading">Twitch Categories</span>
                         {topSearchResults.categories.map((category) => (
                           <button
                             className="top-search-result"
                             key={`category-${category.id}`}
                             onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => void chooseSearchCategory(category)}
+                            onClick={() => void chooseSearchCategory(category, "twitch")}
+                            type="button"
+                          >
+                            <img alt="" src={category.boxArtUrl} />
+                            <span>
+                              <strong>{category.name}</strong>
+                              <small>Category</small>
+                            </span>
+                          </button>
+                        ))}
+                      </section>
+                    )}
+                    {searchPlatformFilter !== "twitch" && kickSearchCategories.length > 0 && (
+                      <section>
+                        <span className="top-search-heading">Kick Categories</span>
+                        {kickSearchCategories.map((category) => (
+                          <button
+                            className="top-search-result"
+                            key={`kick-category-${category.id}`}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => void chooseSearchCategory(category, "kick")}
                             type="button"
                           >
                             <img alt="" src={category.boxArtUrl} />
@@ -3391,7 +3439,8 @@ export function App() {
                     )}
                     {topSearchResults.categories.length === 0 &&
                       topSearchResults.channels.length === 0 &&
-                      kickSearchResults.length === 0 && (
+                      kickSearchResults.length === 0 &&
+                      kickSearchCategories.length === 0 && (
                         <div className="top-search-state">No channels or categories found.</div>
                       )}
                   </>
@@ -5173,13 +5222,32 @@ export function App() {
                 )}
                 {searchPlatformFilter !== "kick" && topSearchResults.categories.length > 0 && (
                   <section className="search-section">
-                    <span className="search-section-heading">Categories</span>
+                    <span className="search-section-heading">Twitch Categories</span>
                     <div className="search-category-grid">
                       {topSearchResults.categories.map((category) => (
                         <button
                           className="search-category-card"
                           key={`search-cat-${category.id}`}
-                          onClick={() => void chooseSearchCategory(category)}
+                          onClick={() => void chooseSearchCategory(category, "twitch")}
+                          title={category.name}
+                          type="button"
+                        >
+                          <img alt="" src={category.boxArtUrl} />
+                          <strong>{category.name}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {searchPlatformFilter !== "twitch" && kickSearchCategories.length > 0 && (
+                  <section className="search-section">
+                    <span className="search-section-heading">Kick Categories</span>
+                    <div className="search-category-grid">
+                      {kickSearchCategories.map((category) => (
+                        <button
+                          className="search-category-card"
+                          key={`search-kick-cat-${category.id}`}
+                          onClick={() => void chooseSearchCategory(category, "kick")}
                           title={category.name}
                           type="button"
                         >
@@ -5269,7 +5337,8 @@ export function App() {
                 )}
                 {topSearchResults.categories.length === 0 &&
                   topSearchResults.channels.length === 0 &&
-                  kickSearchResults.length === 0 && (
+                  kickSearchResults.length === 0 &&
+                  kickSearchCategories.length === 0 && (
                     <div className="home-empty-state">
                       <span><Search size={24} /></span>
                       <h2>No results</h2>
