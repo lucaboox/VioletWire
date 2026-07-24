@@ -882,7 +882,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .sidebar-collapsed .followed-empty { margin-inline: 2px; padding: 10px 0; border: 0; background: transparent; }
 .sidebar-collapsed .followed-empty .empty-orbit { margin: 0; }
 .sidebar-collapsed .followed-channel, .sidebar-collapsed .settings-link, .sidebar-collapsed .account-status { justify-content: center; padding-inline: 0; }
-.sidebar-collapsed .followed-channel.offline { opacity: .5; }
+.sidebar-collapsed .followed-channel.offline { opacity: .38; }
+/* The Live/Offline labels are hidden when collapsed, so keep a thin line
+   between the two groups by showing the offline label as a divider. */
+.sidebar-collapsed .followed-group-label.offline { display: block; width: 60%; height: 0; margin: 8px auto; padding: 0; overflow: hidden; border-top: 1px solid #242429; font-size: 0; }
 .sidebar-collapsed .channel-live-dot { display: block; }
 
 @media (max-width: 1080px) {
