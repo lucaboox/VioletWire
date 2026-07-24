@@ -20,6 +20,8 @@ import {
   type NativeQualityValue,
 } from "../../shared/player";
 import type { FollowedChannel } from "../../shared/twitch";
+import { channelKey, parseChannelKey, type Platform } from "../../shared/platform";
+import { ProviderLogo } from "./ProviderLogo";
 import "./multi-stream.css";
 
 interface MultiStreamViewProps {
@@ -146,6 +148,7 @@ export function MultiStreamView({
             key={tile.id}
             tile={tile}
             name={nameFor(tile.channel)}
+            platform={parseChannelKey(tile.channel).platform}
             controlsHideDelay={controlsHideDelay}
             onRemove={onRemove}
             onActivate={onActivate}
@@ -171,6 +174,7 @@ export function MultiStreamView({
 interface MultiTileProps {
   tile: MultiStreamTileState;
   name: string;
+  platform: Platform;
   controlsHideDelay: number;
   onRemove: (id: number) => void;
   onActivate: (id: number) => void;
@@ -183,6 +187,7 @@ interface MultiTileProps {
 const MultiTile = memo(function MultiTile({
   tile,
   name,
+  platform,
   controlsHideDelay,
   onRemove,
   onActivate,
@@ -304,6 +309,7 @@ const MultiTile = memo(function MultiTile({
       )}
       <div className="multi-tile-name-box">
         {tile.active && <span className="multi-tile-live-dot" title="Audio playing" />}
+        <ProviderLogo name={platform} />
         <span className="multi-tile-name">{name}</span>
       </div>
       <div className="multi-tile-controls" onClick={(event) => event.stopPropagation()}>
@@ -398,28 +404,56 @@ interface AddStreamPickerProps {
 
 function AddStreamPicker({ followedLive, usedLogins, onAdd, onClose }: AddStreamPickerProps) {
   const [query, setQuery] = useState("");
+  // A "twitch:" / "kick:" prefix pins the service, so a Kick channel can be
+  // added by name just like the main search box.
+  const [scope, setScope] = useState<Platform | null>(null);
   const available = useMemo(
     () => followedLive.filter((channel) => !usedLogins.has(channel.login)),
     [followedLive, usedLogins],
   );
 
+  const submit = () => {
+    const name = query.trim().toLowerCase();
+    if (name) onAdd(scope ? channelKey(scope, name) : name);
+  };
+
   return (
     <div className="multi-add-picker" role="dialog" aria-label="Add a stream">
-      <input
-        aria-label="Add channel by name"
-        autoFocus
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onClose();
-          if (event.key === "Enter") {
-            const login = query.trim().toLowerCase();
-            if (login) onAdd(login);
+      <div className="multi-add-field">
+        {scope && (
+          <span className={`search-scope-chip ${scope}`}>
+            <ProviderLogo name={scope} />
+            <button aria-label="Clear service" onClick={() => setScope(null)} type="button">
+              <X size={12} />
+            </button>
+          </span>
+        )}
+        <input
+          aria-label="Add channel by name"
+          autoFocus
+          onChange={(event) => {
+            const prefix = /^(twitch|kick):(.*)$/i.exec(event.target.value);
+            if (prefix) {
+              setScope(prefix[1].toLowerCase() as Platform);
+              setQuery(prefix[2]);
+            } else {
+              setQuery(event.target.value);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") onClose();
+            if (event.key === "Enter") submit();
+            if (event.key === "Backspace" && query.length === 0 && scope) setScope(null);
+          }}
+          placeholder={
+            scope
+              ? `Channel name on ${scope === "kick" ? "Kick" : "Twitch"}…`
+              : "Add channel by name…"
           }
-        }}
-        placeholder="Add channel by name…"
-        type="text"
-        value={query}
-      />
+          type="text"
+          value={query}
+        />
+      </div>
       <div className="multi-add-list">
         {available.map((channel) => (
           <button key={channel.login} onClick={() => onAdd(channel.login)} type="button">

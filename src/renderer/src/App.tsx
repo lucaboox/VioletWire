@@ -2706,7 +2706,11 @@ export function App() {
     if (tile) setMultiChatChannel(tile.channel);
   }
 
-  function nameForChannel(login: string): string {
+  function nameForChannel(channelKey: string): string {
+    const { platform, login } = parseChannelKey(channelKey);
+    if (platform === "kick") {
+      return kickFollowedChannels.find((channel) => channel.slug === login)?.displayName ?? login;
+    }
     return followedChannels.find((channel) => channel.login === login)?.displayName ?? login;
   }
 
@@ -3632,6 +3636,7 @@ export function App() {
                       type="button"
                     >
                       {tile.active && <i aria-label="Audio" className="multi-chat-tab-dot" />}
+                      <ProviderLogo name={parseChannelKey(tile.channel).platform} />
                       <span>{nameForChannel(tile.channel)}</span>
                     </button>
                   ))

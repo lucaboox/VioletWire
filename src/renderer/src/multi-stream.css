@@ -45,9 +45,18 @@
 }
 
 .multi-chat-tabbar {
-  padding: 8px;
+  height: 54px;
+  box-sizing: border-box;
+  align-items: center;
+  padding: 0 8px;
   border-bottom: 1px solid #202024;
   scrollbar-width: thin;
+}
+
+.multi-chat-tab svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
 }
 
 /* Cap tab width so four channels never push the row (and anything after it)
@@ -319,6 +328,12 @@
   background: rgb(9 9 11 / 72%);
 }
 
+.multi-tile-name-box svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
 /* Compact control cluster at the top-right, auto-hidden with the controls. */
 .multi-tile-controls {
   position: absolute;
@@ -517,6 +532,19 @@
 .multi-add-picker input:focus-visible {
   outline: 2px solid #7c3aed;
   outline-offset: 1px;
+}
+
+.multi-add-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px;
+}
+
+.multi-add-field input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
 }
 
 .multi-add-list {
