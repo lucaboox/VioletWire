@@ -4,6 +4,36 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.7] - 2026-07-24
+
+### Additions
+
+- The search box takes a `twitch:` or `kick:` prefix, which becomes a small
+  service chip; pressing Enter then opens whatever name you type straight on that
+  service — a quick jump to a known channel.
+
+### Improvements
+
+- Multistream tiles and chat tabs now show a small service logo and the plain
+  channel name instead of a raw `kick:<name>` key.
+- The multistream add box has a service toggle: click the logo to switch between
+  Twitch and Kick, then add a channel by name on that service.
+- The multistream chat tab bar is now the same height as the stream bar beside
+  it, so their tops line up.
+- In the collapsed followed list, a divider now separates live from offline and
+  offline channels are dimmed a little more, so live ones read first.
+- The subscribe modal opens centered on the app's own window instead of always
+  the primary monitor.
+
+### Fixes
+
+- Kick chat now connects for Kick streams watched in multistream; previously each
+  tile tried to join Twitch and a Kick tile's chat stayed empty.
+- Kick sign-in is picked up on launch, so chat, following, and the Kick settings
+  card no longer look signed out until the followed filter is switched to Kick.
+- The console no longer fills with mpv/demuxer logging during playback, nor with
+  repeated Twitch errors for Kick multistream tiles.
+
 ## [0.3.3-alpha.6] - 2026-07-24
 
 ### Additions
