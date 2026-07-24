@@ -1013,6 +1013,9 @@ export function App() {
   // messages themselves come from the always-connected per-channel buffers.
   useEffect(() => {
     if (!multiStreamActive || !effectiveMultiChatChannel) return;
+    // Helix has nothing for a Kick channel and its schema rejects the key; a
+    // Kick tab resolves emotes by 7TV, not this broadcaster id, so skip it.
+    if (parseChannelKey(effectiveMultiChatChannel).platform !== "twitch") return;
     let cancelled = false;
     void window.desktop.twitch
       .getStreamMetadata(effectiveMultiChatChannel)
@@ -1375,6 +1378,10 @@ export function App() {
     for (const tile of multiTiles) {
       if (warmedChatChannels.current.has(tile.channel)) continue;
       warmedChatChannels.current.add(tile.channel);
+      // The Twitch warm path (Helix metadata + badges) does not apply to Kick
+      // tiles, and its schema rejects the key; the active Kick tab loads its own
+      // 7TV emotes separately.
+      if (parseChannelKey(tile.channel).platform !== "twitch") continue;
       void window.desktop.twitch
         .getStreamMetadata(tile.channel)
         .then((meta) => {

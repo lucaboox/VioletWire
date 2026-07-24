@@ -1539,9 +1539,12 @@ handleTrusted("twitch:search", (_event, rawQuery: unknown) => {
   if (typeof rawQuery !== "string") throw new Error("Search text must be a string.");
   return twitchService.search(rawQuery.slice(0, 100));
 });
-handleTrusted("twitch:get-stream-metadata", (_event, rawChannel: unknown) =>
-  twitchService.getStreamMetadata(channelNameSchema.parse(rawChannel)),
-);
+handleTrusted("twitch:get-stream-metadata", (_event, rawChannel: unknown) => {
+  // A non-Twitch channel (e.g. a Kick multistream tile) has no Helix metadata;
+  // answer null rather than throwing a ZodError up through the handler.
+  const parsed = channelNameSchema.safeParse(rawChannel);
+  return parsed.success ? twitchService.getStreamMetadata(parsed.data) : null;
+});
 handleTrusted(
   "twitch:get-chat-user-profile",
   (_event, rawChannel: unknown, rawLogin: unknown) =>
