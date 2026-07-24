@@ -330,36 +330,65 @@ const kickCategorySearchSchema = z.object({
   categories: z.array(kickCategorySchema).nullish(),
 });
 
-const kickLiveStreamSchema = z.object({
-  id: z.number().nullish(),
-  session_title: z.string().nullish(),
+// A live stream as it appears in a category page's server-rendered payload.
+const kickRscStreamSchema = z.object({
+  id: z.union([z.string(), z.number()]).nullish(),
+  title: z.string().nullish(),
   start_time: z.string().nullish(),
-  created_at: z.string().nullish(),
   language: z.string().nullish(),
   is_mature: z.boolean().nullish(),
   viewer_count: z.number().nullish(),
-  viewers: z.number().nullish(),
   tags: z.array(z.string()).nullish(),
   thumbnail: z.object({ src: z.string().nullish() }).nullish(),
   channel: z
     .object({
       id: z.number().nullish(),
       slug: z.string().nullish(),
-      user: z
-        .object({
-          username: z.string().nullish(),
-          profilepic: z.string().nullish(),
-          profile_pic: z.string().nullish(),
-        })
-        .nullish(),
+      username: z.string().nullish(),
+      profile_pic: z.string().nullish(),
     })
     .nullish(),
+  category: z.object({ name: z.string().nullish() }).nullish(),
 });
 
-const kickLiveStreamListSchema = z.object({
-  data: z.array(kickLiveStreamSchema).nullish(),
-  next_page_url: z.string().nullish(),
-});
+/**
+ * Kick has no public JSON list of the live channels in a category — the site
+ * renders that grid server-side — so its channels are pulled from the category
+ * page's React flight payload. Find each `"livestreams":[…]` array (skipping
+ * over string contents, since titles contain brackets) and keep the largest.
+ */
+export function extractRscLivestreams(raw: string): unknown[] {
+  let best: unknown[] = [];
+  const marker = /"livestreams"\s*:\s*\[/g;
+  let match: RegExpExecArray | null;
+  while ((match = marker.exec(raw)) !== null) {
+    const start = raw.indexOf("[", match.index);
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = start;
+    for (; end < raw.length; end += 1) {
+      const char = raw[end];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+      } else if (char === '"') inString = true;
+      else if (char === "[") depth += 1;
+      else if (char === "]") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw.slice(start, end + 1));
+      if (Array.isArray(parsed) && parsed.length > best.length) best = parsed;
+    } catch {
+      // Not the array we want; keep scanning.
+    }
+  }
+  return best;
+}
 
 /** Kick's images come as a `srcset` string or a plain URL; take the first URL. */
 function firstSrcsetUrl(...candidates: (string | null | undefined)[]): string {
@@ -638,43 +667,61 @@ export class KickService {
     };
   }
 
-  /** The live channels in a category, keyed by the category's Kick slug. */
-  async getCategoryStreams(slug: string, cursor?: string): Promise<BrowsePage<BrowseStream>> {
+  /**
+   * The live channels in a category, keyed by its Kick slug. Read from the
+   * category page's server-rendered payload, since Kick exposes no filtered
+   * JSON list. That payload is the first page only, so there is no cursor.
+   */
+  async getCategoryStreams(slug: string): Promise<BrowsePage<BrowseStream>> {
     const clean = slug.trim().toLowerCase();
     if (clean.length === 0) return { items: [] };
-    const page = cursor ?? "1";
-    const payload = await this.requestJson(
-      `/stream/livestreams/${encodeURIComponent(clean)}?page=${encodeURIComponent(page)}`,
-    );
-    const parsed = kickLiveStreamListSchema.safeParse(payload);
-    if (!parsed.success) return { items: [] };
+
+    let raw: string;
+    try {
+      const response = await this.kickSession().fetch(
+        `${KICK_ORIGIN}/category/${encodeURIComponent(clean)}`,
+        {
+          headers: {
+            Accept: "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": this.userAgent(),
+            Referer: `${KICK_ORIGIN}/`,
+            // Asks Next.js for the flight payload rather than the full HTML page.
+            RSC: "1",
+          },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        },
+      );
+      if (!response.ok) return { items: [] };
+      raw = await response.text();
+    } catch {
+      return { items: [] };
+    }
 
     const items: BrowseStream[] = [];
-    for (const entry of parsed.data.data ?? []) {
-      const channelSlug = entry.channel?.slug;
+    for (const entry of extractRscLivestreams(raw)) {
+      const parsed = kickRscStreamSchema.safeParse(entry);
+      if (!parsed.success) continue;
+      const stream = parsed.data;
+      const channelSlug = stream.channel?.slug;
       if (!channelSlug) continue;
       items.push({
-        id: entry.id == null ? channelSlug : String(entry.id),
-        broadcasterId: entry.channel?.id == null ? channelSlug : String(entry.channel.id),
+        id: stream.id == null ? channelSlug : String(stream.id),
+        broadcasterId: stream.channel?.id == null ? channelSlug : String(stream.channel.id),
         login: channelSlug,
-        displayName: entry.channel?.user?.username ?? channelSlug,
-        title: entry.session_title ?? "",
-        // The whole page is one category, so the card need not repeat it.
-        category: "",
-        language: entry.language ?? "",
-        tags: entry.tags ?? [],
-        isMature: Boolean(entry.is_mature),
-        profileImageUrl:
-          entry.channel?.user?.profilepic ?? entry.channel?.user?.profile_pic ?? "",
-        thumbnailUrl: entry.thumbnail?.src ?? "",
-        viewerCount: entry.viewer_count ?? entry.viewers ?? 0,
-        startedAt: toIsoTimestamp(entry.start_time ?? entry.created_at) ?? "",
+        displayName: stream.channel?.username ?? channelSlug,
+        title: stream.title ?? "",
+        category: stream.category?.name ?? "",
+        language: stream.language ?? "",
+        tags: stream.tags ?? [],
+        isMature: Boolean(stream.is_mature),
+        profileImageUrl: stream.channel?.profile_pic ?? "",
+        thumbnailUrl: stream.thumbnail?.src ?? "",
+        viewerCount: stream.viewer_count ?? 0,
+        startedAt: toIsoTimestamp(stream.start_time) ?? "",
       });
     }
-    return {
-      items,
-      cursor: parsed.data.next_page_url ? String(Number(page) + 1) : undefined,
-    };
+    return { items };
   }
 
   /** The signed-in Kick account, or null when signed out. */
