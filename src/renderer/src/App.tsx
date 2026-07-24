@@ -471,6 +471,9 @@ export function App() {
   const [platformFilter, setPlatformFilter] = useState<"twitch" | "kick" | "both">("twitch");
   const [searchPlatformFilter, setSearchPlatformFilter] =
     useState<"twitch" | "kick" | "both">("both");
+  // A "twitch:" / "kick:" prefix in the search box becomes this pinned service,
+  // shown as a chip; Enter then opens the typed name straight on that service.
+  const [searchScope, setSearchScope] = useState<"twitch" | "kick" | null>(null);
   const [topSearchResults, setTopSearchResults] =
     useState<TwitchSearchResults>(emptySearchResults);
   const [topSearchOpen, setTopSearchOpen] = useState(false);
@@ -2423,11 +2426,20 @@ export function App() {
     void window.desktop.preferences.update({ searchPlatformFilter: option });
   }
 
-  // Enter opens the full results page rather than jumping straight to a channel;
-  // the page's "Go to <name>" button is there for opening an exact login.
+  // Enter opens the full results page — unless a service is pinned by a chip, in
+  // which case it opens the typed name straight on that service instead.
   async function openChannel(event: FormEvent) {
     event.preventDefault();
-    if (channelInput.trim().length < 2) return;
+    const name = channelInput.trim().toLowerCase();
+    if (searchScope) {
+      if (name.length === 0) return;
+      setTopSearchOpen(false);
+      setSearchScope(null);
+      setChannelInput("");
+      void watchChannel(channelKey(searchScope, name));
+      return;
+    }
+    if (name.length < 2) return;
     setTopSearchOpen(false);
     leaveMultiStream();
     if (activeChannel) await closePlayer();
@@ -2435,7 +2447,20 @@ export function App() {
   }
 
   function updateTopSearch(value: string) {
+    // A leading "twitch:" / "kick:" becomes a pinned-service chip; the rest is
+    // the channel name to open on Enter.
+    const prefix = /^(twitch|kick):(.*)$/i.exec(value);
+    const scope = prefix ? (prefix[1].toLowerCase() as "twitch" | "kick") : searchScope;
+    if (prefix) {
+      setSearchScope(scope);
+      value = prefix[2];
+    }
     setChannelInput(value);
+    // With a chip active, this is a direct go-to, so skip the search dropdown.
+    if (scope) {
+      setTopSearchOpen(false);
+      return;
+    }
     const longEnough = value.trim().length >= 2;
     // Twitch search needs its sign-in; Kick's does not, so a signed-out user
     // can still search Kick.
@@ -3227,25 +3252,50 @@ export function App() {
             className="search-box"
             onBlur={() => window.setTimeout(() => setTopSearchOpen(false), 120)}
             onFocus={() => {
-              if (authState.status === "signed-in" && channelInput.trim().length >= 2) {
+              if (!searchScope && authState.status === "signed-in" && channelInput.trim().length >= 2) {
                 setTopSearchOpen(true);
               }
             }}
             onSubmit={openChannel}
           >
-            <Search size={18} />
+            {searchScope ? (
+              <span className={`search-scope-chip ${searchScope}`}>
+                <ProviderLogo name={searchScope} />
+                <button
+                  aria-label="Clear service"
+                  onClick={() => setSearchScope(null)}
+                  type="button"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ) : (
+              <Search size={18} />
+            )}
             <input
-              aria-label="Twitch channel"
+              aria-label="Channel search"
               autoComplete="off"
               onChange={(event) => updateTopSearch(event.target.value)}
-              placeholder="Search channels and categories"
+              onKeyDown={(event) => {
+                if (event.key === "Backspace" && channelInput.length === 0 && searchScope) {
+                  setSearchScope(null);
+                }
+              }}
+              placeholder={
+                searchScope
+                  ? `Channel name to open on ${searchScope === "kick" ? "Kick" : "Twitch"}`
+                  : "Search channels and categories"
+              }
               value={channelInput}
             />
             {channelInput ? (
               <button
                 aria-label="Clear search"
                 className="top-search-clear"
-                onClick={() => updateTopSearch("")}
+                onClick={() => {
+                  setSearchScope(null);
+                  updateTopSearch("");
+                }}
                 type="button"
               >
                 <X size={16} />
