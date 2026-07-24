@@ -404,9 +404,9 @@ interface AddStreamPickerProps {
 
 function AddStreamPicker({ followedLive, usedLogins, onAdd, onClose }: AddStreamPickerProps) {
   const [query, setQuery] = useState("");
-  // A "twitch:" / "kick:" prefix pins the service, so a Kick channel can be
-  // added by name just like the main search box.
-  const [scope, setScope] = useState<Platform | null>(null);
+  // The service to add the typed name on. The logo before the field toggles it;
+  // Twitch by default. Typing an explicit "twitch:"/"kick:" flips it too.
+  const [scope, setScope] = useState<Platform>("twitch");
   const available = useMemo(
     () => followedLive.filter((channel) => !usedLogins.has(channel.login)),
     [followedLive, usedLogins],
@@ -414,20 +414,21 @@ function AddStreamPicker({ followedLive, usedLogins, onAdd, onClose }: AddStream
 
   const submit = () => {
     const name = query.trim().toLowerCase();
-    if (name) onAdd(scope ? channelKey(scope, name) : name);
+    if (name) onAdd(channelKey(scope, name));
   };
 
   return (
     <div className="multi-add-picker" role="dialog" aria-label="Add a stream">
       <div className="multi-add-field">
-        {scope && (
-          <span className={`search-scope-chip ${scope}`}>
-            <ProviderLogo name={scope} />
-            <button aria-label="Clear service" onClick={() => setScope(null)} type="button">
-              <X size={12} />
-            </button>
-          </span>
-        )}
+        <button
+          aria-label={`Adding on ${scope === "kick" ? "Kick" : "Twitch"}. Click to switch service.`}
+          className={`multi-add-service ${scope}`}
+          onClick={() => setScope((current) => (current === "kick" ? "twitch" : "kick"))}
+          title={`Adding on ${scope === "kick" ? "Kick" : "Twitch"} — click to switch`}
+          type="button"
+        >
+          <ProviderLogo name={scope} />
+        </button>
         <input
           aria-label="Add channel by name"
           autoFocus
@@ -443,13 +444,8 @@ function AddStreamPicker({ followedLive, usedLogins, onAdd, onClose }: AddStream
           onKeyDown={(event) => {
             if (event.key === "Escape") onClose();
             if (event.key === "Enter") submit();
-            if (event.key === "Backspace" && query.length === 0 && scope) setScope(null);
           }}
-          placeholder={
-            scope
-              ? `Channel name on ${scope === "kick" ? "Kick" : "Twitch"}…`
-              : "Add channel by name…"
-          }
+          placeholder={`Add a ${scope === "kick" ? "Kick" : "Twitch"} channel…`}
           type="text"
           value={query}
         />

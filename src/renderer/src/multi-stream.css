@@ -547,6 +547,39 @@
   margin: 0;
 }
 
+/* The service the typed name is added on; click to toggle Twitch/Kick. */
+.multi-add-service {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #454550;
+  border-radius: 7px;
+  background: #232329;
+  cursor: pointer;
+}
+
+.multi-add-service.twitch {
+  border-color: #3a2a63;
+  background: #241a3a;
+}
+
+.multi-add-service.kick {
+  border-color: #14432f;
+  background: #123324;
+}
+
+.multi-add-service svg {
+  width: 15px;
+  height: 15px;
+}
+
+.multi-add-service:hover {
+  filter: brightness(1.25);
+}
+
 .multi-add-list {
   overflow-y: auto;
   padding: 0 6px 8px;
