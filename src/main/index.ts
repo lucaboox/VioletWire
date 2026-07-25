@@ -953,10 +953,55 @@ function applyTitleBarTheme(oledMode: boolean): void {
   mainWindow.setTitleBarOverlay(titleBarOverlayOptions(oledMode));
 }
 
+function restoredMainWindowBounds(): Rectangle | null {
+  const preferences = preferencesService.get();
+  if (preferences.windowX === null || preferences.windowY === null) return null;
+
+  const saved = {
+    x: preferences.windowX,
+    y: preferences.windowY,
+    width: preferences.windowWidth,
+    height: preferences.windowHeight,
+  };
+  const displays = screen.getAllDisplays();
+  const matchingDisplay = displays
+    .map((display) => {
+      const workArea = display.workArea;
+      const overlapWidth = Math.max(
+        0,
+        Math.min(saved.x + saved.width, workArea.x + workArea.width) -
+          Math.max(saved.x, workArea.x),
+      );
+      const overlapHeight = Math.max(
+        0,
+        Math.min(saved.y + saved.height, workArea.y + workArea.height) -
+          Math.max(saved.y, workArea.y),
+      );
+      return { display, overlap: overlapWidth * overlapHeight };
+    })
+    .sort((left, right) => right.overlap - left.overlap)[0];
+
+  // Do not resurrect a window on a monitor that was disconnected. Let Windows
+  // choose a visible location instead.
+  if (!matchingDisplay || matchingDisplay.overlap === 0) return null;
+  const workArea = matchingDisplay.display.workArea;
+  const width = Math.min(saved.width, workArea.width);
+  const height = Math.min(saved.height, workArea.height);
+  return {
+    x: Math.min(Math.max(saved.x, workArea.x), workArea.x + workArea.width - width),
+    y: Math.min(Math.max(saved.y, workArea.y), workArea.y + workArea.height - height),
+    width,
+    height,
+  };
+}
+
 async function createWindow(): Promise<void> {
+  const savedBounds = restoredMainWindowBounds();
+  const preferences = preferencesService.get();
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: savedBounds?.width ?? preferences.windowWidth,
+    height: savedBounds?.height ?? preferences.windowHeight,
+    ...(savedBounds ? { x: savedBounds.x, y: savedBounds.y } : {}),
     minWidth: 960,
     minHeight: 640,
     backgroundColor: "#09090b",
@@ -983,6 +1028,26 @@ async function createWindow(): Promise<void> {
     },
   });
   const createdWindow = mainWindow;
+  let windowStateTimer: NodeJS.Timeout | null = null;
+  const persistWindowState = (immediate = false) => {
+    if (windowStateTimer) clearTimeout(windowStateTimer);
+    const save = () => {
+      if (createdWindow.isDestroyed()) return;
+      const bounds = createdWindow.getNormalBounds();
+      void preferencesService
+        .update({
+          windowX: bounds.x,
+          windowY: bounds.y,
+          windowWidth: bounds.width,
+          windowHeight: bounds.height,
+          windowMaximized: createdWindow.isMaximized(),
+        })
+        .catch(() => undefined);
+    };
+    if (immediate) save();
+    else windowStateTimer = setTimeout(save, 300);
+  };
+  if (preferences.windowMaximized) createdWindow.maximize();
   mainWindow.webContents.session.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false),
   );
@@ -1023,14 +1088,24 @@ async function createWindow(): Promise<void> {
     sendToWindow(createdWindow, "window:fullscreen-changed", false);
   });
 
+  mainWindow.on("close", () => persistWindowState(true));
   mainWindow.on("closed", () => {
+    if (windowStateTimer) clearTimeout(windowStateTimer);
     destroyPlayer();
     mainWindow = null;
   });
   mainWindow.on("will-move", suspendDetachedNativeSurfaces);
-  mainWindow.on("moved", restoreDetachedNativeSurfaces);
+  mainWindow.on("moved", () => {
+    restoreDetachedNativeSurfaces();
+    persistWindowState();
+  });
   mainWindow.on("will-resize", suspendDetachedNativeSurfaces);
-  mainWindow.on("resized", restoreDetachedNativeSurfaces);
+  mainWindow.on("resized", () => {
+    restoreDetachedNativeSurfaces();
+    persistWindowState();
+  });
+  mainWindow.on("maximize", () => persistWindowState(true));
+  mainWindow.on("unmaximize", () => persistWindowState(true));
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl) {
@@ -1230,6 +1305,19 @@ handleTrusted("native-player:stats", () =>
       ? textureNativePlayer.getStats()
       : nativePlayer.getStats(),
 );
+onTrusted("native-player:presented-fps", (_event, input: unknown) => {
+  if (
+    activePlayerMode !== "native" ||
+    activeNativeBackend !== "texture" ||
+    typeof input !== "number" ||
+    !Number.isFinite(input) ||
+    input < 0 ||
+    input > 240
+  ) {
+    return;
+  }
+  textureNativePlayer.reportPresentedFps(input);
+});
 
 onTrusted("native-player:control", (_event, input: unknown) => {
   const result = nativePlayerCommandSchema.safeParse(input);

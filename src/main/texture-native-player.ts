@@ -155,6 +155,7 @@ export class TextureNativePlayer {
   // frame rate. mpv's own estimated-vf-fps stays at 0 with the render API since
   // the addon, not mpv, drives presentation.
   private readonly frameTimestamps: number[] = [];
+  private presentedFps = 0;
   private readonly resolveCache = new Map<
     string,
     { expiresAt: number; url: Promise<string> }
@@ -450,6 +451,10 @@ export class TextureNativePlayer {
     this.session?.addon.recoverGraphics(cycleAdapter);
   }
 
+  reportPresentedFps(fps: number): void {
+    this.presentedFps = fps;
+  }
+
   // Deterministic mute for multistream audio focus (only the active tile plays
   // sound). Unlike control("toggle-mute") this sets an explicit state.
   setMuted(muted: boolean): void {
@@ -470,7 +475,8 @@ export class TextureNativePlayer {
     try {
       const stats = addon.stats();
       if (stats) {
-        stats["vw-fps"] = String(this.measuredFps());
+        stats["vw-fps"] = String(this.presentedFps);
+        stats["vw-delivery-fps"] = String(this.measuredFps());
         const chromiumGpu = this.chromiumGpuDevice;
         if (chromiumGpu) {
           const name =
@@ -527,6 +533,7 @@ export class TextureNativePlayer {
     this.switchPending = false;
     this.currentChannel = null;
     this.chromiumGpuDevice = null;
+    this.presentedFps = 0;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeTimer = null;
     this.resolverProcess?.kill();

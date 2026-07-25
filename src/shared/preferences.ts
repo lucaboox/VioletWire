@@ -38,6 +38,13 @@ export const appPreferencesSchema = z.object({
   audioCompression: z.boolean(),
   // Show the live frame rate in the corner of the Native player.
   showFpsOverlay: z.boolean(),
+  // Last restored main-window placement. Null coordinates let Windows choose a
+  // safe initial display before the user has moved the window.
+  windowX: z.number().int().min(-100_000).max(100_000).nullable(),
+  windowY: z.number().int().min(-100_000).max(100_000).nullable(),
+  windowWidth: z.number().int().min(960).max(10_000),
+  windowHeight: z.number().int().min(640).max(10_000),
+  windowMaximized: z.boolean(),
   // These live here rather than in localStorage: the packaged renderer is
   // served from a random localhost port, so its browser storage is a fresh
   // origin on every launch and cannot remember anything across runs.
@@ -88,6 +95,11 @@ export const defaultAppPreferences: AppPreferences = {
   oledMode: false,
   audioCompression: false,
   showFpsOverlay: false,
+  windowX: null,
+  windowY: null,
+  windowWidth: 1440,
+  windowHeight: 900,
+  windowMaximized: false,
   lastSeenChangelogVersion: "",
   emoteFavorites: [],
   favoriteChannels: [],

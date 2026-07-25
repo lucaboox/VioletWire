@@ -39,6 +39,16 @@ import type {
 // tiles never drop one another's frames or paint onto the wrong <canvas>.
 const newestTextureSequence = new Map<string, number>();
 const textureCanvases = new Map<string, HTMLCanvasElement>();
+type TexturePaintJob = {
+  imported: Electron.SharedTextureImported;
+  target: string;
+  sequence: number;
+  complete: () => void;
+};
+const activeTexturePaints = new Set<string>();
+const queuedTexturePaints = new Map<string, TexturePaintJob>();
+const presentedTextureFrames: number[] = [];
+let lastPresentedFpsReport = 0;
 
 function readTransferTarget(userData: unknown): { target: string; sequence: number } {
   if (typeof userData === "object" && userData !== null) {
@@ -53,29 +63,42 @@ function readTransferTarget(userData: unknown): { target: string; sequence: numb
   return { target: "main", sequence: typeof userData === "number" ? userData : Number.NaN };
 }
 
-sharedTexture.setSharedTextureReceiver(async (received, userData: unknown) => {
-  const imported = received.importedSharedTexture;
-  const frame = imported.getVideoFrame();
+function discardTextureJob(job: TexturePaintJob): void {
+  job.imported.release();
+  job.complete();
+}
+
+function reportPresentedFrame(target: string): void {
+  if (target !== "main") return;
+  const now = performance.now();
+  presentedTextureFrames.push(now);
+  while (presentedTextureFrames[0] !== undefined && presentedTextureFrames[0] < now - 1_000) {
+    presentedTextureFrames.shift();
+  }
+  if (now - lastPresentedFpsReport >= 250) {
+    lastPresentedFpsReport = now;
+    ipcRenderer.send("native-player:presented-fps", presentedTextureFrames.length);
+  }
+}
+
+async function paintTextureJob(job: TexturePaintJob): Promise<void> {
+  let frame: VideoFrame | null = null;
   let bitmap: ImageBitmap | null = null;
-  const { target, sequence } = readTransferTarget(userData);
   try {
-    const newest = newestTextureSequence.get(target) ?? -1;
-    if (Number.isFinite(sequence) && sequence <= newest) return;
-    if (Number.isFinite(sequence)) newestTextureSequence.set(target, sequence);
+    frame = job.imported.getVideoFrame();
     // Nothing can be seen while the document is hidden; skip the bitmap and
     // canvas work. Decode and audio continue, and the next frame after the
     // window becomes visible repaints the canvas.
     if (document.visibilityState === "hidden") return;
     bitmap = await createImageBitmap(frame);
-    if (Number.isFinite(sequence) && sequence < (newestTextureSequence.get(target) ?? -1)) return;
     // Cached: querying the DOM per frame at 60 FPS is measurable waste.
-    let canvas = textureCanvases.get(target);
+    let canvas = textureCanvases.get(job.target);
     if (!canvas?.isConnected) {
       canvas =
         document.querySelector<HTMLCanvasElement>(
-          `[data-native-texture-canvas="${target}"]`,
+          `[data-native-texture-canvas="${job.target}"]`,
         ) ?? undefined;
-      if (canvas) textureCanvases.set(target, canvas);
+      if (canvas) textureCanvases.set(job.target, canvas);
     }
     if (!canvas) return;
     const width = bitmap.width;
@@ -90,11 +113,57 @@ sharedTexture.setSharedTextureReceiver(async (received, userData: unknown) => {
       const context = canvas.getContext("2d", { alpha: false, desynchronized: true });
       context?.drawImage(bitmap, 0, 0, width, height);
     }
+    reportPresentedFrame(job.target);
   } finally {
     bitmap?.close();
-    frame.close();
-    imported.release();
+    frame?.close();
+    job.imported.release();
   }
+}
+
+async function drainTexturePaints(initialJob: TexturePaintJob): Promise<void> {
+  let job: TexturePaintJob | undefined = initialJob;
+  while (job) {
+    try {
+      await paintTextureJob(job);
+    } catch {
+      // A single rejected conversion must not strand this target's queue. The
+      // next shared texture is independent and can still paint successfully.
+    } finally {
+      job.complete();
+    }
+    job = queuedTexturePaints.get(initialJob.target);
+    queuedTexturePaints.delete(initialJob.target);
+  }
+  activeTexturePaints.delete(initialJob.target);
+}
+
+sharedTexture.setSharedTextureReceiver((received, userData: unknown) => {
+  const { target, sequence } = readTransferTarget(userData);
+  return new Promise<void>((complete) => {
+    const job: TexturePaintJob = {
+      imported: received.importedSharedTexture,
+      target,
+      sequence,
+      complete,
+    };
+    const newest = newestTextureSequence.get(target) ?? -1;
+    if (Number.isFinite(sequence) && sequence <= newest) {
+      discardTextureJob(job);
+      return;
+    }
+    if (Number.isFinite(sequence)) newestTextureSequence.set(target, sequence);
+
+    if (activeTexturePaints.has(target)) {
+      const superseded = queuedTexturePaints.get(target);
+      if (superseded) discardTextureJob(superseded);
+      queuedTexturePaints.set(target, job);
+      return;
+    }
+
+    activeTexturePaints.add(target);
+    void drainTexturePaints(job);
+  });
 });
 
 const api: DesktopApi = {
