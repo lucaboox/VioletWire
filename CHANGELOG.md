@@ -4,6 +4,22 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.9] - 2026-07-25
+
+### Additions
+
+- The Native player's video statistics now identify Chromium's preferred GPU,
+  the D3D11 texture adapter, the OpenGL renderer, and both the requested and
+  selected hardware decoder, making multi-GPU playback problems easier to
+  diagnose.
+
+### Fixes
+
+- NVIDIA systems now select NVDEC from the graphics adapter the embedded player
+  actually created. Previously, Chromium could report every adapter as inactive
+  and make VioletWire unnecessarily fall back to `d3d11va-copy`, even while the
+  Native renderer was running on an RTX GPU.
+
 ## [0.3.3-alpha.8] - 2026-07-24
 
 ### Additions
