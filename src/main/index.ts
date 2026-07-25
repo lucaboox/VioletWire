@@ -251,6 +251,7 @@ const nativePlayer = new NativePlayer(
         !nativePlayerPaused &&
         !nativeControlsExpanded &&
         !nativeEmotePickerOpen &&
+        !preferencesService.get().showFpsOverlay &&
         !(nativeControlsContext?.chatVisible &&
           nativeControlsContext.chatPresentation === "overlay")
       ) {
@@ -456,12 +457,22 @@ function applyNativeControlsBounds(): void {
             },
       ]
     : [];
+  const fpsShape = preferencesService.get().showFpsOverlay
+    ? [
+        {
+          x: playerX + 8,
+          y: playerY + 6,
+          width: Math.min(104, playerWidth),
+          height: Math.min(34, playerHeight),
+        },
+      ]
+    : [];
   nativeControlsWindow.setShape(
     nativeControlsExpanded || nativeChatOverlay
       ? [{ x: 0, y: 0, width, height }]
-      : [...normalControlShape, ...centerPlayShape, ...pickerShape],
+      : [...normalControlShape, ...centerPlayShape, ...pickerShape, ...fpsShape],
   );
-  if (nativeControlsVisible || nativePlayerPaused) {
+  if (nativeControlsVisible || nativePlayerPaused || preferencesService.get().showFpsOverlay) {
     nativeControlsWindow.showInactive();
     nativeControlsWindow.moveTop();
   }
@@ -1212,12 +1223,12 @@ function persistPlayerVolume(volume: number): void {
   }, 400);
 }
 
-// Only the texture backend can report these; the window backend drives mpv as
-// a separate process with no property channel back to us.
 handleTrusted("native-player:stats", () =>
-  activePlayerMode === "native" && activeNativeBackend === "texture"
-    ? textureNativePlayer.getStats()
-    : null,
+  activePlayerMode !== "native"
+    ? null
+    : activeNativeBackend === "texture"
+      ? textureNativePlayer.getStats()
+      : nativePlayer.getStats(),
 );
 
 onTrusted("native-player:control", (_event, input: unknown) => {
@@ -1320,6 +1331,7 @@ onTrusted("native-controls:set-visible", (_event, input: unknown) => {
     !nativeControlsExpanded &&
     !nativePlayerPaused &&
     !nativeEmotePickerOpen &&
+    !preferencesService.get().showFpsOverlay &&
     !(nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay")
   ) {
     nativeControlsWindow.hide();
@@ -1335,7 +1347,13 @@ onTrusted("native-controls:set-expanded", (_event, input: unknown) => {
   if (!nativeControlsWindow) return;
   const nativeChatOverlay =
     nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay";
-  if (!input && !nativeEmotePickerOpen && !nativeControlsVisible && !nativeChatOverlay) {
+  if (
+    !input &&
+    !nativeEmotePickerOpen &&
+    !nativeControlsVisible &&
+    !nativeChatOverlay &&
+    !preferencesService.get().showFpsOverlay
+  ) {
     nativeControlsWindow.hide();
     return;
   }
@@ -1643,6 +1661,22 @@ handleTrusted("preferences:update", async (_event, patch: unknown) => {
   applyTitleBarTheme(preferences.oledMode);
   sendToWindow(mainWindow, "preferences:changed", preferences);
   sendToWindow(nativeControlsWindow, "preferences:changed", preferences);
+  if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) {
+    applyNativeControlsBounds();
+    if (preferences.showFpsOverlay) {
+      nativeControlsWindow.showInactive();
+      nativeControlsWindow.moveTop();
+    } else if (
+      !nativeControlsVisible &&
+      !nativeControlsExpanded &&
+      !nativePlayerPaused &&
+      !nativeEmotePickerOpen &&
+      !(nativeControlsContext?.chatVisible &&
+        nativeControlsContext.chatPresentation === "overlay")
+    ) {
+      nativeControlsWindow.hide();
+    }
+  }
   return preferences;
 });
 

@@ -1059,6 +1059,8 @@ export function NativeControls({
     push("Resolution", source);
     push("Display", display);
     push("FPS", fps);
+    push("Display refresh", round("display-fps", 2));
+    push("Estimated display", round("estimated-display-fps", 2));
     push("Video", read("video-codec"));
     push("Pixel format", read("video-format"));
     push("Hardware decode", read("hwdec-current"));
@@ -1072,7 +1074,11 @@ export function NativeControls({
     push("Audio bitrate", kilobits("audio-bitrate"));
     push("Audio format", audio);
     push("Output", read("current-ao"));
+    push("Video output", read("current-vo"));
     push("Dropped frames", dropped);
+    push("Mistimed frames", read("mistimed-frame-count"));
+    push("Delayed frames", read("vo-delayed-frame-count"));
+    push("VSync jitter", read("vsync-jitter"));
     push("Buffer", cache);
     push("A/V sync", sync);
     push("Protocol", read("file-format"));

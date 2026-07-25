@@ -25,6 +25,35 @@ import {
 type StateListener = (state: NativePlayerState) => void;
 const AUDIO_COMPRESSOR_FILTER =
   "@glint_compressor:lavfi=[acompressor=threshold=0.125:ratio=4:attack=20:release=250:makeup=2:knee=2.828427125:detection=rms:link=average]";
+const WINDOW_PLAYER_STATS_PROPERTIES = [
+  "file-format",
+  "video-codec",
+  "video-format",
+  "hwdec-current",
+  "width",
+  "height",
+  "dwidth",
+  "dheight",
+  "estimated-vf-fps",
+  "container-fps",
+  "display-fps",
+  "estimated-display-fps",
+  "video-bitrate",
+  "audio-codec-name",
+  "audio-bitrate",
+  "audio-params/channel-count",
+  "audio-params/samplerate",
+  "current-ao",
+  "current-vo",
+  "demuxer-cache-duration",
+  "demuxer-cache-time",
+  "frame-drop-count",
+  "decoder-frame-drop-count",
+  "mistimed-frame-count",
+  "vo-delayed-frame-count",
+  "vsync-jitter",
+  "avsync",
+] as const;
 
 function raiseMpvChildWindow(parentHandle: number): void {
   // Electron creates an "Intermediate D3D Window" child even for BaseWindow.
@@ -90,7 +119,7 @@ public static class GlintMpvZOrder {
 '@
 
 $parentWindow = [IntPtr]::new(${parentHandle})
-for ($attempt = 0; $attempt -lt 20; $attempt++) {
+for ($attempt = 0; $attempt -lt 100; $attempt++) {
   if ([GlintMpvZOrder]::RaiseMpvChild($parentWindow)) {
     exit 0
   }
@@ -198,6 +227,12 @@ export class NativePlayer {
   private stopping = false;
   private surfaceSuspended = false;
   private receiveBuffer = "";
+  private nextRequestId = 1;
+  private readonly pendingRequests = new Map<
+    number,
+    { resolve: (value: unknown) => void; timer: NodeJS.Timeout }
+  >();
+  private readonly frameTimestamps: number[] = [];
   private readonly qualityCache = new Map<
     string,
     { expiresAt: number; result: Promise<NativeQuality[]> }
@@ -332,6 +367,9 @@ export class NativePlayer {
       "--osc=no",
       "--input-default-bindings=no",
       "--keep-open=no",
+      "--vo=gpu-next",
+      "--gpu-api=d3d11",
+      "--gpu-context=d3d11",
       "--hwdec=auto-safe",
       "--profile=low-latency",
       "{playerinput}",
@@ -413,6 +451,30 @@ export class NativePlayer {
     this.applyBounds();
   }
 
+  async getStats(): Promise<Record<string, string> | null> {
+    if (!this.mpvSocket?.writable) return null;
+    const values = await Promise.all(
+      WINDOW_PLAYER_STATS_PROPERTIES.map(async (property) => [
+        property,
+        await this.getMpvProperty(property),
+      ] as const),
+    );
+    const result: Record<string, string> = {
+      "vw-render-path": "Window-hosted D3D11",
+      "vw-fps": String(this.measuredFps()),
+    };
+    for (const [property, value] of values) {
+      if (
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+      ) {
+        result[property] = String(value);
+      }
+    }
+    return result;
+  }
+
   refreshBounds(): void {
     this.applyBounds();
   }
@@ -468,7 +530,9 @@ export class NativePlayer {
     this.sendMpvCommand(["quit"]);
     this.mpvSocket?.destroy();
     this.mpvSocket = null;
+    this.resolvePendingRequests();
     this.receiveBuffer = "";
+    this.frameTimestamps.length = 0;
     this.streamlinkProcess?.kill();
     this.streamlinkProcess = null;
     if (this.nativeWindow && !this.nativeWindow.isDestroyed()) this.nativeWindow.destroy();
@@ -518,10 +582,15 @@ export class NativePlayer {
       socket.on("data", (data) => this.handleMpvData(data.toString("utf8")));
       socket.on("close", () => {
         if (!this.stopping) this.mpvSocket = null;
+        this.resolvePendingRequests();
       });
       this.sendMpvCommand(["observe_property", 1, "pause"]);
       this.sendMpvCommand(["observe_property", 2, "mute"]);
       this.sendMpvCommand(["observe_property", 3, "volume"]);
+      // time-pos advances with mpv's scheduled video frames and gives the
+      // compatibility backend a useful live FPS signal without touching the
+      // native swapchain.
+      this.sendMpvCommand(["observe_property", 4, "time-pos"]);
       this.applyCompressor(this.state.compressorEnabled);
     });
     socket.once("error", () => {
@@ -542,7 +611,17 @@ export class NativePlayer {
           event?: string;
           name?: string;
           data?: unknown;
+          request_id?: number;
+          error?: string;
         };
+        if (typeof event.request_id === "number") {
+          const pending = this.pendingRequests.get(event.request_id);
+          if (pending) {
+            this.pendingRequests.delete(event.request_id);
+            clearTimeout(pending.timer);
+            pending.resolve(event.error === "success" ? event.data : null);
+          }
+        }
         if (event.event === "playback-restart" || event.event === "file-loaded") {
           this.updateState({ status: "playing", error: undefined });
         } else if (event.event === "end-file" && !this.stopping) {
@@ -554,6 +633,9 @@ export class NativePlayer {
             this.updateState({ muted: event.data });
           } else if (event.name === "volume" && typeof event.data === "number") {
             this.updateState({ volume: Math.round(event.data) });
+          } else if (event.name === "time-pos" && typeof event.data === "number") {
+            this.frameTimestamps.push(Date.now());
+            if (this.frameTimestamps.length > 200) this.frameTimestamps.shift();
           }
         }
       } catch {
@@ -565,6 +647,49 @@ export class NativePlayer {
   private sendMpvCommand(command: unknown[]): void {
     if (!this.mpvSocket?.writable) return;
     this.mpvSocket.write(`${JSON.stringify({ command })}\n`);
+  }
+
+  private getMpvProperty(property: string): Promise<unknown> {
+    const socket = this.mpvSocket;
+    if (!socket?.writable) return Promise.resolve(null);
+    const requestId = this.nextRequestId++;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        resolve(null);
+      }, 750);
+      this.pendingRequests.set(requestId, { resolve, timer });
+      try {
+        socket.write(
+          `${JSON.stringify({
+            command: ["get_property", property],
+            request_id: requestId,
+          })}\n`,
+        );
+      } catch {
+        clearTimeout(timer);
+        this.pendingRequests.delete(requestId);
+        resolve(null);
+      }
+    });
+  }
+
+  private resolvePendingRequests(): void {
+    for (const pending of this.pendingRequests.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(null);
+    }
+    this.pendingRequests.clear();
+  }
+
+  private measuredFps(): number {
+    const cutoff = Date.now() - 1_000;
+    let count = 0;
+    for (let index = this.frameTimestamps.length - 1; index >= 0; index -= 1) {
+      if (this.frameTimestamps[index] >= cutoff) count += 1;
+      else break;
+    }
+    return count;
   }
 
   private applyCompressor(enabled: boolean): void {
@@ -581,6 +706,7 @@ export class NativePlayer {
       !this.nativeWindow.isDestroyed()
     ) {
       this.nativeWindow.showInactive();
+      if (this.nativeHostHandle) raiseMpvChildWindow(this.nativeHostHandle);
     } else if (
       (update.status === "error" || update.status === "stopped") &&
       this.nativeWindow &&
