@@ -58,6 +58,7 @@ describe("PreferencesService", () => {
     await first.update({
       preferredPlayerMode: "native",
       experimentalTexturePlayer: true,
+      texturePresentationMode: "video-frame",
       chatTimestamps: false,
       chatHistoryLimit: 100,
       chatFontSize: 21,
@@ -78,6 +79,7 @@ describe("PreferencesService", () => {
     expect(await second.getOrMigrate()).toEqual({
       preferredPlayerMode: "native",
       experimentalTexturePlayer: true,
+      texturePresentationMode: "video-frame",
       chatTimestamps: false,
       chatHistoryLimit: 100,
       chatFontSize: 21,

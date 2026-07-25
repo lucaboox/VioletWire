@@ -7,6 +7,7 @@ import {
   type NativeQualityValue,
   type PlayerBounds,
 } from "../shared/player";
+import type { TexturePresentationMode } from "../shared/preferences";
 import { TextureNativePlayer } from "./texture-native-player";
 
 interface Tile {
@@ -35,6 +36,7 @@ export class MultiStreamManager {
     private readonly getTwitchPlaybackToken: () => string | null,
     private readonly getStoredVolume: () => number,
     private readonly getKickCookie: () => Promise<string | null>,
+    private readonly getPresentationMode: () => TexturePresentationMode,
     private readonly onTileState: TileStateListener,
     private readonly onTileRemoved: TileRemovedListener,
   ) {}
@@ -138,6 +140,7 @@ export class MultiStreamManager {
       String(id),
       this.getStoredVolume,
       this.getKickCookie,
+      this.getPresentationMode,
     );
     const tile: Tile = { id, channel, player, state: player.getState() };
     this.tiles.set(id, tile);

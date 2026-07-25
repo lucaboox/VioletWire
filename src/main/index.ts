@@ -316,6 +316,7 @@ const textureNativePlayer = new TextureNativePlayer(
   "main",
   () => preferencesService.get().playerVolume,
   () => kickService.getStreamlinkCookie(),
+  () => preferencesService.get().texturePresentationMode,
 );
 const multiStreamManager = new MultiStreamManager(
   () => mainWindow,
@@ -323,6 +324,7 @@ const multiStreamManager = new MultiStreamManager(
   () => playbackSessionService.getToken(),
   () => preferencesService.get().playerVolume,
   () => kickService.getStreamlinkCookie(),
+  () => preferencesService.get().texturePresentationMode,
   (tile) => sendToWindow(mainWindow, "native-multi:tile-state", tile),
   (id) => sendToWindow(mainWindow, "native-multi:tile-removed", id),
 );

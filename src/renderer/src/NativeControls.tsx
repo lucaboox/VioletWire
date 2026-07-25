@@ -1060,6 +1060,7 @@ export function NativeControls({
     push("Display", display);
     push("FPS", fps);
     push("Frame delivery", round("vw-delivery-fps", 1));
+    push("Presentation", read("vw-presentation"));
     push("Display refresh", round("display-fps", 2));
     push("Estimated display", round("estimated-display-fps", 2));
     push("Video", read("video-codec"));

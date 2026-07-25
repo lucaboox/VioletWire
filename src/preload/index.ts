@@ -32,6 +32,7 @@ import type {
   AppPreferences,
   AppPreferencesPatch,
   PreferencesApi,
+  TexturePresentationMode,
 } from "../shared/preferences";
 
 // Each render target ("main" for the single full-window/mini player, or a
@@ -43,6 +44,7 @@ type TexturePaintJob = {
   imported: Electron.SharedTextureImported;
   target: string;
   sequence: number;
+  presentationMode: TexturePresentationMode;
   complete: () => void;
 };
 const activeTexturePaints = new Set<string>();
@@ -50,17 +52,31 @@ const queuedTexturePaints = new Map<string, TexturePaintJob>();
 const presentedTextureFrames: number[] = [];
 let lastPresentedFpsReport = 0;
 
-function readTransferTarget(userData: unknown): { target: string; sequence: number } {
+function readTransferTarget(userData: unknown): {
+  target: string;
+  sequence: number;
+  presentationMode: TexturePresentationMode;
+} {
   if (typeof userData === "object" && userData !== null) {
-    const record = userData as { target?: unknown; sequence?: unknown };
+    const record = userData as {
+      target?: unknown;
+      sequence?: unknown;
+      presentationMode?: unknown;
+    };
     return {
       target: typeof record.target === "string" ? record.target : "main",
       sequence: typeof record.sequence === "number" ? record.sequence : Number.NaN,
+      presentationMode:
+        record.presentationMode === "video-frame" ? "video-frame" : "bitmap",
     };
   }
   // Back-compat with the pre-multistream protocol where userData was the raw
   // sequence number and there was only the "main" target.
-  return { target: "main", sequence: typeof userData === "number" ? userData : Number.NaN };
+  return {
+    target: "main",
+    sequence: typeof userData === "number" ? userData : Number.NaN,
+    presentationMode: "bitmap",
+  };
 }
 
 function discardTextureJob(job: TexturePaintJob): void {
@@ -90,7 +106,6 @@ async function paintTextureJob(job: TexturePaintJob): Promise<void> {
     // canvas work. Decode and audio continue, and the next frame after the
     // window becomes visible repaints the canvas.
     if (document.visibilityState === "hidden") return;
-    bitmap = await createImageBitmap(frame);
     // Cached: querying the DOM per frame at 60 FPS is measurable waste.
     let canvas = textureCanvases.get(job.target);
     if (!canvas?.isConnected) {
@@ -101,10 +116,27 @@ async function paintTextureJob(job: TexturePaintJob): Promise<void> {
       if (canvas) textureCanvases.set(job.target, canvas);
     }
     if (!canvas) return;
-    const width = bitmap.width;
-    const height = bitmap.height;
+    const width = frame.displayWidth;
+    const height = frame.displayHeight;
     if (canvas.width !== width) canvas.width = width;
     if (canvas.height !== height) canvas.height = height;
+
+    if (job.presentationMode === "video-frame") {
+      const directContext = canvas.getContext("2d", {
+        alpha: false,
+        desynchronized: true,
+      });
+      if (directContext) {
+        directContext.drawImage(frame, 0, 0, width, height);
+        reportPresentedFrame(job.target);
+        return;
+      }
+      // A canvas cannot change context types after its first context is made.
+      // If this preference changed during playback, retain the working bitmap
+      // path until VioletWire restarts instead of blanking the stream.
+    }
+
+    bitmap = await createImageBitmap(frame);
     const bitmapContext = canvas.getContext("bitmaprenderer", { alpha: false });
     if (bitmapContext) {
       bitmapContext.transferFromImageBitmap(bitmap);
@@ -139,12 +171,13 @@ async function drainTexturePaints(initialJob: TexturePaintJob): Promise<void> {
 }
 
 sharedTexture.setSharedTextureReceiver((received, userData: unknown) => {
-  const { target, sequence } = readTransferTarget(userData);
+  const { target, sequence, presentationMode } = readTransferTarget(userData);
   return new Promise<void>((complete) => {
     const job: TexturePaintJob = {
       imported: received.importedSharedTexture,
       target,
       sequence,
+      presentationMode,
       complete,
     };
     const newest = newestTextureSequence.get(target) ?? -1;

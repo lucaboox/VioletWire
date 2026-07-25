@@ -4,10 +4,13 @@ import { playerModeSchema } from "./player";
 
 export const mentionSoundIdSchema = z.enum(["ping", "chime", "pop", "knock"]);
 export type MentionSoundId = z.infer<typeof mentionSoundIdSchema>;
+export const texturePresentationModeSchema = z.enum(["bitmap", "video-frame"]);
+export type TexturePresentationMode = z.infer<typeof texturePresentationModeSchema>;
 
 export const appPreferencesSchema = z.object({
   preferredPlayerMode: playerModeSchema,
   experimentalTexturePlayer: z.boolean(),
+  texturePresentationMode: texturePresentationModeSchema,
   chatTimestamps: z.boolean(),
   chatHistoryLimit: chatHistoryLimitSchema,
   chatFontSize: z.number().int().min(14).max(25),
@@ -73,6 +76,7 @@ export type AppPreferencesPatch = z.infer<typeof appPreferencesPatchSchema>;
 export const defaultAppPreferences: AppPreferences = {
   preferredPlayerMode: "native",
   experimentalTexturePlayer: true,
+  texturePresentationMode: "bitmap",
   chatTimestamps: true,
   chatHistoryLimit: 20,
   chatFontSize: 14,

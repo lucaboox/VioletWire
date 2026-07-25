@@ -10,6 +10,7 @@ import type {
   NativeQualityValue,
   PlayerBounds,
 } from "../shared/player";
+import type { TexturePresentationMode } from "../shared/preferences";
 import {
   channelUrl,
   parseChannelKey,
@@ -186,6 +187,9 @@ export class TextureNativePlayer {
     // Supplies Kick's anonymous session cookie for Streamlink. Returns null on
     // Twitch, offline, or when Kick's handshake changes.
     private readonly getKickCookie: () => Promise<string | null> = async () => null,
+    // Changes only the final renderer-side presentation step. libmpv, controls,
+    // quality selection, audio, overlays, and chat remain identical.
+    private readonly getPresentationMode: () => TexturePresentationMode = () => "bitmap",
   ) {}
 
   getAvailability(): { available: boolean; reason?: string } {
@@ -477,6 +481,8 @@ export class TextureNativePlayer {
       if (stats) {
         stats["vw-fps"] = String(this.presentedFps);
         stats["vw-delivery-fps"] = String(this.measuredFps());
+        stats["vw-presentation"] =
+          this.getPresentationMode() === "video-frame" ? "Direct VideoFrame" : "ImageBitmap";
         const chromiumGpu = this.chromiumGpuDevice;
         if (chromiumGpu) {
           const name =
@@ -757,7 +763,11 @@ export class TextureNativePlayer {
         },
         // Tag the frame with its render target so the preload paints it onto
         // the matching canvas; the sequence stays per-target for ordering.
-        { target: this.renderTarget, sequence: transferSequence },
+        {
+          target: this.renderTarget,
+          sequence: transferSequence,
+          presentationMode: this.getPresentationMode(),
+        },
       )
       .then(() => this.recordTransferSuccess(session))
       .catch((error: unknown) => {

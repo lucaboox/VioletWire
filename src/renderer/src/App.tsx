@@ -597,12 +597,15 @@ export function App() {
     window.localStorage.getItem("glint.playback.default") === "official" ? "official" : "native",
   );
   const [experimentalTexturePlayer, setExperimentalTexturePlayer] = useState(true);
+  const [texturePresentationMode, setTexturePresentationMode] =
+    useState<AppPreferences["texturePresentationMode"]>("bitmap");
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = useState("");
   const changelogAutoShown = useRef(false);
   const legacyPreferences = useRef({
     preferredPlayerMode: preferredMode,
     experimentalTexturePlayer: true,
+    texturePresentationMode: "bitmap" as const,
     chatTimestamps,
     chatHistoryLimit,
     chatFontSize,
@@ -1138,6 +1141,7 @@ export function App() {
       if (disposed) return;
       setPreferredMode(preferences.preferredPlayerMode);
       setExperimentalTexturePlayer(preferences.experimentalTexturePlayer);
+      setTexturePresentationMode(preferences.texturePresentationMode);
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
       setChatFontSize(preferences.chatFontSize);
@@ -1185,6 +1189,7 @@ export function App() {
         .update({
           preferredPlayerMode: preferredMode,
           experimentalTexturePlayer,
+          texturePresentationMode,
           chatTimestamps,
           chatHistoryLimit,
           chatFontSize,
@@ -1220,6 +1225,7 @@ export function App() {
     oledMode,
     preferredMode,
     experimentalTexturePlayer,
+    texturePresentationMode,
     preferencesReady,
   ]);
 
@@ -5216,6 +5222,33 @@ export function App() {
                 <span />
               </button>
             </div>
+            <div className="settings-card">
+              <div>
+                <strong>Direct VideoFrame presentation</strong>
+                <span>
+                  Experimental alternative to ImageBitmap presentation for systems where embedded
+                  Native playback is limited to roughly 30 FPS. All Native controls and features
+                  remain available. Restart VioletWire after changing this option.
+                </span>
+              </div>
+              <button
+                aria-pressed={texturePresentationMode === "video-frame"}
+                className={
+                  texturePresentationMode === "video-frame"
+                    ? "settings-switch active"
+                    : "settings-switch"
+                }
+                onClick={() =>
+                  setTexturePresentationMode((current) =>
+                    current === "video-frame" ? "bitmap" : "video-frame",
+                  )
+                }
+                title="Toggle direct VideoFrame presentation"
+                type="button"
+              >
+                <span />
+              </button>
+            </div>
           </section>
         ) : activeSection === "search" ? (
           <section className="search-page">
@@ -5707,6 +5740,33 @@ export function App() {
                           : "settings-switch"
                       }
                       onClick={() => setExperimentalTexturePlayer((current) => !current)}
+                      type="button"
+                    >
+                      <span />
+                    </button>
+                  </div>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Direct VideoFrame presentation</strong>
+                      <span>
+                        Experimental alternative to ImageBitmap presentation for systems where
+                        embedded Native playback is limited to roughly 30 FPS. All Native controls
+                        and features remain available. Restart VioletWire after changing this
+                        option.
+                      </span>
+                    </div>
+                    <button
+                      aria-pressed={texturePresentationMode === "video-frame"}
+                      className={
+                        texturePresentationMode === "video-frame"
+                          ? "settings-switch active"
+                          : "settings-switch"
+                      }
+                      onClick={() =>
+                        setTexturePresentationMode((current) =>
+                          current === "video-frame" ? "bitmap" : "video-frame",
+                        )
+                      }
                       type="button"
                     >
                       <span />
