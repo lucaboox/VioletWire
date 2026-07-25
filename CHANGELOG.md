@@ -4,6 +4,24 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.8] - 2026-07-24
+
+### Additions
+
+- A "Show FPS in the corner" option in the Native player's video stats. When on,
+  the live frame rate sits at the top-left of the stream and stays visible while
+  the controls fade, so a drop is easy to spot.
+
+### Improvements
+
+- Offline followed channels now dim their avatar and its service ring, so live
+  channels stand out.
+
+### Fixes
+
+- The Native player's frame-rate reading now shows a real, live value that dips
+  when frames drop, instead of staying at 0.
+
 ## [0.3.3-alpha.7] - 2026-07-24
 
 ### Additions
