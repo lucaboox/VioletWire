@@ -4,6 +4,29 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.11] - 2026-07-25
+
+### Additions
+
+- VioletWire now remembers the main window's size, position, and maximized
+  state between launches. Saved placement is constrained to connected displays
+  so unplugging a monitor cannot leave the window off-screen.
+- Native video statistics now separate frames delivered by mpv from frames
+  actually presented to the embedded canvas, making display-pacing problems
+  easier to identify.
+
+### Improvements
+
+- Embedded Native playback now converts one shared texture at a time and keeps
+  only the newest waiting frame, reducing unnecessary GPU work and releasing
+  superseded textures immediately.
+
+### Fixes
+
+- Embedded Native playback no longer discards a converted frame merely because
+  a newer frame arrived while Chromium was processing it. This targets
+  avoidable 60-to-30 FPS drops seen on some mixed-refresh monitor setups.
+
 ## [0.3.3-alpha.10] - 2026-07-25
 
 ### Additions
