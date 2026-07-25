@@ -1035,9 +1035,12 @@ export function NativeControls({
       const value = number("avsync");
       return value === null ? null : `${value >= 0 ? "+" : ""}${value.toFixed(3)} sec`;
     })();
-    // estimated-vf-fps reads 0 until the renderer has timed enough frames, so
-    // fall back to the container's declared rate rather than showing a zero.
+    // vw-fps is the real presented rate the main process measures from frame
+    // delivery; mpv's estimated-vf-fps stays 0 with the render API. Fall back to
+    // the estimate and then the container's declared rate.
     const fps = (() => {
+      const measured = number("vw-fps");
+      if (measured !== null && measured > 0) return measured.toFixed(0);
       const estimated = number("estimated-vf-fps");
       if (estimated !== null && estimated > 0) return estimated.toFixed(1);
       return round("container-fps", 1);

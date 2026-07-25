@@ -144,6 +144,10 @@ export class TextureNativePlayer {
   // The channel the live session is currently tuned to; go-live catch-up
   // reloads it through the in-place switch path.
   private currentChannel: string | null = null;
+  // Timestamps of recently delivered frames, used to measure the real presented
+  // frame rate. mpv's own estimated-vf-fps stays at 0 with the render API since
+  // the addon, not mpv, drives presentation.
+  private readonly frameTimestamps: number[] = [];
   private readonly resolveCache = new Map<
     string,
     { expiresAt: number; url: Promise<string> }
@@ -456,12 +460,25 @@ export class TextureNativePlayer {
     const addon = this.session?.addon;
     if (!addon) return null;
     try {
-      return addon.stats();
+      const stats = addon.stats();
+      if (stats) stats["vw-fps"] = String(this.measuredFps());
+      return stats;
     } catch {
       // An older addon build predates the stats method. Report nothing rather
       // than taking playback down over a diagnostic panel.
       return null;
     }
+  }
+
+  /** Frames delivered in the last second — the actual on-screen frame rate. */
+  private measuredFps(): number {
+    const cutoff = Date.now() - 1000;
+    let count = 0;
+    for (let i = this.frameTimestamps.length - 1; i >= 0; i -= 1) {
+      if (this.frameTimestamps[i] >= cutoff) count += 1;
+      else break;
+    }
+    return count;
   }
 
   private async reloadAtLiveEdge(): Promise<void> {
@@ -622,6 +639,9 @@ export class TextureNativePlayer {
   }
 
   private sendFrame(session: TexturePlayerSession, frame: TextureFrame): void {
+    // Count every frame the addon hands over — that is the real presented rate.
+    this.frameTimestamps.push(Date.now());
+    if (this.frameTimestamps.length > 200) this.frameTimestamps.shift();
     const window = this.getMainWindow();
     if (
       !session.acceptingFrames ||
