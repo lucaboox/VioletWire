@@ -4,6 +4,21 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.12] - 2026-07-25
+
+### Additions
+
+- Playback settings now include an optional Direct VideoFrame presentation
+  mode for embedded Native playback. It bypasses the intermediate ImageBitmap
+  conversion while preserving quality selection, controls, fullscreen, chat,
+  overlays, audio features, and multistream support.
+
+### Improvements
+
+- Native video statistics identify whether the active embedded presentation
+  route is ImageBitmap or Direct VideoFrame, making the two modes easy to
+  compare on systems affected by mixed-refresh frame limiting.
+
 ## [0.3.3-alpha.11] - 2026-07-25
 
 ### Additions
