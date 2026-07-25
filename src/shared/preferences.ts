@@ -36,6 +36,8 @@ export const appPreferencesSchema = z.object({
   mentionSoundId: mentionSoundIdSchema,
   oledMode: z.boolean(),
   audioCompression: z.boolean(),
+  // Show the live frame rate in the corner of the Native player.
+  showFpsOverlay: z.boolean(),
   // These live here rather than in localStorage: the packaged renderer is
   // served from a random localhost port, so its browser storage is a fresh
   // origin on every launch and cannot remember anything across runs.
@@ -85,6 +87,7 @@ export const defaultAppPreferences: AppPreferences = {
   mentionSoundId: "ping",
   oledMode: false,
   audioCompression: false,
+  showFpsOverlay: false,
   lastSeenChangelogVersion: "",
   emoteFavorites: [],
   favoriteChannels: [],

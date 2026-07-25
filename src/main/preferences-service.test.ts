@@ -99,6 +99,7 @@ describe("PreferencesService", () => {
       mentionSoundId: "ping",
       oledMode: true,
       audioCompression: true,
+      showFpsOverlay: false,
       lastSeenChangelogVersion: "0.3.0-alpha.1",
       emoteFavorites: [],
       favoriteChannels: [],

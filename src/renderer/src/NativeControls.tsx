@@ -424,6 +424,7 @@ export function NativeControls({
   const [openMenu, setOpenMenu] = useState<"quality" | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
   const [stats, setStats] = useState<Record<string, string> | null>(null);
+  const [fpsOverlay, setFpsOverlay] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -657,6 +658,7 @@ export function NativeControls({
       setMentionSoundId(preferences.mentionSoundId);
       setOledMode(preferences.oledMode);
       setAudioCompressionPreference(preferences.audioCompression);
+      setFpsOverlay(preferences.showFpsOverlay);
       setPreferencesReady(true);
     };
     const removeListener = window.desktop.preferences.onChanged(applyPreferences);
@@ -1070,9 +1072,10 @@ export function NativeControls({
     return rows;
   }, [stats]);
 
-  // Polled rather than observed, so nothing is read while the panel is closed.
+  // Polled rather than observed, so nothing is read while neither the stats
+  // panel nor the corner FPS readout needs it.
   useEffect(() => {
-    if (!statsOpen) return;
+    if (!statsOpen && !fpsOverlay) return;
     let cancelled = false;
     const read = async () => {
       const next = await window.desktop.player.getNativeStats();
@@ -1084,14 +1087,25 @@ export function NativeControls({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [statsOpen]);
+  }, [statsOpen, fpsOverlay]);
+
+  // The current frame rate, reused for both the panel and the corner overlay.
+  const fpsDisplay = useMemo(
+    () => statsRows.find((row) => row.label === "FPS")?.value ?? null,
+    [statsRows],
+  );
 
   // Clearing here rather than in the effect keeps a stale reading from showing
-  // for a frame when the panel is reopened.
+  // for a frame when the panel is reopened. Kept if the FPS overlay still needs it.
   function closeOrOpenStats(next?: boolean) {
     const open = next ?? !statsOpen;
     setStatsOpen(open);
-    if (!open) setStats(null);
+    if (!open && !fpsOverlay) setStats(null);
+  }
+
+  function toggleFpsOverlay(next: boolean) {
+    setFpsOverlay(next);
+    void window.desktop.preferences.update({ showFpsOverlay: next }).catch(() => undefined);
   }
 
   function closeMenu() {
@@ -1729,7 +1743,18 @@ export function NativeControls({
               {stats ? "Waiting for playback." : "Stats are only available on the Native player."}
             </p>
           )}
+          <label className="stats-fps-toggle">
+            <input
+              checked={fpsOverlay}
+              onChange={(event) => toggleFpsOverlay(event.target.checked)}
+              type="checkbox"
+            />
+            Show FPS in the corner
+          </label>
         </div>
+      )}
+      {fpsOverlay && fpsDisplay && (
+        <div className="fps-overlay">{fpsDisplay} FPS</div>
       )}
       {state.paused && (
         <button
