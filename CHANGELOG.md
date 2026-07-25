@@ -4,6 +4,28 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3-alpha.10] - 2026-07-25
+
+### Additions
+
+- The window-hosted Native player now reports its render path, decoder,
+  display refresh, video output, dropped and mistimed frames, VSync jitter,
+  buffer, and A/V synchronization in the existing video-statistics panel.
+- The optional corner FPS counter now works with both the embedded and
+  window-hosted Native players, making backend and mixed-refresh comparisons
+  possible without leaving VioletWire.
+
+### Improvements
+
+- Window-hosted Native playback now explicitly uses mpv's D3D11 renderer and
+  keeps its diagnostics visible after the rest of the player controls hide.
+
+### Fixes
+
+- The window-hosted Native player now retries placing mpv above its host after
+  playback actually begins, reducing intermittent black video that previously
+  disappeared only after restarting VioletWire.
+
 ## [0.3.3-alpha.9] - 2026-07-25
 
 ### Additions
