@@ -84,6 +84,12 @@ interface ChromiumGpuDevice {
   active?: boolean;
   vendorId?: number;
   deviceId?: number;
+  vendorString?: string;
+  deviceString?: string;
+  driverVendor?: string;
+  driverVersion?: string;
+  gpuPreference?: number;
+  selection?: "active" | "preferred";
 }
 
 type StateListener = (state: NativePlayerState) => void;
@@ -144,6 +150,7 @@ export class TextureNativePlayer {
   // The channel the live session is currently tuned to; go-live catch-up
   // reloads it through the in-place switch path.
   private currentChannel: string | null = null;
+  private chromiumGpuDevice: ChromiumGpuDevice | null = null;
   // Timestamps of recently delivered frames, used to measure the real presented
   // frame rate. mpv's own estimated-vf-fps stays at 0 with the render API since
   // the addon, not mpv, drives presentation.
@@ -253,6 +260,7 @@ export class TextureNativePlayer {
       const streamUrlPromise = this.resolveStreamUrlCached(channel, quality);
       streamUrlPromise.catch(() => undefined);
       const gpuDevice = await this.getChromiumGpuDevice();
+      this.chromiumGpuDevice = gpuDevice ?? null;
       if (this.stopping || generation !== this.startGeneration) {
         return { ok: false, reason: "Texture playback was cancelled." };
       }
@@ -461,7 +469,29 @@ export class TextureNativePlayer {
     if (!addon) return null;
     try {
       const stats = addon.stats();
-      if (stats) stats["vw-fps"] = String(this.measuredFps());
+      if (stats) {
+        stats["vw-fps"] = String(this.measuredFps());
+        const chromiumGpu = this.chromiumGpuDevice;
+        if (chromiumGpu) {
+          const name =
+            chromiumGpu.deviceString?.trim() ||
+            chromiumGpu.vendorString?.trim() ||
+            "Unknown Chromium GPU";
+          const ids =
+            typeof chromiumGpu.vendorId === "number" &&
+            typeof chromiumGpu.deviceId === "number"
+              ? ` (0x${chromiumGpu.vendorId.toString(16).padStart(4, "0")}:0x${chromiumGpu.deviceId.toString(16).padStart(4, "0")})`
+              : "";
+          const driver = chromiumGpu.driverVersion?.trim()
+            ? ` · driver ${chromiumGpu.driverVersion.trim()}`
+            : "";
+          const selection =
+            chromiumGpu.selection === "active"
+              ? " · active"
+              : " · preferred (no active adapter reported)";
+          stats["vw-chromium-gpu"] = `${name}${ids}${selection}${driver}`;
+        }
+      }
       return stats;
     } catch {
       // An older addon build predates the stats method. Report nothing rather
@@ -496,6 +526,7 @@ export class TextureNativePlayer {
     this.stopping = true;
     this.switchPending = false;
     this.currentChannel = null;
+    this.chromiumGpuDevice = null;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeTimer = null;
     this.resolverProcess?.kill();
@@ -623,16 +654,26 @@ export class TextureNativePlayer {
       if (!info || typeof info !== "object" || !("gpuDevice" in info)) return undefined;
       const devices = (info as { gpuDevice?: unknown }).gpuDevice;
       if (!Array.isArray(devices)) return undefined;
-      return devices.find(
+      const validDevices = devices.filter(
         (device): device is ChromiumGpuDevice =>
           Boolean(
             device &&
             typeof device === "object" &&
-            (device as ChromiumGpuDevice).active &&
             typeof (device as ChromiumGpuDevice).vendorId === "number" &&
             typeof (device as ChromiumGpuDevice).deviceId === "number",
           ),
       );
+      const active = validDevices.find((device) => device.active);
+      if (active) return { ...active, selection: "active" };
+
+      // Chromium can report every adapter as inactive even while its GPU
+      // process and Electron shared textures are working. In that state its
+      // preference value is the only useful ordering signal. The native addon
+      // independently verifies and reports the adapter it actually creates.
+      const preferred = validDevices
+        .filter((device) => device.vendorId !== 0x1414)
+        .sort((left, right) => (right.gpuPreference ?? 0) - (left.gpuPreference ?? 0))[0];
+      return preferred ? { ...preferred, selection: "preferred" } : undefined;
     } catch {
       return undefined;
     }

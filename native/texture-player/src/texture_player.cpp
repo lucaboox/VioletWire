@@ -17,7 +17,9 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -77,6 +79,38 @@ std::wstring Utf8ToWide(const std::string& value) {
   std::wstring result(static_cast<size_t>(size), L'\0');
   MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), result.data(), size);
   return result;
+}
+
+std::string WideToUtf8(const std::wstring& value) {
+  if (value.empty()) return {};
+  const int size = WideCharToMultiByte(
+    CP_UTF8,
+    0,
+    value.data(),
+    static_cast<int>(value.size()),
+    nullptr,
+    0,
+    nullptr,
+    nullptr
+  );
+  std::string result(static_cast<size_t>(size), '\0');
+  WideCharToMultiByte(
+    CP_UTF8,
+    0,
+    value.data(),
+    static_cast<int>(value.size()),
+    result.data(),
+    size,
+    nullptr,
+    nullptr
+  );
+  return result;
+}
+
+std::string HexIdentifier(uint32_t value) {
+  std::ostringstream output;
+  output << "0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << value;
+  return output.str();
 }
 
 struct SharedFrame {
@@ -234,13 +268,11 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     // Windows vendors currently use D3D11VA's system-memory copy path before
     // the GPU render stage. Keep auto-copy last so decoding remains functional
     // when a driver-specific decoder is unavailable.
-    api_.set_option_string(
-      mpv_,
-      "hwdec",
-      preferred_vendor_id_ == 0x10de
+    requested_hwdec_ =
+      SelectedAdapterIsNvidia()
         ? "nvdec,d3d11va-copy,auto-copy"
-        : "d3d11va-copy,auto-copy"
-    );
+        : "d3d11va-copy,auto-copy";
+    api_.set_option_string(mpv_, "hwdec", requested_hwdec_.c_str());
     // Bilinear scaling keeps the software fallback inexpensive. The OpenGL
     // fast path performs this scaling on the GPU.
     api_.set_option_string(mpv_, "sws-fast", "yes");
@@ -362,6 +394,29 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     // cheaper filter, so knowing which path is live explains a picture that
     // looks worse than it should.
     result.Set("vw-render-path", Napi::String::New(env, use_open_gl_ ? "OpenGL" : "Software"));
+    result.Set("vw-decoder-preference", Napi::String::New(env, requested_hwdec_));
+    {
+      std::scoped_lock lock(diagnostic_mutex_);
+      if (!selected_adapter_name_.empty()) {
+        result.Set(
+          "vw-d3d11-adapter",
+          Napi::String::New(
+            env,
+            selected_adapter_name_ + " (" + HexIdentifier(selected_adapter_vendor_id_) +
+              ":" + HexIdentifier(selected_adapter_device_id_) + ")"
+          )
+        );
+      }
+      if (!open_gl_vendor_.empty() || !open_gl_renderer_.empty()) {
+        const std::string open_gl_device =
+          open_gl_vendor_.empty()
+            ? open_gl_renderer_
+            : open_gl_renderer_.empty()
+              ? open_gl_vendor_
+              : open_gl_vendor_ + " / " + open_gl_renderer_;
+        result.Set("vw-opengl-adapter", Napi::String::New(env, open_gl_device));
+      }
+    }
     for (const char* name : kProperties) {
       char* value = api_.get_property_string(mpv_, name);
       if (!value) continue;
@@ -521,6 +576,13 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       open_gl_failure_ = "the desktop OpenGL context could not be activated";
       return false;
     }
+    {
+      const auto* vendor = glGetString(GL_VENDOR);
+      const auto* renderer = glGetString(GL_RENDERER);
+      std::scoped_lock lock(diagnostic_mutex_);
+      open_gl_vendor_ = vendor ? reinterpret_cast<const char*>(vendor) : "";
+      open_gl_renderer_ = renderer ? reinterpret_cast<const char*>(renderer) : "";
+    }
 
     const bool gl_loaded =
       LoadOpenGlFunction("glGenFramebuffers", gl_gen_framebuffers_) &&
@@ -655,7 +717,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       "renderer",
       false,
       0,
-      preferred_vendor_id_ == 0x10de
+      SelectedAdapterIsNvidia()
         ? "Using the GPU OpenGL renderer with direct NVIDIA decoding when available."
         : "Using the GPU OpenGL renderer with D3D11VA copy decoding.",
     });
@@ -738,6 +800,13 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       adapter_index_ = 0;
     }
 
+    DXGI_ADAPTER_DESC1 selected_description{};
+    bool has_selected_description = false;
+    if (!adapters.empty() && adapter_index_ < adapters.size()) {
+      has_selected_description =
+        SUCCEEDED(adapters[adapter_index_]->GetDesc1(&selected_description));
+    }
+
     ComPtr<ID3D11Device> next_device;
     ComPtr<ID3D11DeviceContext> next_context;
     const HRESULT result = D3D11CreateDevice(
@@ -760,6 +829,37 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         "D3D11 device creation failed",
       });
       return false;
+    }
+    if (!has_selected_description) {
+      ComPtr<IDXGIDevice> dxgi_device;
+      ComPtr<IDXGIAdapter> adapter;
+      DXGI_ADAPTER_DESC description{};
+      if (
+        SUCCEEDED(next_device.As(&dxgi_device)) &&
+        SUCCEEDED(dxgi_device->GetAdapter(&adapter)) &&
+        SUCCEEDED(adapter->GetDesc(&description))
+      ) {
+        std::copy(
+          std::begin(description.Description),
+          std::end(description.Description),
+          std::begin(selected_description.Description)
+        );
+        selected_description.VendorId = description.VendorId;
+        selected_description.DeviceId = description.DeviceId;
+        has_selected_description = true;
+      }
+    }
+    {
+      std::scoped_lock lock(diagnostic_mutex_);
+      if (has_selected_description) {
+        selected_adapter_name_ = WideToUtf8(selected_description.Description);
+        selected_adapter_vendor_id_ = selected_description.VendorId;
+        selected_adapter_device_id_ = selected_description.DeviceId;
+      } else {
+        selected_adapter_name_ = "Unknown D3D11 adapter";
+        selected_adapter_vendor_id_ = 0;
+        selected_adapter_device_id_ = 0;
+      }
     }
 
     {
@@ -803,6 +903,11 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         : "Recreated the texture graphics device.",
     });
     return true;
+  }
+
+  bool SelectedAdapterIsNvidia() {
+    std::scoped_lock lock(diagnostic_mutex_);
+    return selected_adapter_vendor_id_ == 0x10de;
   }
 
   bool EnsureSlotLocked(uint32_t index, uint32_t width, uint32_t height) {
@@ -1321,6 +1426,13 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   HANDLE gl_interop_device_ = nullptr;
   bool use_open_gl_ = false;
   std::string open_gl_failure_;
+  std::string requested_hwdec_;
+  std::mutex diagnostic_mutex_;
+  std::string selected_adapter_name_;
+  uint32_t selected_adapter_vendor_id_ = 0;
+  uint32_t selected_adapter_device_id_ = 0;
+  std::string open_gl_vendor_;
+  std::string open_gl_renderer_;
   GlGenFramebuffers gl_gen_framebuffers_ = nullptr;
   GlDeleteFramebuffers gl_delete_framebuffers_ = nullptr;
   GlBindFramebuffer gl_bind_framebuffer_ = nullptr;

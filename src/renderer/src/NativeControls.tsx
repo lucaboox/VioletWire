@@ -1062,7 +1062,11 @@ export function NativeControls({
     push("Video", read("video-codec"));
     push("Pixel format", read("video-format"));
     push("Hardware decode", read("hwdec-current"));
+    push("Decoder preference", read("vw-decoder-preference"));
     push("Render path", read("vw-render-path"));
+    push("Chromium GPU", read("vw-chromium-gpu"));
+    push("D3D11 texture GPU", read("vw-d3d11-adapter"));
+    push("OpenGL GPU", read("vw-opengl-adapter"));
     push("Video bitrate", megabits("video-bitrate"));
     push("Audio", read("audio-codec-name"));
     push("Audio bitrate", kilobits("audio-bitrate"));
