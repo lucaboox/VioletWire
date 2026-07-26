@@ -21,7 +21,7 @@ module.exports = {
     {
       from: "vendor/native",
       to: "native",
-      filter: ["**/*", "!mpv-dev/include/**", "!mpv-dev/*.a"],
+      filter: ["**/*", "!mpv/**", "!mpv-dev/include/**", "!mpv-dev/*.a"],
     },
     {
       from: "native/texture-player/build/Release/violetwire_texture_player.node",

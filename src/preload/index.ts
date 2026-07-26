@@ -1,12 +1,10 @@
 import { contextBridge, ipcRenderer, sharedTexture } from "electron";
 import type {
   ChannelAction,
-  ChatPresentation,
   DesktopApi,
   MultiStreamTileState,
   NativeControlAction,
-  NativeControlsContext,
-  NativeRenderBackend,
+  NativeHlsStateReport,
   NativePlayerCommand,
   NativePlayerState,
   NativeQualityValue,
@@ -32,7 +30,6 @@ import type {
   AppPreferences,
   AppPreferencesPatch,
   PreferencesApi,
-  TexturePresentationMode,
 } from "../shared/preferences";
 
 // Each render target ("main" for the single full-window/mini player, or a
@@ -40,11 +37,11 @@ import type {
 // tiles never drop one another's frames or paint onto the wrong <canvas>.
 const newestTextureSequence = new Map<string, number>();
 const textureCanvases = new Map<string, HTMLCanvasElement>();
+const textureContexts = new Map<string, CanvasRenderingContext2D>();
 type TexturePaintJob = {
   imported: Electron.SharedTextureImported;
   target: string;
   sequence: number;
-  presentationMode: TexturePresentationMode;
   complete: () => void;
 };
 const activeTexturePaints = new Set<string>();
@@ -55,19 +52,15 @@ let lastPresentedFpsReport = 0;
 function readTransferTarget(userData: unknown): {
   target: string;
   sequence: number;
-  presentationMode: TexturePresentationMode;
 } {
   if (typeof userData === "object" && userData !== null) {
     const record = userData as {
       target?: unknown;
       sequence?: unknown;
-      presentationMode?: unknown;
     };
     return {
       target: typeof record.target === "string" ? record.target : "main",
       sequence: typeof record.sequence === "number" ? record.sequence : Number.NaN,
-      presentationMode:
-        record.presentationMode === "video-frame" ? "video-frame" : "bitmap",
     };
   }
   // Back-compat with the pre-multistream protocol where userData was the raw
@@ -75,7 +68,6 @@ function readTransferTarget(userData: unknown): {
   return {
     target: "main",
     sequence: typeof userData === "number" ? userData : Number.NaN,
-    presentationMode: "bitmap",
   };
 }
 
@@ -99,16 +91,17 @@ function reportPresentedFrame(target: string): void {
 
 async function paintTextureJob(job: TexturePaintJob): Promise<void> {
   let frame: VideoFrame | null = null;
-  let bitmap: ImageBitmap | null = null;
   try {
     frame = job.imported.getVideoFrame();
-    // Nothing can be seen while the document is hidden; skip the bitmap and
-    // canvas work. Decode and audio continue, and the next frame after the
+    // Nothing can be seen while the document is hidden; skip the canvas work.
+    // Decode and audio continue, and the next frame after the
     // window becomes visible repaints the canvas.
     if (document.visibilityState === "hidden") return;
     // Cached: querying the DOM per frame at 60 FPS is measurable waste.
     let canvas = textureCanvases.get(job.target);
     if (!canvas?.isConnected) {
+      textureCanvases.delete(job.target);
+      textureContexts.delete(job.target);
       canvas =
         document.querySelector<HTMLCanvasElement>(
           `[data-native-texture-canvas="${job.target}"]`,
@@ -121,33 +114,19 @@ async function paintTextureJob(job: TexturePaintJob): Promise<void> {
     if (canvas.width !== width) canvas.width = width;
     if (canvas.height !== height) canvas.height = height;
 
-    if (job.presentationMode === "video-frame") {
-      const directContext = canvas.getContext("2d", {
-        alpha: false,
-        desynchronized: true,
-      });
-      if (directContext) {
-        directContext.drawImage(frame, 0, 0, width, height);
-        reportPresentedFrame(job.target);
-        return;
-      }
-      // A canvas cannot change context types after its first context is made.
-      // If this preference changed during playback, retain the working bitmap
-      // path until VioletWire restarts instead of blanking the stream.
+    let context = textureContexts.get(job.target);
+    if (!context) {
+      context =
+        canvas.getContext("2d", {
+          alpha: false,
+          desynchronized: true,
+        }) ?? undefined;
+      if (context) textureContexts.set(job.target, context);
     }
-
-    bitmap = await createImageBitmap(frame);
-    const bitmapContext = canvas.getContext("bitmaprenderer", { alpha: false });
-    if (bitmapContext) {
-      bitmapContext.transferFromImageBitmap(bitmap);
-      bitmap = null;
-    } else {
-      const context = canvas.getContext("2d", { alpha: false, desynchronized: true });
-      context?.drawImage(bitmap, 0, 0, width, height);
-    }
+    if (!context) return;
+    context.drawImage(frame, 0, 0, width, height);
     reportPresentedFrame(job.target);
   } finally {
-    bitmap?.close();
     frame?.close();
     job.imported.release();
   }
@@ -171,13 +150,12 @@ async function drainTexturePaints(initialJob: TexturePaintJob): Promise<void> {
 }
 
 sharedTexture.setSharedTextureReceiver((received, userData: unknown) => {
-  const { target, sequence, presentationMode } = readTransferTarget(userData);
+  const { target, sequence } = readTransferTarget(userData);
   return new Promise<void>((complete) => {
     const job: TexturePaintJob = {
       imported: received.importedSharedTexture,
       target,
       sequence,
-      presentationMode,
       complete,
     };
     const newest = newestTextureSequence.get(target) ?? -1;
@@ -223,6 +201,10 @@ const api: DesktopApi = {
       ipcRenderer.invoke("twitch:get-stream-metadata", channel),
     getChatUserProfile: (channel: string, login: string) =>
       ipcRenderer.invoke("twitch:get-chat-user-profile", channel, login),
+    getPinnedChatMessage: (broadcasterId: string) =>
+      ipcRenderer.invoke("twitch:get-pinned-chat-message", broadcasterId),
+    getChatColor: () => ipcRenderer.invoke("twitch:get-chat-color"),
+    updateChatColor: (color) => ipcRenderer.invoke("twitch:update-chat-color", color),
     createClip: (channel: string) => ipcRenderer.invoke("twitch:create-clip", channel),
     openChannel: (channel: string) => ipcRenderer.invoke("twitch:open-channel", channel),
   } satisfies TwitchApi,
@@ -312,10 +294,6 @@ const api: DesktopApi = {
     close: () => ipcRenderer.invoke("player:close"),
     setBounds: (bounds: PlayerBounds) => ipcRenderer.send("player:set-bounds", bounds),
     preresolveStream: (channel: string) => ipcRenderer.send("player:preresolve", channel),
-    setChatBounds: (bounds: PlayerBounds) => ipcRenderer.send("player:set-chat-bounds", bounds),
-    setChatVisible: (visible) => ipcRenderer.send("player:set-chat-visible", visible),
-    setChatPresentation: (presentation: ChatPresentation) =>
-      ipcRenderer.send("player:set-chat-presentation", presentation),
     setFullscreen: (fullscreen) => ipcRenderer.invoke("window:set-fullscreen", fullscreen),
     onFullscreenChanged: (listener: (fullscreen: boolean) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, fullscreen: boolean) =>
@@ -332,6 +310,18 @@ const api: DesktopApi = {
     setNativeQuality: (channel: string, quality: NativeQualityValue) =>
       ipcRenderer.invoke("native-player:set-quality", channel, quality),
     controlNative: (command: NativePlayerCommand) => ipcRenderer.send("native-player:control", command),
+    reportNativeHlsState: (report: NativeHlsStateReport) =>
+      ipcRenderer.send("native-hls:state", report),
+    onNativeHlsCommand: (
+      listener: (target: string, command: NativePlayerCommand) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: { target: string; command: NativePlayerCommand },
+      ) => listener(payload.target, payload.command);
+      ipcRenderer.on("native-hls:command", handler);
+      return () => ipcRenderer.removeListener("native-hls:command", handler);
+    },
     getNativeStats: (): Promise<Record<string, string> | null> =>
       ipcRenderer.invoke("native-player:stats"),
     onNativeState: (listener: (state: NativePlayerState) => void) => {
@@ -339,55 +329,13 @@ const api: DesktopApi = {
       ipcRenderer.on("native-player:state", handler);
       return () => ipcRenderer.removeListener("native-player:state", handler);
     },
-    onNativeBackendChanged: (listener: (backend: NativeRenderBackend) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, backend: NativeRenderBackend) =>
-        listener(backend);
-      ipcRenderer.on("native-player:backend-changed", handler);
-      return () => ipcRenderer.removeListener("native-player:backend-changed", handler);
-    },
-    readyNativeControls: () => ipcRenderer.send("native-controls:ready"),
-    setNativeControlsVisible: (visible: boolean) =>
-      ipcRenderer.send("native-controls:set-visible", visible),
-    setNativeControlsExpanded: (expanded: boolean) =>
-      ipcRenderer.send("native-controls:set-expanded", expanded),
-    setNativeEmotePicker: (open: boolean) =>
-      ipcRenderer.send("native-controls:set-emote-picker", open),
-    setModalOpen: (open: boolean) =>
-      ipcRenderer.send("player:set-modal-open", open),
-    setNativeEmotePickerBounds: (bounds: PlayerBounds | null) =>
-      ipcRenderer.send("native-controls:set-emote-picker-bounds", bounds),
-    setNativeControlsContext: (context: NativeControlsContext) =>
-      ipcRenderer.send("native-controls:set-context", context),
-    onNativeControlsVisibility: (listener: (visible: boolean) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, visible: boolean) => listener(visible);
-      ipcRenderer.on("native-controls:visibility", handler);
-      return () => ipcRenderer.removeListener("native-controls:visibility", handler);
-    },
     sendNativeControlAction: (action: NativeControlAction) =>
       ipcRenderer.send("native-controls:action", action),
-    onNativeControlsContext: (listener: (context: NativeControlsContext) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, context: NativeControlsContext) =>
-        listener(context);
-      ipcRenderer.on("native-controls:context", handler);
-      return () => ipcRenderer.removeListener("native-controls:context", handler);
-    },
     onNativeControlAction: (listener: (action: NativeControlAction) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, action: NativeControlAction) =>
         listener(action);
       ipcRenderer.on("native-controls:action", handler);
       return () => ipcRenderer.removeListener("native-controls:action", handler);
-    },
-    sendNativeEmoteSelection: (name: string) =>
-      ipcRenderer.send("native-controls:emote-selected", name),
-    onNativeEmotePicker: (listener: (open: boolean) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, open: boolean) => listener(open);
-      ipcRenderer.on("native-controls:emote-picker", handler);
-      return () => ipcRenderer.removeListener("native-controls:emote-picker", handler);
-    },
-    onNativeEmoteSelection: (listener: (name: string) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, name: string) => listener(name);
-      ipcRenderer.on("native-controls:emote-selected", handler);
-      return () => ipcRenderer.removeListener("native-controls:emote-selected", handler);
     },
     multiStart: (channels: string[]) =>
       ipcRenderer.invoke("native-multi:start", channels) as Promise<MultiStreamTileState[]>,
@@ -432,40 +380,4 @@ const api: DesktopApi = {
   },
 };
 
-// The legacy window-hosted player needs a separate transparent controls
-// renderer, but that renderer does not need account management, browsing,
-// update installation, or general player lifecycle capabilities. Expose only
-// the operations its chat and controls UI actually uses.
-const controlsApi = {
-  system: {
-    openExternal: api.system.openExternal,
-  },
-  twitch: {
-    getChatUserProfile: api.twitch.getChatUserProfile,
-  },
-  emotes: api.emotes,
-  chat: api.chat,
-  preferences: api.preferences,
-  player: {
-    getNativeQualities: api.player.getNativeQualities,
-    setNativeQuality: api.player.setNativeQuality,
-    controlNative: api.player.controlNative,
-    getNativeStats: api.player.getNativeStats,
-    onNativeState: api.player.onNativeState,
-    readyNativeControls: api.player.readyNativeControls,
-    setNativeControlsVisible: api.player.setNativeControlsVisible,
-    setNativeControlsExpanded: api.player.setNativeControlsExpanded,
-    setNativeEmotePicker: api.player.setNativeEmotePicker,
-    setNativeEmotePickerBounds: api.player.setNativeEmotePickerBounds,
-    sendNativeControlAction: api.player.sendNativeControlAction,
-    onNativeControlsVisibility: api.player.onNativeControlsVisibility,
-    onNativeControlsContext: api.player.onNativeControlsContext,
-    sendNativeEmoteSelection: api.player.sendNativeEmoteSelection,
-    onNativeEmotePicker: api.player.onNativeEmotePicker,
-  },
-};
-
-const exposedApi = window.location.pathname.endsWith("/controls.html")
-  ? controlsApi
-  : api;
-contextBridge.exposeInMainWorld("desktop", exposedApi);
+contextBridge.exposeInMainWorld("desktop", api);

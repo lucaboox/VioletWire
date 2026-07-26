@@ -1,8 +1,8 @@
 # Native runtime source and license information
 
-VioletWire redistributes unmodified, separately executed Windows builds of
-Streamlink and mpv. They are aggregated with VioletWire for installation
-convenience; neither executable is linked into VioletWire.
+VioletWire redistributes an unmodified Streamlink portable runtime and libmpv
+Windows development/runtime package. They are aggregated with VioletWire for
+installation convenience.
 
 ## Streamlink portable runtime
 
@@ -19,23 +19,21 @@ and dependency license metadata. VioletWire omits the portable archive's
 optional FFmpeg muxer because Twitch HLS is passed directly to mpv. No
 Streamlink, Python, or Python-package binaries are modified.
 
-## mpv runtime
+## libmpv runtime
 
-- Package: `mpv-x86_64-20260610-git-304426c.7z`
+- Package: `mpv-dev-x86_64-20260610-git-304426c.7z`
 - Release:
   <https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20260610>
-- SHA-256: `facac536baa73c7b925771af5e39a3c9cb16b8d75b59a6e9800de89799dffca7`
+- SHA-256: `8cbb25ea784f01afbb3f904217cab1317430a8bcfd5680fd827a866367f71cc9`
 - mpv revision: `304426c39`
 - mpv corresponding source:
   <https://github.com/mpv-player/mpv/tree/304426c39>
 - Reproducible Windows build scripts and dependency definitions:
   <https://github.com/shinchiro/mpv-winbuild-cmake/tree/20260610>
 
-The packaged runtime includes mpv's copyright information and complete GPL and
-LGPL license texts. The selected build identifies itself as mpv
-`v0.41.0-744-g304426c39` with FFmpeg `N-124930-g2576e0943`; the pinned build
-scripts above identify the source revisions and build configuration for mpv
-and all statically linked components.
+The packaged libmpv runtime includes mpv's copyright information and complete
+GPL and LGPL license texts. The pinned build scripts above identify the source
+revisions and build configuration for mpv and all statically linked components.
 
 ## Source availability
 

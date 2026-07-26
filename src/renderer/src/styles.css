@@ -570,6 +570,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .player-host { position: relative; min-width: 400px; min-height: 300px; overflow: hidden; isolation: isolate; background: #0e0e10; }
 .standard-player-frame { display: block; width: 100%; height: 100%; border: 0; background: #050506; }
 .native-texture-canvas { position: absolute; z-index: 0; display: block; width: 100%; height: 100%; inset: 0; object-fit: contain; background: #000; }
+.native-hls-video { position: absolute; z-index: 0; display: block; width: 100%; height: 100%; inset: 0; object-fit: contain; background: #000; }
 
 /* Twitch-style floating mini player while browsing other sections. When the
    inline style sets left/top (drag/resize), they win over the right/bottom
@@ -581,6 +582,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
    full-bleed from the very first frame — no visible fill-in jump. Once the
    buffer matches the box's 16:9, cover and contain are identical. */
 .mini-player .mini-player-canvas { position: absolute; inset: 0; object-fit: cover; }
+.mini-player .native-hls-video { object-fit: cover; }
 .mini-player-close { position: absolute; z-index: 2; top: 6px; right: 6px; display: grid; width: 28px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 6px; color: #e4e4e7; background: rgb(10 10 12 / 72%); cursor: pointer; opacity: 0; transition: opacity 120ms ease; }
 .mini-player-resize { position: absolute; z-index: 2; top: 6px; left: 6px; display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 6px; color: #d4d4d8; background: rgb(10 10 12 / 72%); cursor: nwse-resize; opacity: 0; transition: opacity 120ms ease; }
 .mini-player:hover .mini-player-close, .mini-player:focus-within .mini-player-close,
@@ -602,6 +604,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 /* The header row matches the player toolbar's height so the two bars line up
    across the top of the page. */
 .chat-panel { display: grid; grid-template-rows: 54px minmax(0, 1fr); min-width: 0; min-height: 0; max-height: 100%; overflow: hidden; contain: layout size; border-left: 1px solid #29292f; background: #0e0e10; }
+.chat-panel:has(.pinned-chat-banner) { grid-template-rows: 54px auto minmax(0, 1fr); }
 /* Kept mounted while hidden so re-showing chat is instant, not a full remount. */
 .chat-panel.chat-hidden { display: none; }
 /* Drag-to-resize handle at the video/chat border, inside the chat panel (its
@@ -627,6 +630,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .oled-mode .chat-overlay-mode .chat-panel.overlay { --overlay-scroll-track: #000; }
 .chat-overlay-mode .chat-panel.overlay:hover, .chat-overlay-mode .chat-panel.overlay:focus-within { border-color: #3a3a42; }
 .chat-panel.overlay { grid-template-rows: minmax(0, 1fr); }
+.chat-panel.overlay:has(.pinned-chat-banner) { grid-template-rows: auto minmax(0, 1fr); }
 .chat-panel.overlay .chat-panel-header { display: none; }
 .chat-panel-header { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 1px solid #29292f; background: #151519; }
 .chat-panel-header strong, .chat-panel-header span { display: block; }
@@ -635,6 +639,98 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-host { min-width: 300px; min-height: 0; background: #18181b; }
 .native-chat { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: #18181b; }
 .chat-panel.overlay .native-chat { border-radius: 11px; background: transparent; }
+
+.pinned-chat-banner {
+  position: relative;
+  z-index: 4;
+  min-width: 0;
+  padding: 9px 11px 10px;
+  border-bottom: 1px solid #323039;
+  color: #e4e4e7;
+  background: linear-gradient(135deg, #282131 0%, #19171f 72%);
+  box-shadow: 0 5px 16px rgb(0 0 0 / 18%);
+}
+
+.pinned-chat-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.pinned-chat-heading > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: #bf94ff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pinned-chat-heading button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: #a1a1aa;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pinned-chat-heading button:hover {
+  color: #fff;
+  background: rgb(255 255 255 / 10%);
+}
+
+.pinned-chat-content {
+  overflow: hidden;
+  display: -webkit-box;
+  color: #d8d8de;
+  font-size: var(--chat-font-size, 14px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.pinned-chat-content strong {
+  color: #f1e8ff;
+  font-weight: 750;
+}
+
+.pinned-chat-separator {
+  margin-left: -2px;
+}
+
+.pinned-chat-mention {
+  color: #bf94ff;
+  font-weight: 650;
+}
+
+.pinned-chat-emote {
+  width: auto;
+  height: calc(var(--chat-emote-size, 27px) * .82);
+  margin: 0 2px;
+  vertical-align: middle;
+  object-fit: contain;
+}
+
+.chat-panel.overlay .pinned-chat-banner {
+  margin: 8px 8px 0;
+  border: 1px solid rgb(191 148 255 / 28%);
+  border-radius: 9px;
+  background: rgb(28 24 34 / 94%);
+}
+
+.oled-mode .pinned-chat-banner {
+  background: linear-gradient(135deg, #1b1224 0%, #050506 75%);
+}
 .chat-panel.overlay .chat-messages { margin-bottom: 0; padding-top: 38px; padding-bottom: 14px; scrollbar-color: transparent transparent; scrollbar-gutter: auto; scrollbar-width: none; transition: margin-bottom 180ms ease; }
 .chat-panel.overlay .chat-messages::-webkit-scrollbar { width: 0; }
 .chat-panel.overlay .chat-messages::-webkit-scrollbar-track { background: transparent; }
@@ -645,7 +741,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-panel.overlay .chat-messages:hover::-webkit-scrollbar-thumb { border-color: var(--overlay-scroll-track); background: #55515f; }
 .chat-panel.overlay .chat-messages:hover::-webkit-scrollbar-thumb:hover { background: #716b7c; }
 .chat-panel.overlay:hover .chat-messages, .chat-panel.overlay:focus-within .chat-messages { margin-bottom: var(--chat-composer-space, 68px); }
-.chat-messages { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 10px 9px 14px; scrollbar-gutter: stable; transition: padding-bottom 140ms ease; }
+.chat-messages { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 10px 9px 14px; scrollbar-gutter: stable; transition: padding-bottom 140ms ease; contain: layout paint style; will-change: scroll-position; }
 .chat-messages.scroll-paused { overflow-anchor: none; transition: none; }
 .chat-empty-state { display: grid; min-height: 100%; place-content: center; padding: 24px; color: #777781; font-size: 12px; line-height: 1.5; text-align: center; }
 .native-chat-message { position: relative; padding: 3px 29px 3px 2px; border-radius: 4px; color: #e4e4e7; font-size: var(--chat-font-size, 14px); line-height: 1.5; overflow-wrap: anywhere; white-space: break-spaces; transition: background 90ms ease; }

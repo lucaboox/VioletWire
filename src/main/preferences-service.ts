@@ -5,6 +5,7 @@ import {
   appPreferencesPatchSchema,
   appPreferencesSchema,
   defaultAppPreferences,
+  storedAppPreferencesPatchSchema,
   type AppPreferences,
 } from "../shared/preferences";
 
@@ -21,7 +22,7 @@ export class PreferencesService {
   async initialize(): Promise<void> {
     try {
       const stored = JSON.parse(await fs.readFile(this.filePath, "utf8")) as unknown;
-      const parsed = appPreferencesPatchSchema.safeParse(stored);
+      const parsed = storedAppPreferencesPatchSchema.safeParse(stored);
       if (!parsed.success) return;
       this.preferences = appPreferencesSchema.parse({
         ...defaultAppPreferences,
@@ -37,7 +38,7 @@ export class PreferencesService {
 
   async getOrMigrate(legacyPreferences?: unknown): Promise<AppPreferences> {
     if (!this.hasPersistedPreferences && legacyPreferences !== undefined) {
-      const parsed = appPreferencesPatchSchema.safeParse(legacyPreferences);
+      const parsed = storedAppPreferencesPatchSchema.safeParse(legacyPreferences);
       if (parsed.success) {
         this.preferences = appPreferencesSchema.parse({
           ...this.preferences,

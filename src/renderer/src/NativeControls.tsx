@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Check,
+  Gauge,
   Info,
   Lock,
   MessageSquareOff,
@@ -60,7 +61,6 @@ import { ChatComposerInput } from "./ChatComposerInput";
 import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
 import type { ChatRestrictions } from "../../shared/chat";
 import { EmotePicker } from "./EmotePicker";
-import { ReactTooltipLayer } from "./ReactTooltipLayer";
 import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
@@ -68,6 +68,7 @@ import { ChatEmote } from "./ChatEmote";
 import {
   ChatToggleSetting,
   MentionSoundControls,
+  TwitchChatColorControls,
 } from "./ChatSettingsControls";
 import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
@@ -180,8 +181,7 @@ function clampOverlayGeometry(
 }
 
 interface NativeControlsProps {
-  inline?: boolean;
-  inlineContext?: NativeControlsContext;
+  inlineContext: NativeControlsContext;
   inlineVisible?: boolean;
 }
 
@@ -408,21 +408,22 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
 });
 
 export function NativeControls({
-  inline = false,
   inlineContext,
   inlineVisible = true,
-}: NativeControlsProps = {}) {
-  const [windowContext, setWindowContext] = useState<NativeControlsContext | null>(null);
-  const context = inline ? (inlineContext ?? null) : windowContext;
+}: NativeControlsProps) {
+  const context = inlineContext;
   const [state, setState] = useState<NativePlayerState>(() => ({
     ...initialState,
     volume: cachedPlayerVolume,
   }));
+  const [sliderVolume, setSliderVolume] = useState(cachedPlayerVolume);
+  const volumeDragging = useRef(false);
   const [qualities, setQualities] = useState<NativeQuality[]>([
     { value: "best", label: "Auto" },
   ]);
   const [openMenu, setOpenMenu] = useState<"quality" | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [statsHovered, setStatsHovered] = useState(false);
   const [stats, setStats] = useState<Record<string, string> | null>(null);
   const [fpsOverlay, setFpsOverlay] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -486,8 +487,6 @@ export function NativeControls({
     emptyProviderChannelNames,
   );
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
-  const [detachedEmotePickerOpen, setDetachedEmotePickerOpen] = useState(false);
-  const [controlsVisible, setControlsVisible] = useState(true);
   const activityTimer = useRef<number | null>(null);
   const lastPointerPosition = useRef<{ x: number; y: number } | null>(null);
   const {
@@ -506,7 +505,6 @@ export function NativeControls({
   } = useChatFeed();
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
-  const detachedPickerHost = useRef<HTMLDivElement>(null);
   const currentChannel = useRef<string | null>(null);
   const channel = context?.channel;
   const [chatRestrictions, setChatRestrictions] = useState<ChatRestrictions>(
@@ -539,7 +537,7 @@ export function NativeControls({
   }, [providerEmoteMaps]);
 
   useEffect(() => {
-    if (!emotePickerOpen && !detachedEmotePickerOpen && !chatSettingsOpen) return;
+    if (!emotePickerOpen && !chatSettingsOpen) return;
     const closeOpenChatMenus = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -550,12 +548,6 @@ export function NativeControls({
         setEmotePickerOpen(false);
       }
       if (
-        detachedEmotePickerOpen &&
-        !target.closest(".native-detached-emote-picker")
-      ) {
-        window.desktop.player.setNativeEmotePicker(false);
-      }
-      if (
         chatSettingsOpen &&
         !target.closest(".native-video-chat-tools, .native-video-chat-settings")
       ) {
@@ -564,61 +556,24 @@ export function NativeControls({
     };
     document.addEventListener("pointerdown", closeOpenChatMenus, true);
     return () => document.removeEventListener("pointerdown", closeOpenChatMenus, true);
-  }, [chatSettingsOpen, detachedEmotePickerOpen, emotePickerOpen]);
+  }, [chatSettingsOpen, emotePickerOpen]);
 
-  useEffect(() => window.desktop.player.onNativeState(setState), []);
+  useEffect(
+    () =>
+      window.desktop.player.onNativeState((nextState) => {
+        setState(nextState);
+        if (!volumeDragging.current) setSliderVolume(nextState.volume);
+      }),
+    [],
+  );
 
-  const applyControlsContext = useCallback((nextContext: NativeControlsContext) => {
-    if (currentChannel.current !== nextContext.channel) {
-      currentChannel.current = nextContext.channel;
+  useEffect(() => {
+    if (currentChannel.current !== channel) {
+      currentChannel.current = channel ?? null;
       resetChatFeed();
       setReplyingTo(null);
     }
-    setWindowContext(nextContext);
-  }, [resetChatFeed]);
-
-  // Report the detached picker's real rectangle so the main process can make
-  // exactly that area of this transparent window clickable, instead of a
-  // fixed-size region whose invisible edges swallow clicks meant for the
-  // chat behind it.
-  useEffect(() => {
-    if (inline || !detachedEmotePickerOpen) return;
-    const picker = detachedPickerHost.current?.querySelector<HTMLElement>(".vw-emote-picker");
-    if (!picker) return;
-    const reportPickerBounds = () => {
-      const bounds = picker.getBoundingClientRect();
-      if (bounds.width < 1 || bounds.height < 1) return;
-      window.desktop.player.setNativeEmotePickerBounds({
-        x: Math.max(0, Math.round(bounds.x)),
-        y: Math.max(0, Math.round(bounds.y)),
-        width: Math.round(bounds.width),
-        height: Math.round(bounds.height),
-      });
-    };
-    const observer = new ResizeObserver(reportPickerBounds);
-    observer.observe(picker);
-    // The picker is anchored right/bottom, so window resizes move it without
-    // resizing it; ResizeObserver alone would miss those.
-    window.addEventListener("resize", reportPickerBounds);
-    reportPickerBounds();
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", reportPickerBounds);
-      window.desktop.player.setNativeEmotePickerBounds(null);
-    };
-  }, [detachedEmotePickerOpen, channel, inline]);
-  useEffect(() => {
-    if (inline) return;
-    return window.desktop.player.onNativeControlsVisibility(setControlsVisible);
-  }, [inline]);
-  useEffect(() => {
-    if (inline) return;
-    return window.desktop.player.onNativeEmotePicker(setDetachedEmotePickerOpen);
-  }, [inline]);
-  useEffect(() => {
-    if (inline) return;
-    return window.desktop.player.onNativeControlsContext(applyControlsContext);
-  }, [applyControlsContext, inline]);
+  }, [channel, resetChatFeed]);
   useEffect(() => {
     if (!channel) return;
     window.desktop.player.controlNative({
@@ -626,9 +581,6 @@ export function NativeControls({
       enabled: audioCompressionPreference,
     });
   }, [audioCompressionPreference, channel]);
-  useEffect(() => {
-    if (!inline) window.desktop.player.readyNativeControls();
-  }, [inline]);
   useEffect(() => {
     let disposed = false;
     const applyPreferences = (preferences: AppPreferences) => {
@@ -671,13 +623,6 @@ export function NativeControls({
       removeListener();
     };
   }, []);
-  useEffect(
-    () => () => {
-      if (!inline) window.desktop.player.setNativeControlsExpanded(false);
-    },
-    [inline],
-  );
-
   useEffect(() => {
     if (!preferencesReady) return;
     window.desktop.chat.setHistoryLimit(chatHistoryLimit);
@@ -956,12 +901,11 @@ export function NativeControls({
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setOpenMenu(null);
-      if (!inline) window.desktop.player.setNativeControlsExpanded(false);
       window.desktop.player.sendNativeControlAction("activity");
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [inline, openMenu]);
+  }, [openMenu]);
 
   useEffect(() => {
     if (!channel) return;
@@ -1020,6 +964,22 @@ export function NativeControls({
       return a && b ? `${a}${separator}${b}` : null;
     };
 
+    if (read("Protocol") === "Filtered local HLS") {
+      return [
+        { label: "Latency", value: read("Latency") },
+        { label: "Low latency mode", value: read("Low latency mode") },
+        { label: "Resolution", value: read("Resolution") },
+        { label: "Framerate", value: read("FPS") },
+        { label: "Bitrate", value: read("Video bitrate") },
+        { label: "Dropped frames", value: read("Dropped frames") },
+        { label: "Playback rate", value: read("Playback rate") },
+        { label: "Buffer size", value: read("Buffer") },
+      ].filter(
+        (row): row is { label: string; value: string } =>
+          row.value !== null,
+      );
+    }
+
     const source = pair("width", "height");
     const display = pair("dwidth", "dheight");
     const dropped = (() => {
@@ -1068,6 +1028,7 @@ export function NativeControls({
     push("Hardware decode", read("hwdec-current"));
     push("Decoder preference", read("vw-decoder-preference"));
     push("Render path", read("vw-render-path"));
+    push("Texture bridge", read("vw-texture-bridge"));
     push("Chromium GPU", read("vw-chromium-gpu"));
     push("D3D11 texture GPU", read("vw-d3d11-adapter"));
     push("OpenGL GPU", read("vw-opengl-adapter"));
@@ -1087,35 +1048,55 @@ export function NativeControls({
     return rows;
   }, [stats]);
 
-  // Polled rather than observed, so nothing is read while neither the stats
-  // panel nor the corner FPS readout needs it.
+  // Chromium's compact latency badge needs current HLS stats even while the
+  // full panel is closed. The libmpv backend remains idle unless its panel or
+  // corner FPS readout is visible.
   useEffect(() => {
-    if (!statsOpen && !fpsOverlay) return;
+    const statsRequested = statsOpen || statsHovered || fpsOverlay;
+    if (!statsRequested && state.backend !== "hls") return;
+    // Do not reconcile the entire controls/chat tree for a background latency
+    // badge while the user is reading older messages. Opening or hovering the
+    // stats UI still requests fresh figures immediately.
+    if (!chatAutoScroll && !statsRequested) return;
     let cancelled = false;
     const read = async () => {
       const next = await window.desktop.player.getNativeStats();
       if (!cancelled) setStats(next);
     };
     void read();
-    const timer = window.setInterval(() => void read(), 1000);
+    const timer = window.setInterval(
+      () => void read(),
+      statsRequested ? 750 : 3_000,
+    );
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [statsOpen, fpsOverlay]);
+  }, [
+    chatAutoScroll,
+    fpsOverlay,
+    state.backend,
+    statsHovered,
+    statsOpen,
+  ]);
 
   // The current frame rate, reused for both the panel and the corner overlay.
   const fpsDisplay = useMemo(
-    () => statsRows.find((row) => row.label === "FPS")?.value ?? null,
+    () =>
+      statsRows.find(
+        (row) => row.label === "FPS" || row.label === "Framerate",
+      )?.value ?? null,
     [statsRows],
   );
+  const latencyDisplay =
+    state.backend === "hls" ? (stats?.Latency ?? null) : null;
 
   // Clearing here rather than in the effect keeps a stale reading from showing
   // for a frame when the panel is reopened. Kept if the FPS overlay still needs it.
   function closeOrOpenStats(next?: boolean) {
     const open = next ?? !statsOpen;
     setStatsOpen(open);
-    if (!open && !fpsOverlay) setStats(null);
+    if (!open && !fpsOverlay && state.backend !== "hls") setStats(null);
   }
 
   function toggleFpsOverlay(next: boolean) {
@@ -1125,14 +1106,12 @@ export function NativeControls({
 
   function closeMenu() {
     setOpenMenu(null);
-    if (!inline) window.desktop.player.setNativeControlsExpanded(false);
     reportActivity();
   }
 
   function toggleMenu(menu: "quality") {
     const nextMenu = openMenu === menu ? null : menu;
     setOpenMenu(nextMenu);
-    if (!inline) window.desktop.player.setNativeControlsExpanded(nextMenu !== null);
     reportActivity();
   }
 
@@ -1159,62 +1138,6 @@ export function NativeControls({
     window.desktop.player.sendNativeControlAction(action);
   }
 
-  useEffect(() => {
-    if (inline || !context) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (openMenu || chatSettingsOpen || emotePickerOpen || detachedEmotePickerOpen) {
-        return;
-      }
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest(
-          'input, textarea, select, button, a, [contenteditable="true"], [role="textbox"], [role="menu"], [role="dialog"]',
-        )
-      ) {
-        return;
-      }
-
-      const key = event.key.toLowerCase();
-      if (key === "t") {
-        window.desktop.player.sendNativeControlAction("toggle-theater");
-      } else if (key === "c") {
-        window.desktop.player.sendNativeControlAction(
-          context.chatVisible ? "hide-chat" : "side-chat",
-        );
-      } else if (key === "f") {
-        window.desktop.player.sendNativeControlAction("toggle-fullscreen");
-      } else if (event.code === "Space") {
-        event.preventDefault();
-        window.desktop.player.controlNative({
-          command: state.paused ? "go-live" : "toggle-pause",
-        });
-      } else if (key === "m") {
-        window.desktop.player.controlNative({ command: "toggle-mute" });
-      } else if (event.key === "Escape" && context.fullscreen) {
-        window.desktop.player.sendNativeControlAction("toggle-fullscreen");
-      } else if (event.key === "Escape" && context.theaterMode) {
-        window.desktop.player.sendNativeControlAction("toggle-theater");
-      } else {
-        return;
-      }
-      window.desktop.player.sendNativeControlAction("activity");
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    chatSettingsOpen,
-    context,
-    detachedEmotePickerOpen,
-    emotePickerOpen,
-    inline,
-    openMenu,
-    state.paused,
-  ]);
-
-  if (!context) return null;
-
   const qualityLabel =
     qualities.find((quality) => quality.value === state.quality)?.label ?? state.quality;
   const viewerLogin = context.viewerLogin ?? "";
@@ -1229,10 +1152,10 @@ export function NativeControls({
     <div
       className={[
         "controls-surface",
-        inline ? "inline-controls" : "",
+        "inline-controls",
         oledMode ? "oled-mode" : "",
         !context.chatVisible ? "chat-hidden" : "",
-        !(inline ? inlineVisible : controlsVisible) ? "controls-hidden" : "",
+        !inlineVisible ? "controls-hidden" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -1245,19 +1168,6 @@ export function NativeControls({
         "--chat-emote-size": `${chatEmoteSize}px`,
       } as CSSProperties}
     >
-      {!inline && <ReactTooltipLayer />}
-      {detachedEmotePickerOpen && channel && (
-        <div className="native-detached-emote-picker" ref={detachedPickerHost}>
-          <EmotePicker
-            channelName={channel}
-            onClose={() => window.desktop.player.setNativeEmotePicker(false)}
-            onSelect={(name) => window.desktop.player.sendNativeEmoteSelection(name)}
-            providerChannelEmoteNames={providerChannelNames}
-            providerEmotes={providerEmoteMaps}
-            twitchEmotes={twitchPickerEmotes}
-          />
-        </div>
-      )}
       <div className="controls-gradient" />
       {!context.chatVisible && (
         <button
@@ -1344,6 +1254,7 @@ export function NativeControls({
               onPointerDown={(event) => event.stopPropagation()}
             >
               <strong>Chat settings</strong>
+              <TwitchChatColorControls />
               <label>
                 <span>{chatOpacity}%</span>
                 <input
@@ -1737,17 +1648,25 @@ export function NativeControls({
         </div>
       )}
       {statsOpen && (
-        <div className="stats-panel" onPointerDown={(event) => event.stopPropagation()}>
+        <div
+          className={`stats-panel${state.backend === "hls" ? " hls-stats" : ""}`}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
           <header>
-            <strong>Video stats</strong>
+            <strong>
+              {state.backend === "hls" ? "Video Player Stats" : "Video stats"}
+            </strong>
             <button aria-label="Close video stats" onClick={() => closeOrOpenStats(false)} type="button">
               <X size={15} />
             </button>
           </header>
           {statsRows.length > 0 ? (
             <dl>
-              {statsRows.map((row) => (
+              {statsRows.map((row, index) => (
                 <Fragment key={row.label}>
+                  {state.backend === "hls" && (index === 2 || index === 5) && (
+                    <span aria-hidden="true" className="stats-row-divider" />
+                  )}
                   <dt>{row.label}</dt>
                   <dd>{row.value}</dd>
                 </Fragment>
@@ -1796,7 +1715,10 @@ export function NativeControls({
         <button
           aria-label={state.muted ? "Unmute (M)" : "Mute (M)"}
           data-tooltip={state.muted ? "Unmute (M)" : "Mute (M)"}
-          onClick={() => window.desktop.player.controlNative({ command: "toggle-mute" })}
+          onClick={() => {
+            volumeDragging.current = false;
+            window.desktop.player.controlNative({ command: "toggle-mute" });
+          }}
           type="button"
         >
           {state.muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
@@ -1805,18 +1727,31 @@ export function NativeControls({
           aria-label="Volume"
           max="100"
           min="0"
-          onChange={(event) => {
-            const value = Number(event.target.value);
+          onInput={(event) => {
+            const value = Number(event.currentTarget.value);
+            setSliderVolume(value);
             // Update the remount cache immediately, not via the debounced
             // preference save — otherwise switching channels right after a
             // change re-mounts the controls at the stale value and jumps.
             cachedPlayerVolume = value;
             window.desktop.player.controlNative({ command: "set-volume", value });
           }}
+          onBlur={() => {
+            volumeDragging.current = false;
+          }}
+          onPointerCancel={() => {
+            volumeDragging.current = false;
+          }}
+          onPointerDown={() => {
+            volumeDragging.current = true;
+          }}
+          onPointerUp={() => {
+            volumeDragging.current = false;
+          }}
           type="range"
-          value={state.volume}
+          value={sliderVolume}
         />
-        <span className="volume-label">{state.volume}%</span>
+        <span className="volume-label">{sliderVolume}%</span>
         <button
           aria-label={
             state.compressorEnabled ? "Disable audio compression" : "Enable audio compression"
@@ -1858,16 +1793,55 @@ export function NativeControls({
                 ? "Live"
                 : state.status}
         </div>
-        <button
-          aria-label="Video stats"
-          aria-pressed={statsOpen}
-          className={statsOpen ? "active" : ""}
-          data-tooltip="Video stats"
-          onClick={() => closeOrOpenStats()}
-          type="button"
+        <div
+          className="stats-control"
+          onMouseEnter={() => setStatsHovered(true)}
+          onMouseLeave={() => setStatsHovered(false)}
         >
-          <Info size={18} />
-        </button>
+          <button
+            aria-label={
+              latencyDisplay
+                ? `Video stats, ${latencyDisplay} latency`
+                : "Video stats"
+            }
+            aria-pressed={statsOpen}
+            className={`${statsOpen ? "active " : ""}${
+              state.backend === "hls" ? "latency-stats-button" : ""
+            }`.trim()}
+            data-tooltip={state.backend === "hls" ? undefined : "Video stats"}
+            onClick={() => closeOrOpenStats()}
+            type="button"
+          >
+            {state.backend === "hls" ? (
+              <>
+                <Gauge size={17} />
+                {latencyDisplay && <span>{latencyDisplay}</span>}
+              </>
+            ) : (
+              <Info size={18} />
+            )}
+          </button>
+          {state.backend === "hls" && statsHovered && !statsOpen && (
+            <div className="stats-hover-card" role="tooltip">
+              <strong>Video Player Stats</strong>
+              {statsRows.length > 0 ? (
+                <dl>
+                  {statsRows.map((row, index) => (
+                    <Fragment key={row.label}>
+                      {(index === 2 || index === 5) && (
+                        <span aria-hidden="true" className="stats-row-divider" />
+                      )}
+                      <dt>{row.label}</dt>
+                      <dd>{row.value}</dd>
+                    </Fragment>
+                  ))}
+                </dl>
+              ) : (
+                <p>Measuring playback…</p>
+              )}
+            </div>
+          )}
+        </div>
         <button
           aria-label={`Stream quality: ${qualityLabel}`}
           aria-expanded={openMenu === "quality"}

@@ -1,6 +1,5 @@
 import {
   app,
-  BaseWindow,
   BrowserWindow,
   ipcMain,
   Menu,
@@ -16,25 +15,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   channelActionSchema,
-  chatPresentationSchema,
   channelNameSchema,
   nativeControlActionSchema,
-  nativeControlsContextSchema,
+  nativeHlsStateReportSchema,
   nativeQualitySchema,
   nativePlayerCommandSchema,
   playerBoundsSchema,
   playerModeSchema,
-  isNativeStreamUnavailable,
   MAX_MULTISTREAM_TILES,
-  type ChatPresentation,
-  type NativeControlsContext,
-  type NativeRenderBackend,
+  type NativePlaybackBackend,
   type PlayerMode,
 } from "../shared/player";
 import { z } from "zod";
+import { twitchChatColorInputSchema } from "../shared/twitch";
 import { channelKeySchema, parseChannelKey, type Platform } from "../shared/platform";
-import { NativePlayer } from "./native-player";
 import { TextureNativePlayer } from "./texture-native-player";
+import { HlsNativePlayer } from "./hls-native-player";
 import { MultiStreamManager } from "./multi-stream-manager";
 import { MultiChatService } from "./multi-chat-service";
 import { TwitchService } from "./twitch-service";
@@ -57,7 +53,6 @@ import {
 import { PreferencesService } from "./preferences-service";
 import {
   APP_UI_PARTITION,
-  CONTROLS_PARTITION,
   TWITCH_WEBSITE_PARTITION,
 } from "./session-partitions";
 
@@ -84,28 +79,11 @@ const applicationIcon = app.isPackaged
   ? path.join(process.resourcesPath, "icon.png")
   : path.join(currentDirectory, "../../build/icon.png");
 let mainWindow: BrowserWindow | null = null;
-let chatView: WebContentsView | null = null;
-let chatOverlayWindow: BaseWindow | null = null;
-let nativeControlsWindow: BrowserWindow | null = null;
 let channelActionWindow: BrowserWindow | null = null;
 let subscriptionWindow: BrowserWindow | null = null;
-let nativeControlsVisible = true;
-let nativeControlsExpanded = false;
-let nativePlayerPaused = false;
-let nativeEmotePickerOpen = false;
-// Measured position of the detached emote picker inside the controls window,
-// reported by the renderer so the clickable window region hugs the visible
-// picker instead of a fixed-size guess.
-let nativeEmotePickerBounds: Rectangle | null = null;
-let nativeControlsContext: NativeControlsContext | null = null;
-let lastPlayerBounds: Rectangle | null = null;
-let chatPresentation: ChatPresentation = "side";
-let chatVisible = true;
-let lastChatBounds: Rectangle | null = null;
 let activePlayerMode: PlayerMode | null = null;
-let activeNativeBackend: NativeRenderBackend | null = null;
+let activeNativeBackend: NativePlaybackBackend | null = null;
 let activeChannelName: string | null = null;
-let textureFallbackInProgress = false;
 let playerOpenGeneration = 0;
 let rendererServer: RendererServer | null = null;
 let trustedRendererOrigin: string | null = null;
@@ -126,14 +104,12 @@ const updateService = new UpdateService(
 );
 const githubReleaseNotesService = new GitHubReleaseNotesService();
 
-function isTrustedRendererUrl(rawUrl: string, kind: "main" | "controls"): boolean {
+function isTrustedRendererUrl(rawUrl: string): boolean {
   if (!trustedRendererOrigin) return false;
   try {
     const url = new URL(rawUrl);
     if (url.origin !== trustedRendererOrigin) return false;
-    return kind === "main"
-      ? url.pathname === "/" || url.pathname === "/index.html"
-      : url.pathname === "/controls.html";
+    return url.pathname === "/" || url.pathname === "/index.html";
   } catch {
     return false;
   }
@@ -143,10 +119,7 @@ function isTrustedIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   const frame = event.senderFrame;
   if (!frame || frame !== event.sender.mainFrame) return false;
   if (mainWindow && event.sender === mainWindow.webContents) {
-    return isTrustedRendererUrl(frame.url, "main");
-  }
-  if (nativeControlsWindow && event.sender === nativeControlsWindow.webContents) {
-    return isTrustedRendererUrl(frame.url, "controls");
+    return isTrustedRendererUrl(frame.url);
   }
   return false;
 }
@@ -179,89 +152,25 @@ function onTrusted<Arguments extends unknown[]>(
 
 function lockLocalRendererNavigation(
   window: BrowserWindow,
-  kind: "main" | "controls",
 ): void {
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   const blockUnexpectedNavigation = (event: Electron.Event, url: string) => {
-    if (!isTrustedRendererUrl(url, kind)) event.preventDefault();
+    if (!isTrustedRendererUrl(url)) event.preventDefault();
   };
   window.webContents.on("will-navigate", blockUnexpectedNavigation);
   window.webContents.on("will-redirect", blockUnexpectedNavigation);
 }
 
-function suspendDetachedNativeSurfaces(): void {
-  if (activePlayerMode !== "native") return;
-  if (activeNativeBackend === "window") nativePlayer.suspendSurface();
-  if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) nativeControlsWindow.hide();
-  if (chatOverlayWindow && !chatOverlayWindow.isDestroyed()) chatOverlayWindow.hide();
-}
-
-function restoreDetachedNativeSurfaces(): void {
-  if (activePlayerMode !== "native") return;
-  if (activeNativeBackend === "window") nativePlayer.resumeSurface();
-  applyChatBounds();
-  applyNativeControlsBounds();
-  if (
-    chatOverlayWindow &&
-    !chatOverlayWindow.isDestroyed() &&
-    chatVisible &&
-    chatPresentation === "overlay"
-  ) {
-    chatOverlayWindow.showInactive();
-    chatOverlayWindow.moveTop();
-  }
-  if (
-    nativeControlsWindow &&
-    !nativeControlsWindow.isDestroyed() &&
-    nativeControlsVisible
-  ) {
-    nativeControlsWindow.showInactive();
-    nativeControlsWindow.moveTop();
-  }
-}
-
 const twitchChatService = new TwitchChatService(
   (message) => {
     sendToWindow(mainWindow, "chat:message", message);
-    sendToWindow(nativeControlsWindow, "chat:message", message);
   },
   (state) => {
     sendToWindow(mainWindow, "chat:state", state);
-    sendToWindow(nativeControlsWindow, "chat:state", state);
   },
   (restrictions) => {
     sendToWindow(mainWindow, "chat:restrictions", restrictions);
-    sendToWindow(nativeControlsWindow, "chat:restrictions", restrictions);
   },
-);
-const nativePlayer = new NativePlayer(
-  () => mainWindow,
-  (state) => {
-    nativePlayerPaused = state.paused;
-    sendToWindow(mainWindow, "native-player:state", state);
-    sendToWindow(nativeControlsWindow, "native-player:state", state);
-    if (state.status === "playing" && chatOverlayWindow) {
-      applyChatBounds();
-      chatOverlayWindow.moveTop();
-    }
-    if (state.status === "playing" && nativeControlsWindow) {
-      applyNativeControlsBounds();
-      if (
-        !nativeControlsVisible &&
-        !nativePlayerPaused &&
-        !nativeControlsExpanded &&
-        !nativeEmotePickerOpen &&
-        !preferencesService.get().showFpsOverlay &&
-        !(nativeControlsContext?.chatVisible &&
-          nativeControlsContext.chatPresentation === "overlay")
-      ) {
-        nativeControlsWindow.hide();
-      } else {
-        nativeControlsWindow.moveTop();
-      }
-    }
-  },
-  () => playbackSessionService.getToken(),
 );
 const kickService = new KickService();
 // Kick chat reuses the same renderer channels as Twitch's, so the panel does
@@ -270,61 +179,29 @@ const kickChatService = new KickChatService(
   () => kickService,
   (message) => {
     sendToWindow(mainWindow, "chat:message", message);
-    sendToWindow(nativeControlsWindow, "chat:message", message);
   },
   (state) => {
     sendToWindow(mainWindow, "chat:state", state);
-    sendToWindow(nativeControlsWindow, "chat:state", state);
   },
   (restrictions) => {
     sendToWindow(mainWindow, "chat:restrictions", restrictions);
-    sendToWindow(nativeControlsWindow, "chat:restrictions", restrictions);
   },
 );
 const textureNativePlayer = new TextureNativePlayer(
   () => mainWindow,
-  (state) => {
-    if (
-      state.status === "error" &&
-      activePlayerMode === "native" &&
-      activeNativeBackend === "texture" &&
-      activeChannelName &&
-      !textureFallbackInProgress
-    ) {
-      textureFallbackInProgress = true;
-      activeNativeBackend = "window";
-      textureNativePlayer.destroy();
-      const fallback = nativePlayer.start(activeChannelName, state.quality);
-      if (fallback.ok) {
-        if (lastPlayerBounds) nativePlayer.setBounds(lastPlayerBounds);
-        sendToWindow(mainWindow, "native-player:backend-changed", "window");
-        void createNativeControlsWindow();
-        textureFallbackInProgress = false;
-        return;
-      }
-      textureFallbackInProgress = false;
-      state = {
-        ...state,
-        error: `${state.error ?? "Embedded Native failed."} Window-hosted Native also failed: ${fallback.reason}`,
-      };
-    }
-    sendToWindow(mainWindow, "native-player:state", state);
-    sendToWindow(nativeControlsWindow, "native-player:state", state);
-  },
-  () => nativePlayer.getAvailability().streamlinkPath,
+  (state) => sendToWindow(mainWindow, "native-player:state", state),
   () => playbackSessionService.getToken(),
   "main",
   () => preferencesService.get().playerVolume,
   () => kickService.getStreamlinkCookie(),
-  () => preferencesService.get().texturePresentationMode,
 );
 const multiStreamManager = new MultiStreamManager(
   () => mainWindow,
-  () => nativePlayer.getAvailability().streamlinkPath,
   () => playbackSessionService.getToken(),
   () => preferencesService.get().playerVolume,
   () => kickService.getStreamlinkCookie(),
-  () => preferencesService.get().texturePresentationMode,
+  () => trustedRendererOrigin,
+  () => preferencesService.get().nativePlaybackBackend,
   (tile) => sendToWindow(mainWindow, "native-multi:tile-state", tile),
   (id) => sendToWindow(mainWindow, "native-multi:tile-removed", id),
 );
@@ -337,6 +214,14 @@ const multiChatService = new MultiChatService(
 const twitchService = new TwitchService();
 const linkPreviewService = new LinkPreviewService(twitchService);
 const preferencesService = new PreferencesService();
+const hlsNativePlayer = new HlsNativePlayer(
+  () => mainWindow,
+  () => trustedRendererOrigin,
+  (channel, quality) => textureNativePlayer.resolvePlaybackUrl(channel, quality),
+  () => preferencesService.get().playerVolume,
+  (state) => sendToWindow(mainWindow, "native-player:state", state),
+  () => textureNativePlayer.cancelPlaybackResolution(),
+);
 function isAllowedTwitchNavigation(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
@@ -357,194 +242,6 @@ function isAllowedKickNavigation(rawUrl: string): boolean {
 
 // The signed-in Kick website session, so its subscribe page acts as the user.
 const KICK_WEBSITE_PARTITION = "persist:violetwire-kick";
-
-function applyNativeControlsBounds(): void {
-  if (
-    !mainWindow ||
-    mainWindow.isDestroyed() ||
-    !nativeControlsWindow ||
-    nativeControlsWindow.isDestroyed() ||
-    !lastPlayerBounds
-  ) return;
-  const contentBounds = mainWindow.getContentBounds();
-  const nativeChatOverlay =
-    nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay";
-  const chatBounds = lastChatBounds;
-  const detachedPickerOverSideChat =
-    Boolean(nativeEmotePickerOpen &&
-    nativeControlsContext?.chatVisible &&
-    nativeControlsContext.chatPresentation === "side" &&
-    chatBounds);
-  const left = detachedPickerOverSideChat
-    ? Math.min(lastPlayerBounds.x, chatBounds!.x)
-    : lastPlayerBounds.x;
-  const top = detachedPickerOverSideChat
-    ? Math.min(lastPlayerBounds.y, chatBounds!.y)
-    : lastPlayerBounds.y;
-  const right = detachedPickerOverSideChat
-    ? Math.max(
-        lastPlayerBounds.x + lastPlayerBounds.width,
-        chatBounds!.x + chatBounds!.width,
-      )
-    : lastPlayerBounds.x + lastPlayerBounds.width;
-  const bottom = detachedPickerOverSideChat
-    ? Math.max(
-        lastPlayerBounds.y + lastPlayerBounds.height,
-        chatBounds!.y + chatBounds!.height,
-      )
-    : lastPlayerBounds.y + lastPlayerBounds.height;
-  const height = bottom - top;
-  const width = right - left;
-  const playerX = lastPlayerBounds.x - left;
-  const playerY = lastPlayerBounds.y - top;
-  const playerWidth = lastPlayerBounds.width;
-  const playerHeight = lastPlayerBounds.height;
-  nativeControlsWindow.setBounds({
-    x: contentBounds.x + left,
-    y: contentBounds.y + top,
-    width,
-    height,
-  });
-  const normalControlShape = [
-    {
-      x: playerX + Math.max(0, playerWidth - 136),
-      y: playerY + 8,
-      width: Math.min(128, playerWidth),
-      height: 34,
-    },
-    {
-      x: playerX,
-      y: playerY + Math.max(0, playerHeight - 78),
-      width: playerWidth,
-      height: Math.min(78, playerHeight),
-    },
-  ];
-  const centerPlaySize = Math.min(104, playerWidth, playerHeight);
-  const centerPlayShape = nativePlayerPaused
-    ? [
-        {
-          x: playerX + Math.max(0, Math.round((playerWidth - centerPlaySize) / 2)),
-          y: playerY + Math.max(0, Math.round((playerHeight - centerPlaySize) / 2)),
-          width: centerPlaySize,
-          height: centerPlaySize,
-        },
-      ]
-    : [];
-  // Prefer the renderer-measured picker rectangle (plus a small margin for
-  // the resize handle) so no invisible interactive band surrounds the picker
-  // and swallows clicks meant for the chat behind it. The fixed rectangle is
-  // only a fallback for the first frame before a measurement arrives.
-  const pickerMargin = 8;
-  const measuredPicker = nativeEmotePickerBounds;
-  const pickerShape = detachedPickerOverSideChat
-    ? [
-        measuredPicker
-          ? {
-              x: Math.max(0, measuredPicker.x - pickerMargin),
-              y: Math.max(0, measuredPicker.y - pickerMargin),
-              width: Math.min(
-                width - Math.max(0, measuredPicker.x - pickerMargin),
-                measuredPicker.width + pickerMargin * 2,
-              ),
-              height: Math.min(
-                height - Math.max(0, measuredPicker.y - pickerMargin),
-                measuredPicker.height + pickerMargin * 2,
-              ),
-            }
-          : {
-              x: Math.max(0, width - Math.min(640, width)),
-              y: Math.max(0, height - 790),
-              width: Math.min(640, width),
-              height: Math.min(720, height),
-            },
-      ]
-    : [];
-  const fpsShape = preferencesService.get().showFpsOverlay
-    ? [
-        {
-          x: playerX + 8,
-          y: playerY + 6,
-          width: Math.min(104, playerWidth),
-          height: Math.min(34, playerHeight),
-        },
-      ]
-    : [];
-  nativeControlsWindow.setShape(
-    nativeControlsExpanded || nativeChatOverlay
-      ? [{ x: 0, y: 0, width, height }]
-      : [...normalControlShape, ...centerPlayShape, ...pickerShape, ...fpsShape],
-  );
-  if (nativeControlsVisible || nativePlayerPaused || preferencesService.get().showFpsOverlay) {
-    nativeControlsWindow.showInactive();
-    nativeControlsWindow.moveTop();
-  }
-}
-
-async function createNativeControlsWindow(): Promise<void> {
-  if (!mainWindow || nativeControlsWindow) return;
-  nativeControlsWindow = new BrowserWindow({
-    parent: mainWindow,
-    icon: applicationIcon,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    show: false,
-    focusable: true,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    skipTaskbar: true,
-    hasShadow: false,
-    roundedCorners: false,
-    thickFrame: false,
-    webPreferences: {
-      preload: path.join(currentDirectory, "../preload/index.cjs"),
-      partition: CONTROLS_PARTITION,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  nativeControlsWindow.setMenu(null);
-  lockLocalRendererNavigation(nativeControlsWindow, "controls");
-  nativeControlsWindow.webContents.session.setPermissionRequestHandler(
-    (_contents, _permission, callback) => callback(false),
-  );
-  nativeControlsWindow.webContents.session.on("will-download", (event) =>
-    event.preventDefault(),
-  );
-  nativeControlsWindow.on("closed", () => {
-    nativeControlsWindow = null;
-  });
-  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
-  if (rendererUrl) {
-    await nativeControlsWindow.loadURL(new URL("controls.html", rendererUrl).toString());
-  } else {
-    if (!rendererServer) {
-      throw new Error("The local renderer server is unavailable.");
-    }
-    await nativeControlsWindow.loadURL(`${rendererServer.origin}/controls.html`);
-  }
-  if (nativeControlsContext) {
-    sendToWindow(nativeControlsWindow, "native-controls:context", nativeControlsContext);
-  }
-  applyNativeControlsBounds();
-  nativeControlsWindow.moveTop();
-}
-
-function destroyNativeControlsWindow(): void {
-  if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) {
-    nativeControlsWindow.destroy();
-  }
-  nativeControlsWindow = null;
-  nativeControlsVisible = true;
-  nativeControlsExpanded = false;
-  nativePlayerPaused = false;
-  nativeEmotePickerOpen = false;
-  nativeEmotePickerBounds = null;
-  nativeControlsContext = null;
-}
 
 let kickWindow: BrowserWindow | null = null;
 
@@ -625,9 +322,6 @@ async function openChannelActionWindow(
     },
   });
   channelActionWindow = actionWindow;
-  if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) {
-    nativeControlsWindow.hide();
-  }
   const closed = new Promise<void>((resolve) => actionWindow.once("closed", resolve));
   actionWindow.webContents.setUserAgent(
     actionWindow.webContents.getUserAgent().replace(/\sElectron\/[^\s]+/, ""),
@@ -651,7 +345,6 @@ async function openChannelActionWindow(
   });
   actionWindow.on("closed", () => {
     if (channelActionWindow === actionWindow) channelActionWindow = null;
-    if (activePlayerMode === "native" && nativeControlsVisible) applyNativeControlsBounds();
   });
   await actionWindow.loadURL(destinations[action]);
   await closed;
@@ -820,10 +513,7 @@ async function openSubscriptionModal(
   });
   win.on("closed", () => {
     if (subscriptionWindow === win) subscriptionWindow = null;
-    if (activePlayerMode === "native" && nativeControlsVisible) applyNativeControlsBounds();
   });
-
-  if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) nativeControlsWindow.hide();
 
   await win.webContents.loadURL(subscriptionShellHtml(title, headerHeight));
   if (win.isDestroyed()) return;
@@ -832,98 +522,20 @@ async function openSubscriptionModal(
   win.focus();
 }
 
-function applyChatBounds(): void {
-  if (!chatView || !lastChatBounds) return;
-
-  if (chatPresentation === "overlay" && chatOverlayWindow && mainWindow) {
-    const contentBounds = mainWindow.getContentBounds();
-    chatOverlayWindow.setBounds({
-      x: contentBounds.x + lastChatBounds.x,
-      y: contentBounds.y + lastChatBounds.y,
-      width: lastChatBounds.width,
-      height: lastChatBounds.height,
-    });
-    chatView.setBounds({
-      x: 0,
-      y: 0,
-      width: lastChatBounds.width,
-      height: lastChatBounds.height,
-    });
-    if (chatVisible) {
-      chatOverlayWindow.showInactive();
-      chatOverlayWindow.moveTop();
-    }
-    return;
-  }
-
-  chatView.setBounds(lastChatBounds);
-}
-
-function setChatPresentation(presentation: ChatPresentation): void {
-  if (!chatView || !mainWindow || presentation === chatPresentation) return;
-
-  if (presentation === "overlay") {
-    mainWindow.contentView.removeChildView(chatView);
-    chatOverlayWindow = new BaseWindow({
-      parent: mainWindow,
-      frame: false,
-      show: false,
-      focusable: true,
-      skipTaskbar: true,
-      opacity: 0.92,
-      backgroundColor: "#18181b",
-      hasShadow: true,
-      roundedCorners: true,
-      thickFrame: false,
-    });
-    chatOverlayWindow.contentView.addChildView(chatView);
-  } else {
-    if (chatOverlayWindow && !chatOverlayWindow.isDestroyed()) {
-      chatOverlayWindow.contentView.removeChildView(chatView);
-      chatOverlayWindow.destroy();
-    }
-    chatOverlayWindow = null;
-    mainWindow.contentView.addChildView(chatView);
-  }
-
-  chatPresentation = presentation;
-  applyChatBounds();
-  if (!chatVisible) {
-    if (chatPresentation === "overlay") chatOverlayWindow?.hide();
-    else chatView.setVisible(false);
-  }
-}
-
 function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false): void {
   if (invalidatePendingOpen) playerOpenGeneration += 1;
   if (channelActionWindow && !channelActionWindow.isDestroyed()) channelActionWindow.close();
   channelActionWindow = null;
   if (subscriptionWindow && !subscriptionWindow.isDestroyed()) subscriptionWindow.close();
   subscriptionWindow = null;
-  nativePlayer.destroy();
   // A native→native channel switch keeps the texture session so mpv can swap
   // streams in place instead of rebuilding the whole graphics pipeline.
   if (!keepTextureSession) textureNativePlayer.destroy();
+  hlsNativePlayer.destroy();
   twitchChatService.disconnect();
-  destroyNativeControlsWindow();
   activePlayerMode = null;
   activeNativeBackend = null;
   activeChannelName = null;
-  textureFallbackInProgress = false;
-  if (chatView) {
-    if (chatOverlayWindow && !chatOverlayWindow.isDestroyed()) {
-      chatOverlayWindow.contentView.removeChildView(chatView);
-      chatOverlayWindow.destroy();
-    } else {
-      mainWindow?.contentView.removeChildView(chatView);
-    }
-    chatView.webContents.close();
-    chatView = null;
-  }
-  chatOverlayWindow = null;
-  chatPresentation = "side";
-  chatVisible = true;
-  lastChatBounds = null;
 }
 
 // Matches the renderer's .titlebar strip, which sits above the top bar and
@@ -1096,14 +708,10 @@ async function createWindow(): Promise<void> {
     destroyPlayer();
     mainWindow = null;
   });
-  mainWindow.on("will-move", suspendDetachedNativeSurfaces);
   mainWindow.on("moved", () => {
-    restoreDetachedNativeSurfaces();
     persistWindowState();
   });
-  mainWindow.on("will-resize", suspendDetachedNativeSurfaces);
   mainWindow.on("resized", () => {
-    restoreDetachedNativeSurfaces();
     persistWindowState();
   });
   mainWindow.on("maximize", () => persistWindowState(true));
@@ -1112,14 +720,14 @@ async function createWindow(): Promise<void> {
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl) {
     trustedRendererOrigin = new URL(rendererUrl).origin;
-    lockLocalRendererNavigation(mainWindow, "main");
+    lockLocalRendererNavigation(mainWindow);
     await mainWindow.loadURL(rendererUrl);
   } else {
     rendererServer ??= await startRendererServer(
       path.join(currentDirectory, "../../dist/renderer"),
     );
     trustedRendererOrigin = rendererServer.origin;
-    lockLocalRendererNavigation(mainWindow, "main");
+    lockLocalRendererNavigation(mainWindow);
     await mainWindow.loadURL(`${rendererServer.origin}/index.html`);
   }
 }
@@ -1134,70 +742,37 @@ handleTrusted(
   // Opening a single stream leaves multistream mode; free those tiles first.
   if (multiStreamManager.isActive()) multiStreamManager.stop();
   const openGeneration = ++playerOpenGeneration;
+  const requestedBackend: NativePlaybackBackend =
+    requestedMode === "native" &&
+    preferencesService.get().nativePlaybackBackend === "hls"
+      ? "hls"
+      : "texture";
   const keepTextureSession =
     requestedMode === "native" &&
     activePlayerMode === "native" &&
     activeNativeBackend === "texture" &&
-    preferencesService.get().experimentalTexturePlayer;
+    requestedBackend === "texture";
   destroyPlayer(false, keepTextureSession);
   activeChannelName = channel;
 
-  let mode = requestedMode;
-  let nativeBackend: NativeRenderBackend | undefined;
   let fallbackReason: string | undefined;
   if (requestedMode === "native") {
-    const useTextureBackend = preferencesService.get().experimentalTexturePlayer;
-    const textureResult = useTextureBackend
-      ? await textureNativePlayer.start(channel, requestedQuality, {
-          kind: "channel",
-          detail: channel,
-        })
-      : null;
+    const nativeResult = await (
+      requestedBackend === "hls" ? hlsNativePlayer : textureNativePlayer
+    ).start(channel, requestedQuality, {
+      kind: "channel",
+      detail: channel,
+    });
     if (openGeneration !== playerOpenGeneration || activeChannelName !== channel) {
-      // A newer player request intentionally cancelled this startup. Its
-      // cancellation is not a texture failure and must not trigger fallback.
+      // A newer request intentionally cancelled this startup.
       return { channel, mode: requestedMode };
     }
-    // A failed texture attempt may leave a kept-alive session behind (for
-    // example a reused switch whose URL resolution failed); tear it down
-    // before handing playback to the window-hosted player.
-    if (textureResult && !textureResult.ok) textureNativePlayer.destroy();
-    // An offline channel is not a texture failure. Keep the native renderer
-    // selected so the app can show its own offline state and retry control;
-    // do not silently replace the user's selected playback surface with
-    // Twitch's Standard iframe.
-    const textureFoundOffline =
-      textureResult && !textureResult.ok && isNativeStreamUnavailable(textureResult.reason);
-    const result = textureResult?.ok
-      ? textureResult
-      : textureFoundOffline
-        ? { ok: false as const, reason: textureResult.reason }
-        : nativePlayer.start(channel, requestedQuality);
-    if (!result.ok && !textureFoundOffline) {
-      mode = "official";
-      fallbackReason = textureResult && !textureResult.ok
-        ? `${textureResult.reason} Window-hosted Native also failed: ${result.reason}`
-        : result.reason;
-    } else if (textureFoundOffline) {
-      nativeBackend = "texture";
-      activeNativeBackend = nativeBackend;
-    } else {
-      nativeBackend = textureResult?.ok ? "texture" : "window";
-      activeNativeBackend = nativeBackend;
-      if (textureResult && !textureResult.ok) {
-        fallbackReason = `Embedded Native unavailable: ${textureResult.reason} Using the window-hosted Native player.`;
-      }
-      // Texture playback is composited inside the main renderer, so its
-      // controls render inline over the canvas. The transparent controls
-      // BrowserWindow is only needed for the legacy HWND/airspace backend.
-      if (nativeBackend === "window") await createNativeControlsWindow();
-    }
+    if (!nativeResult.ok) fallbackReason = nativeResult.reason;
+    activeNativeBackend = requestedBackend;
   }
 
-  activePlayerMode = mode;
+  activePlayerMode = requestedMode;
 
-  chatPresentation = "side";
-  chatVisible = true;
   // Each service has its own chat transport, and only one is ever live.
   const chatTarget = parseChannelKey(channel);
   if (chatTarget.platform === "kick") {
@@ -1208,7 +783,7 @@ handleTrusted(
     twitchChatService.connect(channel);
   }
 
-  return { channel, mode, nativeBackend, fallbackReason };
+  return { channel, mode: requestedMode, fallbackReason };
   },
 );
 
@@ -1217,58 +792,16 @@ handleTrusted("player:close", () => destroyPlayer());
 onTrusted("player:set-bounds", (_event, input: unknown) => {
   const result = playerBoundsSchema.safeParse(input);
   if (!result.success) return;
-  lastPlayerBounds = result.data;
   // The optimistic renderer mounts before Streamlink resolves. Retain those
   // initial measurements so the texture addon starts at the real player size.
   textureNativePlayer.setBounds(result.data);
-  if (activePlayerMode === "native") {
-    if (activeNativeBackend === "window") nativePlayer.setBounds(result.data);
-    applyNativeControlsBounds();
-  }
 });
 
-onTrusted("player:set-chat-bounds", (_event, input: unknown) => {
-  const result = playerBoundsSchema.safeParse(input);
-  if (!result.success) return;
-  lastChatBounds = result.data;
-  if (chatView) applyChatBounds();
-  if (nativeEmotePickerOpen) applyNativeControlsBounds();
-});
-
-onTrusted("player:set-chat-visible", (_event, visible: unknown) => {
-  if (!chatView || typeof visible !== "boolean") return;
-  chatVisible = visible;
-  if (chatPresentation === "overlay") {
-    if (visible) {
-      applyChatBounds();
-      chatOverlayWindow?.showInactive();
-      chatOverlayWindow?.moveTop();
-    } else {
-      chatOverlayWindow?.hide();
-    }
-  } else {
-    chatView.setVisible(visible);
-  }
-});
-
-onTrusted("player:set-chat-presentation", (_event, input: unknown) => {
-  const result = chatPresentationSchema.safeParse(input);
-  if (result.success) setChatPresentation(result.data);
-});
-
-handleTrusted("native-player:get-availability", () => {
-  const availability = nativePlayer.getAvailability();
-  const textureAvailability = textureNativePlayer.getAvailability();
-  return {
-    ...availability,
-    textureAvailable: textureAvailability.available,
-    textureReason: textureAvailability.reason,
-  };
-});
+handleTrusted("native-player:get-availability", () => textureNativePlayer.getAvailability());
 
 handleTrusted("native-player:get-qualities", (_event, input: unknown) => {
   const channel = channelKeySchema.parse(input);
-  return nativePlayer.getQualities(channel);
+  return textureNativePlayer.getQualities(channel);
 });
 
 handleTrusted(
@@ -1277,13 +810,12 @@ handleTrusted(
     if (activePlayerMode !== "native") return;
     const channel = channelKeySchema.parse(channelInput);
     const quality = nativeQualitySchema.parse(qualityInput);
-    const result =
-      activeNativeBackend === "texture"
-        ? await textureNativePlayer.start(channel, quality, {
-            kind: "quality",
-            detail: quality,
-          })
-        : nativePlayer.start(channel, quality);
+    const player =
+      activeNativeBackend === "hls" ? hlsNativePlayer : textureNativePlayer;
+    const result = await player.start(channel, quality, {
+      kind: "quality",
+      detail: quality,
+    });
     if (!result.ok) throw new Error(result.reason);
   },
 );
@@ -1301,16 +833,15 @@ function persistPlayerVolume(volume: number): void {
 }
 
 handleTrusted("native-player:stats", () =>
-  activePlayerMode !== "native"
-    ? null
-    : activeNativeBackend === "texture"
-      ? textureNativePlayer.getStats()
-      : nativePlayer.getStats(),
+  activePlayerMode === "native"
+    ? activeNativeBackend === "hls"
+      ? hlsNativePlayer.getStats()
+      : textureNativePlayer.getStats()
+    : null,
 );
 onTrusted("native-player:presented-fps", (_event, input: unknown) => {
   if (
     activePlayerMode !== "native" ||
-    activeNativeBackend !== "texture" ||
     typeof input !== "number" ||
     !Number.isFinite(input) ||
     input < 0 ||
@@ -1318,15 +849,29 @@ onTrusted("native-player:presented-fps", (_event, input: unknown) => {
   ) {
     return;
   }
-  textureNativePlayer.reportPresentedFps(input);
+  if (activeNativeBackend === "texture") {
+    textureNativePlayer.reportPresentedFps(input);
+  }
 });
-
 onTrusted("native-player:control", (_event, input: unknown) => {
   const result = nativePlayerCommandSchema.safeParse(input);
   if (!result.success || activePlayerMode !== "native") return;
   if (result.data.command === "set-volume") persistPlayerVolume(result.data.value);
-  if (activeNativeBackend === "texture") textureNativePlayer.control(result.data);
-  else nativePlayer.control(result.data);
+  if (activeNativeBackend === "hls") hlsNativePlayer.control(result.data);
+  else textureNativePlayer.control(result.data);
+});
+onTrusted("native-hls:state", (_event, input: unknown) => {
+  const result = nativeHlsStateReportSchema.safeParse(input);
+  if (!result.success) return;
+  if (
+    result.data.target === "main" &&
+    activePlayerMode === "native" &&
+    activeNativeBackend === "hls"
+  ) {
+    hlsNativePlayer.report(result.data);
+  } else if (result.data.target.startsWith("multi-") && multiStreamManager.isActive()) {
+    multiStreamManager.reportHlsState(result.data);
+  }
 });
 
 function isMultiTileId(value: unknown): value is number {
@@ -1400,130 +945,10 @@ onTrusted("player:preresolve", (_event, input: unknown) => {
   const result = channelKeySchema.safeParse(input);
   if (!result.success) return;
   // Hovering a channel card speculatively resolves its stream URL so a click
-  // skips the Streamlink round trip. Only worthwhile for the texture backend,
-  // which starts from a pre-resolved URL.
+  // skips the Streamlink round trip.
   const preferences = preferencesService.get();
-  if (preferences.preferredPlayerMode !== "native" || !preferences.experimentalTexturePlayer) {
-    return;
-  }
+  if (preferences.preferredPlayerMode !== "native") return;
   textureNativePlayer.preresolve(result.data);
-});
-
-onTrusted("native-controls:set-visible", (_event, input: unknown) => {
-  if (typeof input !== "boolean") return;
-  nativeControlsVisible = input;
-  if (!nativeControlsWindow) return;
-  sendToWindow(nativeControlsWindow, "native-controls:visibility", input);
-  if (input) {
-    applyNativeControlsBounds();
-    nativeControlsWindow.moveTop();
-  } else if (
-    !nativeControlsExpanded &&
-    !nativePlayerPaused &&
-    !nativeEmotePickerOpen &&
-    !preferencesService.get().showFpsOverlay &&
-    !(nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay")
-  ) {
-    nativeControlsWindow.hide();
-  } else {
-    applyNativeControlsBounds();
-    nativeControlsWindow.moveTop();
-  }
-});
-
-onTrusted("native-controls:set-expanded", (_event, input: unknown) => {
-  if (typeof input !== "boolean") return;
-  nativeControlsExpanded = input;
-  if (!nativeControlsWindow) return;
-  const nativeChatOverlay =
-    nativeControlsContext?.chatVisible && nativeControlsContext.chatPresentation === "overlay";
-  if (
-    !input &&
-    !nativeEmotePickerOpen &&
-    !nativeControlsVisible &&
-    !nativeChatOverlay &&
-    !preferencesService.get().showFpsOverlay
-  ) {
-    nativeControlsWindow.hide();
-    return;
-  }
-  applyNativeControlsBounds();
-});
-
-onTrusted("native-controls:set-emote-picker", (_event, input: unknown) => {
-  if (typeof input !== "boolean" || activePlayerMode !== "native") return;
-  nativeEmotePickerOpen = input;
-  if (!input) nativeEmotePickerBounds = null;
-  sendToWindow(mainWindow, "native-controls:emote-picker", input);
-  sendToWindow(nativeControlsWindow, "native-controls:emote-picker", input);
-  if (!nativeControlsWindow) return;
-  if (input) {
-    nativeControlsVisible = true;
-    sendToWindow(nativeControlsWindow, "native-controls:visibility", true);
-    applyNativeControlsBounds();
-    nativeControlsWindow.show();
-    nativeControlsWindow.moveTop();
-  } else {
-    applyNativeControlsBounds();
-  }
-});
-onTrusted("player:set-modal-open", (_event, input: unknown) => {
-  if (typeof input !== "boolean" || activePlayerMode !== "native") return;
-  if (input) suspendDetachedNativeSurfaces();
-  else restoreDetachedNativeSurfaces();
-});
-
-onTrusted("native-controls:set-emote-picker-bounds", (_event, input: unknown) => {
-  if (input === null) {
-    nativeEmotePickerBounds = null;
-    return;
-  }
-  const result = playerBoundsSchema.safeParse(input);
-  if (!result.success) return;
-  nativeEmotePickerBounds = result.data;
-  if (nativeEmotePickerOpen) applyNativeControlsBounds();
-});
-
-onTrusted("native-controls:emote-selected", (_event, input: unknown) => {
-  const result = outgoingChatMessageSchema.safeParse(input);
-  if (!result.success) return;
-  nativeEmotePickerOpen = false;
-  nativeEmotePickerBounds = null;
-  sendToWindow(mainWindow, "native-controls:emote-selected", result.data);
-  sendToWindow(mainWindow, "native-controls:emote-picker", false);
-  sendToWindow(nativeControlsWindow, "native-controls:emote-picker", false);
-  applyNativeControlsBounds();
-});
-
-onTrusted("native-controls:ready", (event) => {
-  event.sender.send("native-player:state", nativePlayer.getState());
-  event.sender.send("native-controls:visibility", nativeControlsVisible);
-  const context =
-    nativeControlsContext ??
-    (activeChannelName
-      ? {
-          channel: activeChannelName,
-          fullscreen: mainWindow?.isFullScreen() ?? false,
-          theaterMode: false,
-          chatVisible,
-          chatPresentation,
-        }
-      : null);
-  if (context) {
-    event.sender.send("native-controls:context", context);
-  }
-});
-
-onTrusted("native-controls:set-context", (_event, input: unknown) => {
-  const result = nativeControlsContextSchema.safeParse(input);
-  if (!result.success) return;
-  nativeControlsContext = result.data;
-  sendToWindow(nativeControlsWindow, "native-controls:context", result.data);
-  applyNativeControlsBounds();
-  if (result.data.chatVisible && result.data.chatPresentation === "overlay") {
-    nativeControlsWindow?.showInactive();
-    nativeControlsWindow?.moveTop();
-  }
 });
 
 onTrusted("native-controls:action", (_event, input: unknown) => {
@@ -1579,6 +1004,10 @@ handleTrusted("twitch-playback:get-state", () => playbackSessionService.getState
 handleTrusted("twitch-playback:link", () => playbackSessionService.link());
 handleTrusted("twitch-playback:unlink", () => playbackSessionService.unlink());
 handleTrusted("twitch:get-followed-channels", () => twitchService.getFollowedChannels());
+handleTrusted("twitch:get-chat-color", () => twitchService.getChatColor());
+handleTrusted("twitch:update-chat-color", (_event, rawColor: unknown) =>
+  twitchService.updateChatColor(twitchChatColorInputSchema.parse(rawColor)),
+);
 handleTrusted(
   "twitch:get-browse-categories",
   (_event, rawQuery: unknown, rawAfter: unknown) => {
@@ -1661,6 +1090,14 @@ handleTrusted(
       channelNameSchema.parse(rawLogin),
     ),
 );
+handleTrusted("twitch:get-pinned-chat-message", (_event, rawBroadcasterId: unknown) => {
+  const broadcasterId = z
+    .string()
+    .regex(/^\d+$/)
+    .max(32)
+    .parse(rawBroadcasterId);
+  return twitchService.getPinnedChatMessage(broadcasterId);
+});
 handleTrusted("twitch:create-clip", (_event, rawChannel: unknown) =>
   twitchService.createClip(channelNameSchema.parse(rawChannel)),
 );
@@ -1750,23 +1187,6 @@ handleTrusted("preferences:update", async (_event, patch: unknown) => {
   // to them explicitly or the top bar goes black around light grey buttons.
   applyTitleBarTheme(preferences.oledMode);
   sendToWindow(mainWindow, "preferences:changed", preferences);
-  sendToWindow(nativeControlsWindow, "preferences:changed", preferences);
-  if (nativeControlsWindow && !nativeControlsWindow.isDestroyed()) {
-    applyNativeControlsBounds();
-    if (preferences.showFpsOverlay) {
-      nativeControlsWindow.showInactive();
-      nativeControlsWindow.moveTop();
-    } else if (
-      !nativeControlsVisible &&
-      !nativeControlsExpanded &&
-      !nativePlayerPaused &&
-      !nativeEmotePickerOpen &&
-      !(nativeControlsContext?.chatVisible &&
-        nativeControlsContext.chatPresentation === "overlay")
-    ) {
-      nativeControlsWindow.hide();
-    }
-  }
   return preferences;
 });
 

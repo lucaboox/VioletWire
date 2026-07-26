@@ -1,16 +1,13 @@
 import { z } from "zod";
 import { chatHistoryLimitSchema } from "./chat";
-import { playerModeSchema } from "./player";
+import { nativePlaybackBackendSchema, playerModeSchema } from "./player";
 
 export const mentionSoundIdSchema = z.enum(["ping", "chime", "pop", "knock"]);
 export type MentionSoundId = z.infer<typeof mentionSoundIdSchema>;
-export const texturePresentationModeSchema = z.enum(["bitmap", "video-frame"]);
-export type TexturePresentationMode = z.infer<typeof texturePresentationModeSchema>;
 
 export const appPreferencesSchema = z.object({
   preferredPlayerMode: playerModeSchema,
-  experimentalTexturePlayer: z.boolean(),
-  texturePresentationMode: texturePresentationModeSchema,
+  nativePlaybackBackend: nativePlaybackBackendSchema,
   chatTimestamps: z.boolean(),
   chatHistoryLimit: chatHistoryLimitSchema,
   chatFontSize: z.number().int().min(14).max(25),
@@ -69,14 +66,17 @@ export const appPreferencesSchema = z.object({
 });
 
 export const appPreferencesPatchSchema = appPreferencesSchema.partial().strict();
+// Saved files can contain keys from an older VioletWire version. Strip those
+// keys during startup so removing a preference does not discard every other
+// setting the user has saved. IPC updates continue to use the strict schema.
+export const storedAppPreferencesPatchSchema = appPreferencesSchema.partial();
 
 export type AppPreferences = z.infer<typeof appPreferencesSchema>;
 export type AppPreferencesPatch = z.infer<typeof appPreferencesPatchSchema>;
 
 export const defaultAppPreferences: AppPreferences = {
   preferredPlayerMode: "native",
-  experimentalTexturePlayer: true,
-  texturePresentationMode: "bitmap",
+  nativePlaybackBackend: "hls",
   chatTimestamps: true,
   chatHistoryLimit: 20,
   chatFontSize: 14,

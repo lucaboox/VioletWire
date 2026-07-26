@@ -42,6 +42,55 @@ export interface TwitchAccount {
   profileImageUrl: string;
 }
 
+export const twitchNamedChatColorSchema = z.enum([
+  "blue",
+  "blue_violet",
+  "cadet_blue",
+  "chocolate",
+  "coral",
+  "dodger_blue",
+  "firebrick",
+  "golden_rod",
+  "green",
+  "hot_pink",
+  "orange_red",
+  "red",
+  "sea_green",
+  "spring_green",
+  "yellow_green",
+]);
+export const twitchChatColorInputSchema = z.union([
+  twitchNamedChatColorSchema,
+  z.string().regex(/^#[0-9a-f]{6}$/i, "Choose a valid six-digit color."),
+]);
+export type TwitchChatColorInput = z.infer<typeof twitchChatColorInputSchema>;
+
+export interface TwitchChatColorState {
+  color: string;
+  canUpdate: boolean;
+}
+
+export interface TwitchPinnedChatFragment {
+  type: "text" | "emote" | "cheermote" | "mention";
+  text: string;
+  emote?: {
+    id: string;
+    formats: string[];
+  };
+}
+
+export interface TwitchPinnedChatMessage {
+  id: string;
+  senderId: string;
+  senderLogin: string;
+  senderName: string;
+  pinnedByName: string;
+  text: string;
+  fragments: TwitchPinnedChatFragment[];
+  startsAt: string;
+  endsAt?: string;
+}
+
 export type TwitchAuthState =
   | { status: "unconfigured"; account: null; message: string }
   | { status: "signed-out"; account: null }
@@ -208,6 +257,9 @@ export interface TwitchApi {
   search(query: string): Promise<TwitchSearchResults>;
   getStreamMetadata(channel: string): Promise<StreamMetadata | null>;
   getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile>;
+  getPinnedChatMessage(broadcasterId: string): Promise<TwitchPinnedChatMessage | null>;
+  getChatColor(): Promise<TwitchChatColorState>;
+  updateChatColor(color: TwitchChatColorInput): Promise<TwitchChatColorState>;
   createClip(channel: string): Promise<ClipCreationResult>;
   openChannel(channel: string): Promise<void>;
 }

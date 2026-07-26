@@ -41,7 +41,6 @@ describe("PreferencesService", () => {
 
     expect(migrated).toMatchObject({
       preferredPlayerMode: "native",
-      experimentalTexturePlayer: true,
       chatTimestamps: false,
       chatHistoryLimit: 70,
       chatFontSize: 18,
@@ -57,8 +56,6 @@ describe("PreferencesService", () => {
     await first.initialize();
     await first.update({
       preferredPlayerMode: "native",
-      experimentalTexturePlayer: true,
-      texturePresentationMode: "video-frame",
       chatTimestamps: false,
       chatHistoryLimit: 100,
       chatFontSize: 21,
@@ -78,8 +75,7 @@ describe("PreferencesService", () => {
 
     expect(await second.getOrMigrate()).toEqual({
       preferredPlayerMode: "native",
-      experimentalTexturePlayer: true,
-      texturePresentationMode: "video-frame",
+      nativePlaybackBackend: "hls",
       chatTimestamps: false,
       chatHistoryLimit: 100,
       chatFontSize: 21,
@@ -133,6 +129,30 @@ describe("PreferencesService", () => {
       chatOverlayOpacity: number;
     };
     expect(stored.chatOverlayOpacity).toBe(75);
+  });
+
+  it("preserves current settings while stripping retired preference keys", async () => {
+    await fs.mkdir(testDirectory, { recursive: true });
+    await fs.writeFile(
+      preferencesPath,
+      JSON.stringify({
+        preferredPlayerMode: "native",
+        experimentalTexturePlayer: false,
+        texturePresentationMode: "bitmap",
+        oledMode: true,
+        chatFontSize: 19,
+      }),
+      "utf8",
+    );
+
+    const service = new PreferencesService(preferencesPath);
+    await service.initialize();
+    const preferences = await service.getOrMigrate();
+
+    expect(preferences.oledMode).toBe(true);
+    expect(preferences.chatFontSize).toBe(19);
+    expect(preferences).not.toHaveProperty("experimentalTexturePlayer");
+    expect(preferences).not.toHaveProperty("texturePresentationMode");
   });
 
   it("rejects invalid preference updates without changing the saved file", async () => {

@@ -85,4 +85,42 @@ describe("parseChangelog", () => {
       { version: "0.9.0", improvements: [] },
     ]);
   });
+
+  it("sorts bundled newer prereleases ahead of stale remote entries", () => {
+    const bundled = parseChangelog(`
+## [Unreleased]
+
+## [0.3.3-alpha.12]
+
+### Additions
+
+- Bundled newest notes.
+
+## [0.3.3-alpha.11]
+
+## [0.3.3-alpha.10]
+
+## [0.3.3-alpha.9]
+`);
+    const staleRemote = parseChangelog(`
+## [0.3.3-alpha.9]
+
+### Fixes
+
+- Remote notes.
+
+## [0.3.3-alpha.8]
+`);
+
+    expect(
+      mergeChangelogEntries(staleRemote, bundled).map((entry) => entry.version),
+    ).toEqual([
+      "Unreleased",
+      "0.3.3-alpha.12",
+      "0.3.3-alpha.11",
+      "0.3.3-alpha.10",
+      "0.3.3-alpha.9",
+      "0.3.3-alpha.8",
+    ]);
+  });
 });

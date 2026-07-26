@@ -5,7 +5,7 @@
 <h1 align="center">VioletWire</h1>
 
 <p align="center">
-  A native-feeling Twitch and Kick viewer for Windows with official and experimental native playback, plus multistream.
+  A native-feeling Twitch and Kick viewer for Windows with official and high-performance native playback, plus multistream.
 </p>
 
 <p align="center">
@@ -66,7 +66,7 @@ sponsored by Twitch, Kick, 7TV, Streamlink, or mpv.
     <td width="50%">
       <strong>Experimental Native player</strong><br />
       <a href="docs/screenshots/native-player.jpg">
-        <img src="docs/screenshots/native-player.jpg" alt="VioletWire using its experimental Native player with native chat" />
+        <img src="docs/screenshots/native-player.jpg" alt="VioletWire using its Native player with native chat" />
       </a>
     </td>
   </tr>
@@ -175,18 +175,17 @@ unknown-publisher warning. Code signing is planned before a wider release.
 
 ## Native player
 
-The Windows installer includes pinned, checksum-verified Streamlink and mpv
-runtimes, so the experimental Native player works without installing anything
-else. Custom developer builds can still be supplied with:
+The Windows installer includes pinned, checksum-verified Streamlink and libmpv
+runtimes, so the Native player works without installing anything else. Custom
+developer builds can still supply Streamlink with:
 
 ```text
 VIOLETWIRE_STREAMLINK_PATH=C:\path\to\streamlink.exe
-VIOLETWIRE_MPV_PATH=C:\path\to\mpv.exe
 ```
 
-Environment overrides take priority over the bundled runtime. Without an
-override, VioletWire prefers its bundled copies and then falls back to `PATH`
-and common system installation locations.
+The override takes priority over the bundled Streamlink runtime. Without it,
+VioletWire prefers its bundled copy and then falls back to `PATH` and common
+system installation locations.
 
 ## Twitch sign-in
 
@@ -200,6 +199,15 @@ Requested scopes:
 - `clips:edit`
 - `user:read:chat`
 - `user:write:chat`
+- `user:read:emotes`
+- `user:manage:chat_color`
+- `user:read:moderated_channels`
+- `moderator:manage:banned_users`
+- `moderator:manage:chat_messages`
+- `moderator:manage:announcements`
+- `moderator:manage:chat_settings`
+- `moderator:manage:warnings`
+- `moderator:manage:shield_mode`
 
 Follow and subscription purchases still open Twitch-controlled pages because
 Twitch does not provide public APIs for those mutations.

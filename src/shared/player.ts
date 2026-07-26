@@ -50,7 +50,7 @@ export const playerBoundsSchema = z.object({
 // it is no longer one of these isolated-window actions.
 export const channelActionSchema = z.enum(["channel", "clip"]);
 export const playerModeSchema = z.enum(["official", "native"]);
-export const nativeRenderBackendSchema = z.enum(["window", "texture"]);
+export const nativePlaybackBackendSchema = z.enum(["texture", "hls"]);
 export const chatPresentationSchema = z.enum(["side", "overlay"]);
 export const nativeControlActionSchema = z.enum([
   "activity",
@@ -80,6 +80,7 @@ export const nativeQualitySchema = z
 export const nativePlayerCommandSchema = z.discriminatedUnion("command", [
   z.object({ command: z.literal("toggle-pause") }),
   z.object({ command: z.literal("toggle-mute") }),
+  z.object({ command: z.literal("set-muted"), muted: z.boolean() }),
   z.object({ command: z.literal("go-live") }),
   z.object({
     command: z.literal("set-volume"),
@@ -94,7 +95,7 @@ export const nativePlayerCommandSchema = z.discriminatedUnion("command", [
 export type PlayerBounds = z.infer<typeof playerBoundsSchema>;
 export type ChannelAction = z.infer<typeof channelActionSchema>;
 export type PlayerMode = z.infer<typeof playerModeSchema>;
-export type NativeRenderBackend = z.infer<typeof nativeRenderBackendSchema>;
+export type NativePlaybackBackend = z.infer<typeof nativePlaybackBackendSchema>;
 export type ChatPresentation = z.infer<typeof chatPresentationSchema>;
 export type NativeControlAction = z.infer<typeof nativeControlActionSchema>;
 export type NativeQualityValue = z.infer<typeof nativeQualitySchema>;
@@ -176,10 +177,7 @@ export function isNativeStreamUnavailable(message: string): boolean {
 export interface NativePlayerAvailability {
   available: boolean;
   streamlinkPath?: string;
-  mpvPath?: string;
   reason?: string;
-  textureAvailable?: boolean;
-  textureReason?: string;
 }
 
 // Why the player is currently in "starting": lets the loading surface say
@@ -197,9 +195,31 @@ export interface NativePlayerState {
   compressorEnabled: boolean;
   behindLive: boolean;
   quality: NativeQualityValue;
+  backend?: NativePlaybackBackend;
+  hlsSource?: {
+    sessionId: string;
+    playlistUrl: string;
+  };
   error?: string;
   transition?: NativePlayerTransition;
 }
+
+export const nativeHlsStateReportSchema = z.object({
+  target: z.union([
+    z.literal("main"),
+    z.string().regex(/^multi-[0-3]$/),
+  ]),
+  sessionId: z.string().uuid(),
+  status: z.enum(["playing", "stopped", "error"]),
+  paused: z.boolean(),
+  muted: z.boolean(),
+  volume: z.number().min(0).max(100),
+  behindLive: z.boolean(),
+  error: z.string().max(500).optional(),
+  stats: z.record(z.string(), z.string()).optional(),
+});
+
+export type NativeHlsStateReport = z.infer<typeof nativeHlsStateReportSchema>;
 
 // Multistream shows up to this many native players in a grid at once. Only the
 // active tile plays audio.
@@ -230,15 +250,11 @@ export interface DesktopApi {
     open(channel: string, mode: PlayerMode, quality?: NativeQualityValue): Promise<{
       channel: string;
       mode: PlayerMode;
-      nativeBackend?: NativeRenderBackend;
       fallbackReason?: string;
     }>;
     close(): Promise<void>;
     setBounds(bounds: PlayerBounds): void;
     preresolveStream(channel: string): void;
-    setChatBounds(bounds: PlayerBounds): void;
-    setChatVisible(visible: boolean): void;
-    setChatPresentation(presentation: ChatPresentation): void;
     setFullscreen(fullscreen: boolean): Promise<boolean>;
     onFullscreenChanged(listener: (fullscreen: boolean) => void): () => void;
     openChannelAction(channel: string, action: ChannelAction): Promise<void>;
@@ -248,25 +264,16 @@ export interface DesktopApi {
     getNativeQualities(channel: string): Promise<NativeQuality[]>;
     setNativeQuality(channel: string, quality: NativeQualityValue): Promise<void>;
     controlNative(command: NativePlayerCommand): void;
-    // Raw mpv property names mapped to their values, or null when the texture
-    // backend is not the one currently playing.
+    reportNativeHlsState(report: NativeHlsStateReport): void;
+    onNativeHlsCommand(
+      listener: (target: string, command: NativePlayerCommand) => void,
+    ): () => void;
+    // Raw mpv property names mapped to their values, or null when Native is
+    // not currently playing.
     getNativeStats(): Promise<Record<string, string> | null>;
     onNativeState(listener: (state: NativePlayerState) => void): () => void;
-    onNativeBackendChanged(listener: (backend: NativeRenderBackend) => void): () => void;
-    readyNativeControls(): void;
-    setNativeControlsVisible(visible: boolean): void;
-    setNativeControlsExpanded(expanded: boolean): void;
-    setNativeEmotePicker(open: boolean): void;
-    setModalOpen(open: boolean): void;
-    setNativeEmotePickerBounds(bounds: PlayerBounds | null): void;
-    setNativeControlsContext(context: NativeControlsContext): void;
-    onNativeControlsVisibility(listener: (visible: boolean) => void): () => void;
     sendNativeControlAction(action: NativeControlAction): void;
-    onNativeControlsContext(listener: (context: NativeControlsContext) => void): () => void;
     onNativeControlAction(listener: (action: NativeControlAction) => void): () => void;
-    sendNativeEmoteSelection(name: string): void;
-    onNativeEmotePicker(listener: (open: boolean) => void): () => void;
-    onNativeEmoteSelection(listener: (name: string) => void): () => void;
     // Multistream: up to MAX_MULTISTREAM_TILES native players in a grid.
     multiStart(channels: string[]): Promise<MultiStreamTileState[]>;
     multiStop(): void;

@@ -22,6 +22,7 @@ import {
 import type { FollowedChannel } from "../../shared/twitch";
 import { channelKey, parseChannelKey, type Platform } from "../../shared/platform";
 import { ProviderLogo } from "./ProviderLogo";
+import { HlsNativeVideo } from "./HlsNativeVideo";
 import "./multi-stream.css";
 
 interface MultiStreamViewProps {
@@ -289,11 +290,15 @@ const MultiTile = memo(function MultiTile({
       onMouseMove={revealControls}
       onMouseLeave={hideControls}
     >
-      <canvas
-        className="native-texture-canvas"
-        data-native-texture-canvas={String(tile.id)}
-        aria-hidden="true"
-      />
+      {tile.state.backend === "hls" ? (
+        <HlsNativeVideo state={tile.state} target={`multi-${tile.id}`} />
+      ) : (
+        <canvas
+          className="native-texture-canvas"
+          data-native-texture-canvas={String(tile.id)}
+          aria-hidden="true"
+        />
+      )}
       {showOverlay && (
         <div className="multi-tile-overlay">
           <span className={`native-status-orb ${offline ? "offline" : status}`} />

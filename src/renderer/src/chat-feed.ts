@@ -72,6 +72,7 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
   const scrollAnchor = useRef<ChatScrollAnchor | null>(null);
   const lastScrollTop = useRef(0);
   const lastUserScrollIntentAt = useRef(0);
+  const messageCount = useRef(0);
   const batch = useRef<ChatMessage[]>([]);
   const batchTimer = useRef<number | null>(null);
   const onIncomingRef = useRef(onIncoming);
@@ -95,10 +96,17 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
       if (newMessageCount > 0) {
         setPausedNewCount((current) => Math.min(999, current + newMessageCount));
       }
-      // Appends below the reader never move their view; the anchor only
-      // matters for the rare hard-limit trim and deletion height changes.
-      if (messagesHostRef.current) {
+      // Plain live appends occur below the reader and do not need anchoring.
+      // Restoring an anchor for every batch can fight a fast user scroll when
+      // the pointer moves between capture and React's layout commit. Anchor
+      // only operations that can alter content above the viewport.
+      const mayChangeContentAbove =
+        pending.some((message) => message.deleted || message.historical) ||
+        messageCount.current + pending.length > CHAT_PAUSED_HARD_LIMIT;
+      if (mayChangeContentAbove && messagesHostRef.current) {
         scrollAnchor.current = captureChatScrollAnchor(messagesHostRef.current);
+      } else {
+        scrollAnchor.current = null;
       }
     }
     setMessages((current) => {
@@ -108,6 +116,7 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
       } else if (next.length > CHAT_MESSAGE_LIMIT) {
         next = next.slice(-CHAT_MESSAGE_LIMIT);
       }
+      messageCount.current = next.length;
       return next;
     });
   }, []);
@@ -149,9 +158,14 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
     // Apply anything still buffered, then cut the paused overflow back to the
     // live cap; the reader is jumping to the bottom anyway.
     flushBatch();
-    setMessages((current) =>
-      current.length > CHAT_MESSAGE_LIMIT ? current.slice(-CHAT_MESSAGE_LIMIT) : current,
-    );
+    setMessages((current) => {
+      const next =
+        current.length > CHAT_MESSAGE_LIMIT
+          ? current.slice(-CHAT_MESSAGE_LIMIT)
+          : current;
+      messageCount.current = next.length;
+      return next;
+    });
     setPausedNewCount(0);
   }, [flushBatch]);
 
@@ -192,6 +206,7 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
     const host = messagesHostRef.current;
     if (!host) return;
     autoScrollRef.current = true;
+    messageCount.current = 0;
     setAutoScroll(true);
     resumeLive();
     host.scrollTo({ top: host.scrollHeight, behavior: "smooth" });

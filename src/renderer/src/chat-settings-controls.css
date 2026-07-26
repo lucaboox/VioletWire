@@ -173,3 +173,106 @@
   margin: 0;
   accent-color: #a970ff;
 }
+
+.twitch-chat-color-controls {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #34343b;
+}
+
+.twitch-chat-color-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #e8e8ed;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.twitch-chat-current-color {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ffffff80;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px #0008;
+}
+
+.twitch-chat-color-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.twitch-chat-color-grid button {
+  width: 18px;
+  height: 18px;
+  min-width: 0;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  outline: 1px solid #ffffff22;
+  background: var(--chat-color);
+  cursor: pointer;
+}
+
+.twitch-chat-color-grid button:hover:not(:disabled) {
+  border-color: #fff;
+  transform: scale(1.08);
+}
+
+.twitch-chat-color-grid button.active {
+  border-color: #fff;
+  outline: 2px solid #a970ff;
+  outline-offset: 1px;
+}
+
+.twitch-chat-color-grid button:disabled,
+.twitch-chat-custom-color :disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.twitch-chat-custom-color {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 7px;
+}
+
+.twitch-chat-custom-color input {
+  width: 30px;
+  height: 27px;
+  padding: 2px;
+  border: 1px solid #454550;
+  border-radius: 6px;
+  background: #232329;
+  cursor: pointer;
+}
+
+.twitch-chat-custom-color button {
+  height: 27px;
+  padding: 0 9px;
+  border: 1px solid #59416e;
+  border-radius: 6px;
+  color: #eee8f5;
+  background: #2b2035;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.twitch-chat-custom-color button:hover:not(:disabled) {
+  border-color: #8b5cf6;
+  background: #3a2948;
+}
+
+.twitch-chat-color-controls small {
+  color: #92929d;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.twitch-chat-color-controls .twitch-chat-color-error {
+  color: #ff8d9b;
+}

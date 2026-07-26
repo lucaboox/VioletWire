@@ -4,6 +4,77 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Native playback now includes an Efficient HLS backend that sends
+  Streamlink-resolved Twitch and Kick streams through Chromium's
+  hardware-accelerated video pipeline while retaining VioletWire's controls,
+  overlays, quality selection, and audio features.
+- Efficient HLS uses a low-latency live profile by default and is available in
+  multistream mode, where each tile receives an isolated playback session and
+  audio focus.
+- Chat settings now include Twitch's official username-color controls, with
+  the standard color palette and custom hex colors for eligible Prime or Turbo
+  accounts.
+- Efficient HLS playback now has a compact Chromium video-statistics panel and
+  a live latency gauge in the player controls.
+- Twitch pinned chat messages can appear beneath the chat header with their
+  sender, emotes, and a local dismiss control when Twitch authorizes the
+  signed-in account to read the channel's current pin.
+- Twitch sign-in now requests the permissions needed for the next moderation
+  tools batch: moderated-channel discovery, bans and timeouts, message
+  deletion, announcements, chat settings, warnings, and Shield Mode.
+
+### Improvements
+
+- The libmpv compatibility backend now uses the shared-texture Direct
+  VideoFrame renderer as its single Windows presentation path. The separate
+  mpv child window, transparent controls window, and ImageBitmap presentation
+  option have been removed, reducing renderer-process memory use and
+  eliminating native-window z-order workarounds.
+- Efficient HLS uses platform-specific upstream request headers for Twitch and
+  Kick and keeps the libmpv texture renderer as an automatic compatibility
+  fallback when a stream cannot start through Chromium.
+- The Chromium latency control now previews its compact playback statistics on
+  hover, remains clickable for the persistent panel, and targets a closer live
+  position without returning to the unstable one-segment buffer.
+- The native graphics bridge now attempts to render directly into Electron's
+  exported D3D11 texture. Drivers that cannot share the keyed texture through
+  OpenGL automatically retain the compatible GPU-copy path, and video
+  statistics report which texture bridge is active.
+- Windows packages no longer include the unused standalone mpv executable;
+  VioletWire now ships only Streamlink and the libmpv runtime used by Native
+  playback.
+
+### Fixes
+
+- Native HLS no longer labels the normal live-sync distance as being behind
+  live; the indicator now appears only after playback drifts materially beyond
+  hls.js's current target latency.
+- Chromium playback statistics now report the selected stream level's encoded
+  bitrate instead of mistakenly displaying localhost relay throughput.
+- Fast manual chat scrolling no longer competes with stale per-batch scroll
+  anchors, and background latency-stat refreshes pause while reading older
+  messages.
+- Efficient HLS keeps playback at the source rate instead of accelerating
+  video to chase small latency changes, while isolated chat scroll layers
+  reduce video-compositor interference.
+- Native player construction no longer reads playback preferences before the
+  settings service has initialized, preventing an application-load failure.
+- Native mute controls now move the displayed volume to zero and restore the
+  previous audible level when unmuted, consistently across Efficient HLS,
+  libmpv texture playback, mini-player, and multistream controls.
+- Volume sliders now remain stable under the pointer while being dragged and
+  avoid redundant mute-state commands during rapid volume changes.
+- Efficient HLS is now the default Native backend for new installations;
+  existing saved backend choices remain unchanged.
+- Multistream now routes HLS commands and playback state to the correct tile
+  instead of leaving tiles on the texture renderer.
+- Removed Native and presentation preferences are migrated without discarding
+  unrelated saved settings.
+- Changelog entries now use semantic-version ordering, keeping multi-digit
+  alpha versions such as alpha.10 above alpha.9.
+
 ## [0.3.3-alpha.12] - 2026-07-25
 
 ### Additions

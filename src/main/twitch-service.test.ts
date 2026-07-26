@@ -715,6 +715,159 @@ describe("TwitchService chat replies", () => {
   });
 });
 
+describe("TwitchService chat color", () => {
+  it("reads the authenticated user's current Twitch chat color", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/chat/color?")) {
+        return json({
+          data: [
+            {
+              user_id: "42",
+              user_login: "tester",
+              user_name: "Tester",
+              color: "#9146FF",
+            },
+          ],
+        });
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService({
+      scopes: ["user:manage:chat_color"],
+    });
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await expect(service.getChatColor()).resolves.toEqual({
+      color: "#9146FF",
+      canUpdate: true,
+    });
+  });
+
+  it("updates a custom color through Twitch and returns the saved color", async () => {
+    let updateUrl = "";
+    installFetch((url, init) => {
+      if (url.includes("/helix/chat/color?") && init?.method === "PUT") {
+        updateUrl = url;
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/helix/chat/color?")) {
+        return json({
+          data: [
+            {
+              user_id: "42",
+              user_login: "tester",
+              user_name: "Tester",
+              color: "#A970FF",
+            },
+          ],
+        });
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService({
+      scopes: ["user:manage:chat_color"],
+    });
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await expect(service.updateChatColor("#A970FF")).resolves.toEqual({
+      color: "#A970FF",
+      canUpdate: true,
+    });
+    expect(updateUrl).toContain("user_id=42");
+    expect(updateUrl).toContain("color=%23A970FF");
+  });
+
+  it("requires a one-time reauthorization before changing chat color", async () => {
+    installFetch(defaultRoutes);
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await expect(service.updateChatColor("blue")).rejects.toThrow(
+      "Sign in with Twitch again",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("TwitchService pinned chat messages", () => {
+  it("maps the currently pinned Twitch chat message", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/chat/pins?")) {
+        return json({
+          data: [
+            {
+              message_id: "pin-1",
+              broadcaster_id: "77",
+              sender_user_id: "88",
+              sender_user_login: "otheruser",
+              sender_user_name: "OtherUser",
+              pinned_by_user_id: "42",
+              pinned_by_user_login: "tester",
+              pinned_by_user_name: "Tester",
+              message: {
+                text: "Welcome Kappa",
+                fragments: [
+                  { type: "text", text: "Welcome " },
+                  {
+                    type: "emote",
+                    text: "Kappa",
+                    emote: { id: "25", format: ["static", "animated"] },
+                  },
+                ],
+              },
+              starts_at: "2026-07-26T18:00:00Z",
+              ends_at: "2026-07-26T18:05:00Z",
+              updated_at: "2026-07-26T18:00:00Z",
+            },
+          ],
+        });
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService({
+      scopes: ["moderator:read:chat_messages"],
+    });
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await expect(service.getPinnedChatMessage("77")).resolves.toEqual({
+      id: "pin-1",
+      senderId: "88",
+      senderLogin: "otheruser",
+      senderName: "OtherUser",
+      pinnedByName: "Tester",
+      text: "Welcome Kappa",
+      fragments: [
+        { type: "text", text: "Welcome " },
+        {
+          type: "emote",
+          text: "Kappa",
+          emote: { id: "25", formats: ["static", "animated"] },
+        },
+      ],
+      startsAt: "2026-07-26T18:00:00Z",
+      endsAt: "2026-07-26T18:05:00Z",
+    });
+  });
+
+  it("treats a moderator-only forbidden response as no visible pin", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/chat/pins?")) {
+        return json({ error: "Forbidden", status: 403, message: "Forbidden" }, 403);
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await expect(service.getPinnedChatMessage("77")).resolves.toBeNull();
+  });
+});
+
 describe("TwitchService chat user profiles", () => {
   it("returns public details without requesting another user's private relationships", async () => {
     installFetch((url) => {

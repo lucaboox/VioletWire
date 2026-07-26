@@ -205,6 +205,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     HANDLE gl_interop_object = nullptr;
     GLuint gl_renderbuffer = 0;
     GLuint gl_framebuffer = 0;
+    bool direct_gl_interop = false;
     uint32_t width = 0;
     uint32_t height = 0;
     uint64_t device_generation = 0;
@@ -415,6 +416,9 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
               ? open_gl_vendor_
               : open_gl_vendor_ + " / " + open_gl_renderer_;
         result.Set("vw-opengl-adapter", Napi::String::New(env, open_gl_device));
+      }
+      if (!texture_bridge_mode_.empty()) {
+        result.Set("vw-texture-bridge", Napi::String::New(env, texture_bridge_mode_));
       }
     }
     for (const char* name : kProperties) {
@@ -990,13 +994,33 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     slot.height = height;
     slot.device_generation = device_generation_;
     if (use_open_gl_) {
-      D3D11_TEXTURE2D_DESC gl_description = description;
-      gl_description.MiscFlags = 0;
-      const HRESULT gl_texture_result =
-        device_->CreateTexture2D(&gl_description, nullptr, &slot.gl_texture);
-      if (FAILED(gl_texture_result) || !RegisterSlotOpenGlLocked(slot)) {
-        ResetSlotLocked(slot);
-        return false;
+      // The fastest path lets mpv render directly into the keyed texture that
+      // Electron imports. Some WGL drivers reject NTHANDLE/keyed resources, so
+      // probe this per device and retain the proven private-texture GPU copy as
+      // a compatibility fallback.
+      if (allow_direct_interop_) {
+        slot.gl_texture = slot.texture;
+        if (RegisterSlotOpenGlLocked(slot)) {
+          slot.direct_gl_interop = true;
+          std::scoped_lock diagnostic_lock(diagnostic_mutex_);
+          texture_bridge_mode_ = "Direct OpenGL/D3D11";
+        } else {
+          ResetSlotOpenGlLocked(slot);
+          allow_direct_interop_ = false;
+        }
+      }
+      if (!slot.gl_interop_object) {
+        D3D11_TEXTURE2D_DESC gl_description = description;
+        gl_description.MiscFlags = 0;
+        const HRESULT gl_texture_result =
+          device_->CreateTexture2D(&gl_description, nullptr, &slot.gl_texture);
+        if (FAILED(gl_texture_result) || !RegisterSlotOpenGlLocked(slot)) {
+          ResetSlotLocked(slot);
+          return false;
+        }
+        slot.direct_gl_interop = false;
+        std::scoped_lock diagnostic_lock(diagnostic_mutex_);
+        texture_bridge_mode_ = "GPU Copy fallback";
       }
     }
     return true;
@@ -1064,6 +1088,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
     }
     slot.gl_renderbuffer = 0;
     slot.gl_texture.Reset();
+    slot.direct_gl_interop = false;
   }
 
   void ResetSlotLocked(Slot& slot) {
@@ -1127,6 +1152,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
       ComPtr<IDXGIKeyedMutex> keyed_mutex;
       HANDLE gl_interop_object = nullptr;
       GLuint gl_framebuffer = 0;
+      bool direct_gl_interop = false;
       {
         std::scoped_lock lock(slot_mutex_);
         for (uint32_t index = 0; index < slots_.size(); ++index) {
@@ -1143,6 +1169,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
             keyed_mutex = slot.keyed_mutex;
             gl_interop_object = slot.gl_interop_object;
             gl_framebuffer = slot.gl_framebuffer;
+            direct_gl_interop = slot.direct_gl_interop;
             break;
           }
         }
@@ -1188,7 +1215,18 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
           !wgl_dx_lock_objects_(gl_interop_device_, 1, &gl_interop_object)
         ) {
           keyed_mutex->ReleaseSync(0);
-          free_slot();
+          if (direct_gl_interop) {
+            // A driver can accept registration but reject locking the keyed
+            // export texture. Disable the optimization for this player and
+            // rebuild this slot on the compatible copy path next frame.
+            std::scoped_lock lock(slot_mutex_);
+            allow_direct_interop_ = false;
+            ResetSlotLocked(slots_[selected]);
+            std::scoped_lock diagnostic_lock(diagnostic_mutex_);
+            texture_bridge_mode_ = "GPU Copy fallback";
+          } else {
+            free_slot();
+          }
           SkipMpvFrame();
           EmitEvent({
             "diagnostic",
@@ -1200,8 +1238,8 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         }
 
         gl_bind_framebuffer_(kGlFramebuffer, gl_framebuffer);
-        glClearColor(0, 0, 0, 1);
-        glClear(GL_COLOR_BUFFER_BIT);
+        // libmpv paints the complete output, including letterbox background.
+        // Avoid a redundant full-surface clear before every video frame.
         mpv_opengl_fbo framebuffer{
           static_cast<int>(gl_framebuffer),
           static_cast<int>(width),
@@ -1220,7 +1258,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
         const BOOL unlocked =
           wgl_dx_unlock_objects_(gl_interop_device_, 1, &gl_interop_object);
         if (!unlocked && render_result >= 0) render_result = -1;
-        if (render_result >= 0) {
+        if (render_result >= 0 && !direct_gl_interop) {
           device_context_->CopyResource(texture.Get(), gl_texture.Get());
           device_context_->Flush();
         }
@@ -1425,6 +1463,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   HGLRC gl_context_ = nullptr;
   HANDLE gl_interop_device_ = nullptr;
   bool use_open_gl_ = false;
+  bool allow_direct_interop_ = true;
   std::string open_gl_failure_;
   std::string requested_hwdec_;
   std::mutex diagnostic_mutex_;
@@ -1433,6 +1472,7 @@ class TexturePlayer final : public Napi::ObjectWrap<TexturePlayer> {
   uint32_t selected_adapter_device_id_ = 0;
   std::string open_gl_vendor_;
   std::string open_gl_renderer_;
+  std::string texture_bridge_mode_;
   GlGenFramebuffers gl_gen_framebuffers_ = nullptr;
   GlDeleteFramebuffers gl_delete_framebuffers_ = nullptr;
   GlBindFramebuffer gl_bind_framebuffer_ = nullptr;

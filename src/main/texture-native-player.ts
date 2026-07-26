@@ -4,13 +4,15 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import type { ChildProcess } from "node:child_process";
 import type {
+  NativePlayerAvailability,
   NativePlayerCommand,
+  NativeQuality,
   NativePlayerState,
   NativePlayerTransition,
   NativeQualityValue,
   PlayerBounds,
 } from "../shared/player";
-import type { TexturePresentationMode } from "../shared/preferences";
+import { parseStreamlinkQualityOutput } from "../shared/player";
 import {
   channelUrl,
   parseChannelKey,
@@ -20,6 +22,7 @@ import {
   redactSensitivePlaybackText,
   spawnStreamlink,
 } from "./streamlink-process";
+import { getNativeRuntimeAvailability } from "./native-runtime";
 
 interface TextureFrame {
   slot: number;
@@ -152,6 +155,7 @@ export class TextureNativePlayer {
   // reloads it through the in-place switch path.
   private currentChannel: string | null = null;
   private chromiumGpuDevice: ChromiumGpuDevice | null = null;
+  private lastAudibleVolume = 100;
   // Timestamps of recently delivered frames, used to measure the real presented
   // frame rate. mpv's own estimated-vf-fps stays at 0 with the render API since
   // the addon, not mpv, drives presentation.
@@ -162,6 +166,10 @@ export class TextureNativePlayer {
     { expiresAt: number; url: Promise<string> }
   >();
   private readonly preresolveProcesses = new Set<ChildProcess>();
+  private readonly qualityCache = new Map<
+    string,
+    { expiresAt: number; result: Promise<NativeQuality[]> }
+  >();
   private state: NativePlayerState = {
     status: "idle",
     paused: false,
@@ -170,12 +178,12 @@ export class TextureNativePlayer {
     compressorEnabled: false,
     behindLive: false,
     quality: "best",
+    backend: "texture",
   };
 
   constructor(
     private readonly getMainWindow: () => BrowserWindow | null,
     private readonly onState: StateListener,
-    private readonly getStreamlinkPath: () => string | undefined,
     private readonly getTwitchPlaybackToken: () => string | null,
     // Identifies which renderer canvas this player's frames paint. The single
     // full-window player uses "main"; multistream tiles use their tile id so
@@ -187,17 +195,16 @@ export class TextureNativePlayer {
     // Supplies Kick's anonymous session cookie for Streamlink. Returns null on
     // Twitch, offline, or when Kick's handshake changes.
     private readonly getKickCookie: () => Promise<string | null> = async () => null,
-    // Changes only the final renderer-side presentation step. libmpv, controls,
-    // quality selection, audio, overlays, and chat remain identical.
-    private readonly getPresentationMode: () => TexturePresentationMode = () => "bitmap",
   ) {}
 
-  getAvailability(): { available: boolean; reason?: string } {
+  getAvailability(): NativePlayerAvailability {
+    const runtime = getNativeRuntimeAvailability();
+    if (!runtime.available) return runtime;
     const { addonPath, libmpvPath } = resolveNativePaths();
     if (!existsSync(addonPath)) {
       return {
         available: false,
-        reason: "The experimental texture-player module has not been built.",
+        reason: "The Native texture-player module has not been built.",
       };
     }
     if (!existsSync(libmpvPath)) {
@@ -206,10 +213,61 @@ export class TextureNativePlayer {
         reason: "The bundled libmpv development runtime is missing.",
       };
     }
-    if (!this.getStreamlinkPath()) {
-      return { available: false, reason: "Streamlink is unavailable." };
+    return runtime;
+  }
+
+  getQualities(channel: string): Promise<NativeQuality[]> {
+    const target = parseChannelKey(channel);
+    const playbackToken = this.getTwitchPlaybackToken();
+    const cacheKey = `${channel}:${playbackToken ? "authenticated" : "anonymous"}`;
+    const cached = this.qualityCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+
+    const availability = this.getAvailability();
+    if (!availability.available || !availability.streamlinkPath) {
+      return Promise.resolve([{ value: "best", label: "Auto" }]);
     }
-    return { available: true };
+
+    const result = new Promise<NativeQuality[]>((resolve) => {
+      const child = spawnStreamlink(
+        availability.streamlinkPath!,
+        [
+          "--no-config",
+          "--loglevel",
+          "none",
+          ...streamlinkPlatformArguments(target.platform),
+          channelUrl(target.platform, target.login),
+        ],
+        playbackToken,
+        {
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
+      let output = "";
+      let settled = false;
+      const finish = (qualities: NativeQuality[]) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(qualities);
+      };
+      const timeout = setTimeout(() => {
+        child.kill();
+        finish([{ value: "best", label: "Auto" }]);
+      }, 12_000);
+
+      child.stdout?.on("data", (chunk: Buffer | string) => {
+        if (output.length < 32_768) output += chunk.toString();
+      });
+      child.on("error", () => finish([{ value: "best", label: "Auto" }]));
+      child.on("close", () => finish(parseStreamlinkQualityOutput(output)));
+    });
+    this.qualityCache.set(cacheKey, {
+      expiresAt: Date.now() + 5 * 60_000,
+      result,
+    });
+    return result;
   }
 
   getState(): NativePlayerState {
@@ -238,16 +296,21 @@ export class TextureNativePlayer {
     const generation = this.startGeneration;
     const availability = this.getAvailability();
     if (!availability.available) {
-      return { ok: false, reason: availability.reason ?? "Texture playback is unavailable." };
+      const reason = availability.reason ?? "Native playback is unavailable.";
+      this.updateState({ ...this.state, status: "error", error: reason, transition });
+      return { ok: false, reason };
     }
 
     const window = this.getMainWindow();
     if (!window || window.isDestroyed()) {
-      return { ok: false, reason: "The application window is not ready." };
+      const reason = "The application window is not ready.";
+      this.updateState({ ...this.state, status: "error", error: reason, transition });
+      return { ok: false, reason };
     }
 
     this.stopping = false;
     const startVolume = Math.min(100, Math.max(0, Math.round(this.getStoredVolume())));
+    if (startVolume > 0) this.lastAudibleVolume = startVolume;
     this.updateState({
       status: "starting",
       paused: false,
@@ -267,7 +330,7 @@ export class TextureNativePlayer {
       const gpuDevice = await this.getChromiumGpuDevice();
       this.chromiumGpuDevice = gpuDevice ?? null;
       if (this.stopping || generation !== this.startGeneration) {
-        return { ok: false, reason: "Texture playback was cancelled." };
+        return { ok: false, reason: "Native playback was cancelled." };
       }
       const nativePaths = resolveNativePaths();
       const require = createRequire(import.meta.url);
@@ -309,7 +372,7 @@ export class TextureNativePlayer {
       addon.command(["set", "volume", String(startVolume)]);
       const streamUrl = await streamUrlPromise;
       if (this.stopping || generation !== this.startGeneration || this.session !== session) {
-        return { ok: false, reason: "Texture playback was cancelled." };
+        return { ok: false, reason: "Native playback was cancelled." };
       }
       session.addon.command(["loadfile", streamUrl, "replace"]);
       this.currentChannel = channel;
@@ -318,7 +381,10 @@ export class TextureNativePlayer {
       const reason = error instanceof Error ? error.message : String(error);
       // A newer start owns the player now. Never let an older resolver's
       // cancellation tear down that newer session.
-      if (generation === this.startGeneration) this.destroy();
+      if (generation === this.startGeneration) {
+        this.destroy();
+        this.updateState({ ...this.state, status: "error", error: reason, transition });
+      }
       return { ok: false, reason };
     }
   }
@@ -346,7 +412,7 @@ export class TextureNativePlayer {
     try {
       const streamUrl = await this.resolveStreamUrlCached(channel, quality);
       if (this.stopping || generation !== this.startGeneration || this.session !== session) {
-        return { ok: false, reason: "Texture playback was cancelled." };
+        return { ok: false, reason: "Native playback was cancelled." };
       }
       session.addon.command(["loadfile", streamUrl, "replace"]);
       session.addon.command(["set", "pause", "no"]);
@@ -371,6 +437,25 @@ export class TextureNativePlayer {
     const url = this.resolveStreamUrl(channel, "best", false);
     this.storeResolvedUrl(key, url);
     url.catch(() => undefined);
+  }
+
+  /**
+   * Resolve the same authenticated, quality-specific media playlist used by
+   * mpv. The experimental HLS renderer consumes this through its locked-down
+   * localhost relay, so playback authentication remains in one place.
+   */
+  resolvePlaybackUrl(
+    channel: string,
+    quality: NativeQualityValue,
+  ): Promise<string> {
+    return this.resolveStreamUrlCached(channel, quality);
+  }
+
+  cancelPlaybackResolution(): void {
+    if (!this.resolverProcess) return;
+    this.resolverProcess.kill();
+    this.resolverProcess = null;
+    this.resolveCache.clear();
   }
 
   private resolveStreamUrlCached(
@@ -424,11 +509,21 @@ export class TextureNativePlayer {
         addon.command(["cycle", "pause"]);
         break;
       case "toggle-mute":
-        addon.command(["cycle", "mute"]);
+        this.applyMuted(!this.state.muted);
         break;
-      case "set-volume":
-        addon.command(["set", "volume", String(command.value)]);
+      case "set-muted":
+        this.applyMuted(command.muted);
         break;
+      case "set-volume": {
+        const volume = this.clampVolume(command.value);
+        if (volume > 0) this.lastAudibleVolume = volume;
+        const muted = volume === 0;
+        const muteChanged = muted !== this.state.muted;
+        addon.command(["set", "volume", String(volume)]);
+        if (muteChanged) addon.command(["set", "mute", muted ? "yes" : "no"]);
+        this.updateState({ volume, muted });
+        break;
+      }
       case "set-compressor":
         this.updateState({ compressorEnabled: command.enabled });
         addon.command(["af", "remove", "@glint_compressor"]);
@@ -462,10 +557,41 @@ export class TextureNativePlayer {
   // Deterministic mute for multistream audio focus (only the active tile plays
   // sound). Unlike control("toggle-mute") this sets an explicit state.
   setMuted(muted: boolean): void {
+    this.applyMuted(muted);
+  }
+
+  private applyMuted(muted: boolean): void {
     const addon = this.session?.addon;
-    if (!addon) return;
-    addon.command(["set", "mute", muted ? "yes" : "no"]);
-    this.updateState({ muted });
+    if (!addon) {
+      this.updateState({
+        muted,
+        volume: muted ? 0 : this.lastAudibleVolume,
+      });
+      return;
+    }
+    if (muted) {
+      if (!this.state.muted && this.state.volume > 0) {
+        this.lastAudibleVolume = this.state.volume;
+      }
+      addon.command(["set", "volume", "0"]);
+      addon.command(["set", "mute", "yes"]);
+      this.updateState({ muted: true, volume: 0 });
+      return;
+    }
+    const storedVolume = this.clampVolume(this.getStoredVolume());
+    const volume =
+      this.lastAudibleVolume > 0
+        ? this.lastAudibleVolume
+        : storedVolume > 0
+          ? storedVolume
+          : 100;
+    addon.command(["set", "mute", "no"]);
+    addon.command(["set", "volume", String(volume)]);
+    this.updateState({ muted: false, volume });
+  }
+
+  private clampVolume(volume: number): number {
+    return Math.min(100, Math.max(0, Math.round(volume)));
   }
 
   get target(): string {
@@ -481,8 +607,7 @@ export class TextureNativePlayer {
       if (stats) {
         stats["vw-fps"] = String(this.presentedFps);
         stats["vw-delivery-fps"] = String(this.measuredFps());
-        stats["vw-presentation"] =
-          this.getPresentationMode() === "video-frame" ? "Direct VideoFrame" : "ImageBitmap";
+        stats["vw-presentation"] = "Direct VideoFrame";
         const chromiumGpu = this.chromiumGpuDevice;
         if (chromiumGpu) {
           const name =
@@ -542,7 +667,10 @@ export class TextureNativePlayer {
     this.presentedFps = 0;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeTimer = null;
-    this.resolverProcess?.kill();
+    if (this.resolverProcess) {
+      this.resolverProcess.kill();
+      this.resolveCache.clear();
+    }
     this.resolverProcess = null;
     const session = this.session;
     this.session = null;
@@ -568,7 +696,7 @@ export class TextureNativePlayer {
     // pre-resolves outlive destroy() so their cache entry stays useful.
     trackAsPrimary: boolean,
   ): Promise<string> {
-    const streamlinkPath = this.getStreamlinkPath();
+    const streamlinkPath = this.getAvailability().streamlinkPath;
     if (!streamlinkPath) throw new Error("Streamlink is unavailable.");
     const playbackToken = this.getTwitchPlaybackToken();
     const { platform, login } = parseChannelKey(channel);
@@ -766,7 +894,6 @@ export class TextureNativePlayer {
         {
           target: this.renderTarget,
           sequence: transferSequence,
-          presentationMode: this.getPresentationMode(),
         },
       )
       .then(() => this.recordTransferSuccess(session))
@@ -873,7 +1000,7 @@ export class TextureNativePlayer {
       this.updateState({ status: "stopped", transition: undefined });
     } else if (event.type === "error") {
       this.switchPending = false;
-      this.updateState({ status: "error", error: event.message ?? "Texture playback failed.", transition: undefined });
+      this.updateState({ status: "error", error: event.message ?? "Native playback failed.", transition: undefined });
     } else if (event.type === "renderer") {
       console.info(`[texture-player] ${event.message ?? "Selected the texture renderer."}`);
     } else if (event.type === "diagnostic") {

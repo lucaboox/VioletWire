@@ -29,6 +29,10 @@
   background: #0e0e10;
 }
 
+.multi-chat:has(.pinned-chat-banner) {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
 .multi-chat:has(.vw-emote-picker) {
   z-index: 90;
 }

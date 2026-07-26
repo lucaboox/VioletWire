@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import {
   twitchClientIdSchema,
+  twitchChatColorInputSchema,
   twitchStreamSchema,
   twitchUserSchema,
   type BrowseCategory,
@@ -17,7 +18,10 @@ import {
   type TwitchAccount,
   type TwitchAuthState,
   type TwitchClipPreview,
+  type TwitchChatColorInput,
+  type TwitchChatColorState,
   type TwitchDeviceAuthorization,
+  type TwitchPinnedChatMessage,
   type TwitchSearchResults,
 } from "../shared/twitch";
 import type { TwitchChatAssets } from "../shared/chat";
@@ -33,6 +37,18 @@ const scopes = [
   "user:read:chat",
   "user:write:chat",
   "user:read:emotes",
+  "user:manage:chat_color",
+  // Foundation for the next moderation-tools batch. These cover detecting
+  // moderated channels, bans/timeouts, message deletion, announcements,
+  // chat-mode changes, warnings, and Shield Mode without unrelated
+  // broadcaster, advertising, or analytics access.
+  "user:read:moderated_channels",
+  "moderator:manage:banned_users",
+  "moderator:manage:chat_messages",
+  "moderator:manage:announcements",
+  "moderator:manage:chat_settings",
+  "moderator:manage:warnings",
+  "moderator:manage:shield_mode",
 ] as const;
 
 const tokenSchema = z.object({
@@ -63,6 +79,51 @@ const validateResponseSchema = z.object({
   user_id: z.string(),
   scopes: z.array(z.string()),
   expires_in: z.number(),
+});
+
+const chatColorResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      user_id: z.string(),
+      user_login: z.string(),
+      user_name: z.string(),
+      color: z.string(),
+    }),
+  ),
+});
+
+const pinnedChatMessageResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      message_id: z.string(),
+      broadcaster_id: z.string(),
+      sender_user_id: z.string(),
+      sender_user_login: z.string(),
+      sender_user_name: z.string(),
+      pinned_by_user_id: z.string(),
+      pinned_by_user_login: z.string(),
+      pinned_by_user_name: z.string(),
+      message: z.object({
+        text: z.string(),
+        fragments: z.array(
+          z.object({
+            type: z.enum(["text", "emote", "cheermote", "mention"]),
+            text: z.string(),
+            emote: z
+              .object({
+                id: z.string(),
+                format: z.array(z.string()).default([]),
+              })
+              .nullable()
+              .optional(),
+          }),
+        ),
+      }),
+      starts_at: z.string(),
+      ends_at: z.string().nullable().optional(),
+      updated_at: z.string(),
+    }),
+  ),
 });
 
 const followedResponseSchema = z.object({
@@ -725,6 +786,76 @@ export class TwitchService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  async getPinnedChatMessage(
+    broadcasterId: string,
+  ): Promise<TwitchPinnedChatMessage | null> {
+    const account = await this.requireAccount();
+    try {
+      const response = await this.helix(
+        `/chat/pins?broadcaster_id=${encodeURIComponent(broadcasterId)}&moderator_id=${encodeURIComponent(account.id)}`,
+        pinnedChatMessageResponseSchema,
+      );
+      const pin = response.data[0];
+      if (!pin) return null;
+      return {
+        id: pin.message_id,
+        senderId: pin.sender_user_id,
+        senderLogin: pin.sender_user_login,
+        senderName: pin.sender_user_name,
+        pinnedByName: pin.pinned_by_user_name,
+        text: pin.message.text,
+        fragments: pin.message.fragments.map((fragment) => ({
+          type: fragment.type,
+          text: fragment.text,
+          ...(fragment.emote
+            ? {
+                emote: {
+                  id: fragment.emote.id,
+                  formats: fragment.emote.format,
+                },
+              }
+            : {}),
+        })),
+        startsAt: pin.starts_at,
+        ...(pin.ends_at ? { endsAt: pin.ends_at } : {}),
+      };
+    } catch (error) {
+      // Twitch exposes pins to every viewer in its own website but currently
+      // restricts this public Helix endpoint to the broadcaster/moderators.
+      // A normal viewer's 403 means "unavailable", not a broken chat.
+      if (error instanceof TwitchRequestError && error.status === 403) return null;
+      throw error;
+    }
+  }
+
+  async getChatColor(): Promise<TwitchChatColorState> {
+    const account = await this.requireAccount();
+    const result = await this.helix(
+      `/chat/color?user_id=${encodeURIComponent(account.id)}`,
+      chatColorResponseSchema,
+    );
+    return {
+      color: result.data[0]?.color ?? "",
+      canUpdate: this.token?.scopes.includes("user:manage:chat_color") === true,
+    };
+  }
+
+  async updateChatColor(rawColor: TwitchChatColorInput): Promise<TwitchChatColorState> {
+    const account = await this.requireAccount();
+    if (!this.token?.scopes.includes("user:manage:chat_color")) {
+      throw new Error(
+        "Sign in with Twitch again to grant VioletWire permission to change your chat color.",
+      );
+    }
+    const color = twitchChatColorInputSchema.parse(rawColor);
+    await this.helix(
+      `/chat/color?user_id=${encodeURIComponent(account.id)}&color=${encodeURIComponent(color)}`,
+      z.object({}),
+      { method: "PUT" },
+    );
+    return this.getChatColor();
   }
 
   async createClip(channel: string): Promise<ClipCreationResult> {

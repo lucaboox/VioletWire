@@ -51,8 +51,8 @@ import {
   formatQualityLabel,
   type ChatPresentation,
   type MultiStreamTileState,
+  type NativePlaybackBackend,
   type NativePlayerAvailability,
-  type NativeRenderBackend,
   type NativePlayerState,
   type NativeQualityValue,
   type PlayerMode,
@@ -67,6 +67,7 @@ import type {
   TwitchAuthState,
   TwitchDeviceAuthorization,
   PlaybackSessionState,
+  TwitchPinnedChatMessage,
 } from "../../shared/twitch";
 import type { EmoteSetResult } from "../../shared/emotes";
 import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
@@ -109,10 +110,13 @@ import {
   type KickUserAccount,
 } from "../../shared/platform";
 import { NativeControls } from "./NativeControls";
+import { HlsNativeVideo } from "./HlsNativeVideo";
+import { PinnedChatMessage } from "./PinnedChatMessage";
 import { ProviderLogo } from "./ProviderLogo";
 import {
   ChatToggleSetting,
   MentionSoundControls,
+  TwitchChatColorControls,
 } from "./ChatSettingsControls";
 import { withoutRedundantReplyMention } from "./chat-display";
 import { playMentionSound } from "./mention-sound";
@@ -558,6 +562,12 @@ export function App() {
   >(new Map());
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [pinnedChatResult, setPinnedChatResult] = useState<{
+    broadcasterId: string;
+    message: TwitchPinnedChatMessage | null;
+  } | null>(null);
+  const [dismissedPinnedMessageId, setDismissedPinnedMessageId] =
+    useState<string | null>(null);
   const [chatTimestamps, setChatTimestamps] = useState(
     () => window.localStorage.getItem("glint.chat.timestamps") !== "false",
   );
@@ -596,16 +606,13 @@ export function App() {
   const [preferredMode, setPreferredMode] = useState<PlayerMode>(() =>
     window.localStorage.getItem("glint.playback.default") === "official" ? "official" : "native",
   );
-  const [experimentalTexturePlayer, setExperimentalTexturePlayer] = useState(true);
-  const [texturePresentationMode, setTexturePresentationMode] =
-    useState<AppPreferences["texturePresentationMode"]>("bitmap");
+  const [nativePlaybackBackend, setNativePlaybackBackend] =
+    useState<NativePlaybackBackend>("hls");
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = useState("");
   const changelogAutoShown = useRef(false);
   const legacyPreferences = useRef({
     preferredPlayerMode: preferredMode,
-    experimentalTexturePlayer: true,
-    texturePresentationMode: "bitmap" as const,
     chatTimestamps,
     chatHistoryLimit,
     chatFontSize,
@@ -620,8 +627,6 @@ export function App() {
       window.localStorage.getItem("glint.playback.audioCompression") === "true",
   });
   const [activeMode, setActiveMode] = useState<PlayerMode | null>(null);
-  const [activeNativeBackend, setActiveNativeBackend] =
-    useState<NativeRenderBackend | null>(null);
   // Twitch-style floating mini player: the texture session keeps playing in a
   // small draggable corner canvas while the user browses other sections.
   const [miniPlayerActive, setMiniPlayerActive] = useState(false);
@@ -641,6 +646,7 @@ export function App() {
     compressorEnabled: false,
     behindLive: false,
     quality: "best",
+    backend: "texture",
   });
   const [multiStreamActive, setMultiStreamActive] = useState(false);
   const [multiTheater, setMultiTheater] = useState(false);
@@ -686,6 +692,56 @@ export function App() {
   const chatBroadcasterId = multiStreamActive
     ? multiChatBroadcasterId
     : (streamMetadata?.broadcasterId ?? null);
+  const currentPinnedChatMessage =
+    pinnedChatResult?.broadcasterId === chatBroadcasterId
+      ? pinnedChatResult.message
+      : null;
+  const visiblePinnedChatMessage =
+    currentPinnedChatMessage?.id === dismissedPinnedMessageId
+      ? null
+      : currentPinnedChatMessage;
+
+  useEffect(() => {
+    if (
+      chatIsKick ||
+      !chatBroadcasterId ||
+      authState.status !== "signed-in"
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const pin =
+          await window.desktop.twitch.getPinnedChatMessage(chatBroadcasterId);
+        if (disposed) return;
+        const expired =
+          pin?.endsAt !== undefined &&
+          Date.parse(pin.endsAt) <= Date.now();
+        setPinnedChatResult({
+          broadcasterId: chatBroadcasterId,
+          message: expired ? null : pin,
+        });
+      } catch {
+        // Twitch currently restricts its pin endpoint to broadcasters and
+        // moderators. A normal viewer simply gets no banner.
+        if (!disposed) {
+          setPinnedChatResult({
+            broadcasterId: chatBroadcasterId,
+            message: null,
+          });
+        }
+      }
+    };
+
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [authState.status, chatBroadcasterId, chatIsKick]);
   const multiDisplayMessages = useMemo(
     () =>
       effectiveMultiChatChannel ? (multiChatBuffers.get(effectiveMultiChatChannel) ?? []) : [],
@@ -765,9 +821,6 @@ export function App() {
         !target.closest(".native-detached-emote-picker")
       ) {
         setEmotePickerOpen(false);
-        if (activeMode === "native" && activeNativeBackend === "window") {
-          window.desktop.player.setNativeEmotePicker(false);
-        }
       }
       if (
         chatSettingsOpen &&
@@ -779,7 +832,7 @@ export function App() {
     };
     document.addEventListener("pointerdown", closeOpenChatMenus, true);
     return () => document.removeEventListener("pointerdown", closeOpenChatMenus, true);
-  }, [activeMode, activeNativeBackend, chatSettingsOpen, emotePickerOpen]);
+  }, [chatSettingsOpen, emotePickerOpen]);
 
   const revealNativeControls = useCallback(() => {
     if (!activeChannel || activeMode !== "native" || selectedChatUser) return;
@@ -832,10 +885,6 @@ export function App() {
   useEffect(() => {
     document.title = `${locationLabel} - VioletWire`;
   }, [locationLabel]);
-
-  useEffect(() => {
-    window.desktop.player.setModalOpen(settingsOpen || topSearchOpen || changelogOpen);
-  }, [changelogOpen, settingsOpen, topSearchOpen]);
 
   useEffect(() => {
     if (!settingsOpen && !changelogOpen) return;
@@ -939,41 +988,18 @@ export function App() {
       });
     };
 
-    const syncChatBounds = () => {
-      const bounds = chatHost.current?.getBoundingClientRect();
-      if (!bounds || bounds.width < 1 || bounds.height < 1) return;
-      window.desktop.player.setChatBounds({
-        x: Math.round(bounds.x),
-        y: Math.round(bounds.y),
-        width: Math.round(bounds.width),
-        height: Math.round(bounds.height),
-      });
-    };
-
-    window.desktop.player.setChatPresentation(chatPresentation);
-    window.desktop.player.setChatVisible(chatVisible);
-    const observer = new ResizeObserver(() => {
-      syncPlayerBounds();
-      if (chatVisible) syncChatBounds();
-    });
+    const observer = new ResizeObserver(syncPlayerBounds);
     observer.observe(playerHost.current);
-    if (chatHost.current) observer.observe(chatHost.current);
     window.addEventListener("resize", syncPlayerBounds);
-    window.addEventListener("resize", syncChatBounds);
     syncPlayerBounds();
-    if (chatVisible) syncChatBounds();
 
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", syncPlayerBounds);
-      window.removeEventListener("resize", syncChatBounds);
     };
   }, [
     activeChannel,
     activeMode,
-    chatOnLeft,
-    chatPresentation,
-    chatVisible,
     fullscreen,
     // The player page unmounts while the mini player floats; rebinding on
     // restore reattaches the observers to the freshly mounted hosts.
@@ -984,11 +1010,8 @@ export function App() {
   useEffect(() => {
     void refreshNativeAvailability();
     const removeStateListener = window.desktop.player.onNativeState(setNativeState);
-    const removeBackendListener =
-      window.desktop.player.onNativeBackendChanged(setActiveNativeBackend);
     return () => {
       removeStateListener();
-      removeBackendListener();
     };
   }, []);
 
@@ -1140,8 +1163,7 @@ export function App() {
     const applyPreferences = (preferences: AppPreferences) => {
       if (disposed) return;
       setPreferredMode(preferences.preferredPlayerMode);
-      setExperimentalTexturePlayer(preferences.experimentalTexturePlayer);
-      setTexturePresentationMode(preferences.texturePresentationMode);
+      setNativePlaybackBackend(preferences.nativePlaybackBackend);
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
       setChatFontSize(preferences.chatFontSize);
@@ -1188,8 +1210,7 @@ export function App() {
       void window.desktop.preferences
         .update({
           preferredPlayerMode: preferredMode,
-          experimentalTexturePlayer,
-          texturePresentationMode,
+          nativePlaybackBackend,
           chatTimestamps,
           chatHistoryLimit,
           chatFontSize,
@@ -1223,9 +1244,8 @@ export function App() {
     mentionSoundVolume,
     mentionSoundId,
     oledMode,
+    nativePlaybackBackend,
     preferredMode,
-    experimentalTexturePlayer,
-    texturePresentationMode,
     preferencesReady,
   ]);
 
@@ -1248,23 +1268,6 @@ export function App() {
 
   useEffect(() => window.desktop.chat.onState(setChatConnectionState), []);
   useEffect(() => window.desktop.chat.onRestrictions(setChatRestrictions), []);
-
-  useEffect(() => {
-    const removePickerListener = window.desktop.player.onNativeEmotePicker(
-      setEmotePickerOpen,
-    );
-    const removeSelectionListener = window.desktop.player.onNativeEmoteSelection((name) => {
-      setChatInput((current) =>
-        `${current}${current && !current.endsWith(" ") ? " " : ""}${name} `,
-      );
-      setEmotePickerOpen(false);
-      window.requestAnimationFrame(() => chatInputHost.current?.focus());
-    });
-    return () => {
-      removePickerListener();
-      removeSelectionListener();
-    };
-  }, []);
 
   // Load a channel's emotes (global + channel sets) into the cache once and
   // return the bundle. Keyed by channel + broadcaster id so it refreshes when
@@ -1455,7 +1458,7 @@ export function App() {
   // size: the full-page buffer has a different aspect ratio, which baked
   // letterbox bars into the frames and left the box partly unfilled.
   useEffect(() => {
-    if (!miniPlayerActive || activeNativeBackend !== "texture") return;
+    if (!miniPlayerActive) return;
     const host = miniPlayerRef.current;
     if (!host) return;
     const syncMiniBounds = () => {
@@ -1473,7 +1476,7 @@ export function App() {
     observer.observe(host);
     syncMiniBounds();
     return () => observer.disconnect();
-  }, [activeNativeBackend, miniPlayerActive]);
+  }, [miniPlayerActive]);
 
   // Hover-intent stream pre-resolution: after 150ms on a channel card, ask
   // the main process to resolve its stream URL so a click skips the
@@ -1510,14 +1513,7 @@ export function App() {
   const openChatUserCard = useCallback((message: ChatMessage, anchor: DOMRect) => {
     setSelectedChatUser(message);
     setSelectedChatUserAnchor(anchor);
-    // Native controls are a separate transparent BrowserWindow. A DOM
-    // z-index cannot rise above it, so temporarily lower that overlay while
-    // this card (which is rendered in the main window) is open.
-    if (activeMode === "native" && activeNativeBackend === "window") {
-      window.desktop.player.setNativeControlsVisible(false);
-      setNativeControlsVisible(false);
-    }
-  }, [activeMode, activeNativeBackend]);
+  }, []);
 
   function toggleOledMode(): void {
     setOledMode((current) => !current);
@@ -2107,33 +2103,6 @@ export function App() {
     return streamMetadata?.isFollowed === true;
   }, [activeChannel, kickFollowedChannels, streamMetadata?.isFollowed]);
 
-  useEffect(() => {
-    if (!activeChannel || activeMode !== "native") {
-      window.desktop.player.setNativeControlsVisible(false);
-      return;
-    }
-    window.desktop.player.setNativeControlsContext({
-      channel: activeChannel,
-      fullscreen,
-      theaterMode,
-      chatVisible,
-      chatPresentation,
-      viewerLogin,
-      isFollowed: activeChannelIsFollowed,
-    });
-    window.desktop.player.setNativeControlsVisible(nativeControlsVisible);
-  }, [
-    activeChannel,
-    activeMode,
-    chatPresentation,
-    chatVisible,
-    fullscreen,
-    activeChannelIsFollowed,
-    nativeControlsVisible,
-    theaterMode,
-    viewerLogin,
-  ]);
-
   useEffect(
     () =>
       window.desktop.player.onNativeControlAction((action) => {
@@ -2182,6 +2151,26 @@ export function App() {
           ? "Native Experimental will be used when you open the next stream."
           : "Standard Twitch playback will be used when you open the next stream.",
       );
+    }
+  }
+
+  async function chooseNativePlaybackBackend(backend: NativePlaybackBackend) {
+    setNativePlaybackBackend(backend);
+    try {
+      await window.desktop.preferences.update({ nativePlaybackBackend: backend });
+      if (
+        activeChannel &&
+        activeMode === "native"
+      ) {
+        await window.desktop.player.open(activeChannel, "native", nativeState.quality);
+      }
+      setNotice(
+        backend === "hls"
+          ? "Efficient HLS is enabled for Native playback."
+          : "The libmpv texture renderer is enabled for Native playback.",
+      );
+    } catch {
+      setNotice("VioletWire could not switch the Native playback renderer.");
     }
   }
 
@@ -2413,14 +2402,11 @@ export function App() {
   function setChatLayout(layout: ChatLayout) {
     if (layout === "hidden") {
       setChatVisible(false);
-      window.desktop.player.setChatVisible(false);
       return;
     }
 
     setChatPresentation(layout);
     setChatVisible(true);
-    window.desktop.player.setChatPresentation(layout);
-    window.desktop.player.setChatVisible(true);
   }
 
   function selectSearchPlatform(option: "twitch" | "kick" | "both") {
@@ -2561,12 +2547,6 @@ export function App() {
     const generation = ++watchChannelGeneration.current;
     const returnSection = activeChannel ? playerReturnSection : activeSection;
     const optimisticMode = preferredMode;
-    const optimisticBackend =
-      optimisticMode === "native"
-        ? experimentalTexturePlayer
-          ? "texture"
-          : "window"
-        : null;
     setSettingsOpen(false);
     setError(null);
     setStreamMetadata(null);
@@ -2580,7 +2560,6 @@ export function App() {
     setActiveSection("home");
     setActiveChannel(channel);
     setActiveMode(optimisticMode);
-    setActiveNativeBackend(optimisticBackend);
     setNativeControlsVisible(true);
     setChatVisible(true);
     setChatPresentation("side");
@@ -2595,13 +2574,6 @@ export function App() {
       const savedPreferences = await window.desktop.preferences.getOrMigrate();
       if (generation !== watchChannelGeneration.current) return;
       setActiveMode(savedPreferences.preferredPlayerMode);
-      setActiveNativeBackend(
-        savedPreferences.preferredPlayerMode === "native"
-          ? savedPreferences.experimentalTexturePlayer
-            ? "texture"
-            : "window"
-          : null,
-      );
       const result = await window.desktop.player.open(
         channel,
         savedPreferences.preferredPlayerMode,
@@ -2609,7 +2581,6 @@ export function App() {
       if (generation !== watchChannelGeneration.current) return;
       setActiveChannel(result.channel);
       setActiveMode(result.mode);
-      setActiveNativeBackend(result.nativeBackend ?? null);
       setNativeControlsVisible(true);
       setChatVisible(true);
       setChatPresentation("side");
@@ -2627,7 +2598,6 @@ export function App() {
       setActiveChannel(null);
       setActiveChannelIdentity(undefined);
       setActiveMode(null);
-      setActiveNativeBackend(null);
       setActiveSection(returnSection);
       setError(message || "Unable to open the Twitch player.");
     }
@@ -2635,7 +2605,6 @@ export function App() {
 
   async function closePlayer(returnToSection = true) {
     watchChannelGeneration.current += 1;
-    if (activeMode === "native") window.desktop.player.setNativeEmotePicker(false);
     const exitFullscreen = fullscreen;
     // Unmount the player page before the IPC teardown: the main process
     // pushes intermediate "idle" states while retiring the session, and
@@ -2644,7 +2613,6 @@ export function App() {
     setTheaterMode(false);
     setActiveChannel(null);
     setActiveMode(null);
-    setActiveNativeBackend(null);
     setReplyingTo(null);
     setEmotePickerOpen(false);
     setMiniPlayerActive(false);
@@ -2668,7 +2636,6 @@ export function App() {
     setMiniPlayerPosition(null);
     setActiveChannel(null);
     setActiveMode(null);
-    setActiveNativeBackend(null);
     setFullscreen(false);
     setTheaterMode(false);
     setEmotePickerOpen(false);
@@ -2736,11 +2703,9 @@ export function App() {
     // Home/Browse leave multistream rather than sitting behind it.
     leaveMultiStream();
     if (activeChannel && !miniPlayerActive) {
-      // The embedded texture player keeps running as a floating mini player
-      // while browsing, exactly because its video is an in-page canvas. The
-      // window-hosted and official players cannot follow the page, so they
-      // still close on navigation.
-      if (activeMode === "native" && activeNativeBackend === "texture") {
+      // Native video is an in-page canvas, so it can keep running in the
+      // floating mini player while the user browses.
+      if (activeMode === "native") {
         setMiniPlayerActive(true);
         if (fullscreen) await window.desktop.player.setFullscreen(false);
         setFullscreen(false);
@@ -2766,7 +2731,6 @@ export function App() {
     try {
       const result = await window.desktop.player.open(activeChannel, mode);
       setActiveMode(result.mode);
-      setActiveNativeBackend(result.nativeBackend ?? null);
       setNativeControlsVisible(true);
       if (result.fallbackReason) {
         setNotice(
@@ -2775,7 +2739,7 @@ export function App() {
             : `Native player unavailable: ${result.fallbackReason} Using the official player.`,
         );
       } else {
-        setNotice(mode === "native" ? "Experimental native player started." : "Official player restored.");
+        setNotice(mode === "native" ? "Native player started." : "Official player restored.");
       }
     } catch {
       setNotice("Unable to switch player modes.");
@@ -2786,7 +2750,6 @@ export function App() {
     if (!activeChannel) return;
     const result = await window.desktop.player.open(activeChannel, "native", nativeState.quality);
     setActiveMode(result.mode);
-    setActiveNativeBackend(result.nativeBackend ?? null);
     setNativeControlsVisible(true);
     if (result.fallbackReason) setNotice(result.fallbackReason);
   }
@@ -3655,6 +3618,14 @@ export function App() {
                   ))
                 )}
               </div>
+              {visiblePinnedChatMessage && (
+                <PinnedChatMessage
+                  message={visiblePinnedChatMessage}
+                  onDismiss={() =>
+                    setDismissedPinnedMessageId(visiblePinnedChatMessage.id)
+                  }
+                />
+              )}
               <div
                 aria-live="polite"
                 className={`chat-messages${multiChatPaused ? " scroll-paused" : ""}`}
@@ -3788,6 +3759,7 @@ export function App() {
                     {chatSettingsOpen && (
                       <div className="chat-overlay-settings multi-chat-settings-menu">
                         <strong>Chat settings</strong>
+                        <TwitchChatColorControls />
                         <ChatToggleSetting
                           checked={chatTimestamps}
                           label="Show timestamps"
@@ -4149,15 +4121,18 @@ export function App() {
                       aria-label={`Official Twitch player for ${activeChannel}`}
                     />
                   )}
-                  {activeMode === "native" && activeNativeBackend === "texture" && (
+                  {activeMode === "native" && (
                     <>
-                      <canvas
-                        className="native-texture-canvas"
-                        data-native-texture-canvas="main"
-                        aria-hidden="true"
-                      />
+                      {nativeState.backend === "hls" ? (
+                        <HlsNativeVideo state={nativeState} />
+                      ) : (
+                        <canvas
+                          className="native-texture-canvas"
+                          data-native-texture-canvas="main"
+                          aria-hidden="true"
+                        />
+                      )}
                       <NativeControls
-                        inline
                         key={`inline-native-controls:${activeChannel}`}
                         inlineContext={{
                           channel: activeChannel,
@@ -4265,6 +4240,7 @@ export function App() {
                       {chatSettingsOpen && (
                         <div className="chat-overlay-settings">
                           <strong>Chat settings</strong>
+                          <TwitchChatColorControls />
                           <label>
                             <span>{chatOpacity}%</span>
                             <input
@@ -4375,6 +4351,7 @@ export function App() {
                       {chatSettingsOpen && (
                         <div className="chat-overlay-settings chat-header-settings">
                           <strong>Chat settings</strong>
+                          <TwitchChatColorControls />
                           <ChatToggleSetting
                             checked={chatTimestamps}
                             label="Show timestamps"
@@ -4445,6 +4422,14 @@ export function App() {
                       )}
                     </div>
                   </div>
+                  {visiblePinnedChatMessage && (
+                    <PinnedChatMessage
+                      message={visiblePinnedChatMessage}
+                      onDismiss={() =>
+                        setDismissedPinnedMessageId(visiblePinnedChatMessage.id)
+                      }
+                    />
+                  )}
                   <div className="chat-host native-chat" ref={chatHost}>
                     <div
                       className={`chat-messages${chatAutoScroll ? "" : " scroll-paused"}`}
@@ -4509,7 +4494,6 @@ export function App() {
                         onClose={() => {
                           setSelectedChatUser(null);
                           setSelectedChatUserAnchor(undefined);
-                          window.desktop.player.setNativeControlsVisible(true);
                           setNativeControlsVisible(true);
                         }}
                         renderText={renderCardText}
@@ -4603,25 +4587,14 @@ export function App() {
                               aria-label="Choose Twitch and 7TV emotes"
                               className={emotePickerOpen ? "emote-picker-button active" : "emote-picker-button"}
                               onClick={() => {
-                                const next = !emotePickerOpen;
-                                setEmotePickerOpen(next);
-                                if (
-                                  activeMode === "native" &&
-                                  activeNativeBackend === "window"
-                                ) {
-                                  window.desktop.player.setNativeEmotePicker(next);
-                                }
+                                setEmotePickerOpen((current) => !current);
                               }}
                               title="Twitch and 7TV emotes"
                               type="button"
                             >
                               <Smile size={17} />
                             </button>
-                            {emotePickerOpen &&
-                              !(
-                                activeMode === "native" &&
-                                activeNativeBackend === "window"
-                              ) && (
+                            {emotePickerOpen && (
                               <>
                                 <EmotePicker
                                   channelAvatarUrl={streamMetadata?.profileImageUrl}
@@ -5199,56 +5172,6 @@ export function App() {
                 </button>
               </div>
             </div>
-            <div className="settings-card">
-              <div>
-                <strong>Embedded Native texture prototype</strong>
-                <span>
-                  Render libmpv inside VioletWire so React menus can cover the video normally.
-                  This experimental Windows path automatically falls back to the existing Native
-                  window if it cannot start.
-                  {nativeAvailability?.textureAvailable === false &&
-                    ` ${nativeAvailability.textureReason ?? ""}`}
-                </span>
-              </div>
-              <button
-                aria-pressed={experimentalTexturePlayer}
-                className={
-                  experimentalTexturePlayer ? "settings-switch active" : "settings-switch"
-                }
-                onClick={() => setExperimentalTexturePlayer((current) => !current)}
-                title="Toggle the experimental embedded Native renderer"
-                type="button"
-              >
-                <span />
-              </button>
-            </div>
-            <div className="settings-card">
-              <div>
-                <strong>Direct VideoFrame presentation</strong>
-                <span>
-                  Experimental alternative to ImageBitmap presentation for systems where embedded
-                  Native playback is limited to roughly 30 FPS. All Native controls and features
-                  remain available. Restart VioletWire after changing this option.
-                </span>
-              </div>
-              <button
-                aria-pressed={texturePresentationMode === "video-frame"}
-                className={
-                  texturePresentationMode === "video-frame"
-                    ? "settings-switch active"
-                    : "settings-switch"
-                }
-                onClick={() =>
-                  setTexturePresentationMode((current) =>
-                    current === "video-frame" ? "bitmap" : "video-frame",
-                  )
-                }
-                title="Toggle direct VideoFrame presentation"
-                type="button"
-              >
-                <span />
-              </button>
-            </div>
           </section>
         ) : activeSection === "search" ? (
           <section className="search-page">
@@ -5723,54 +5646,32 @@ export function App() {
                   </div>
                   <div className="settings-card">
                     <div>
-                      <strong>Embedded Native texture prototype</strong>
+                      <strong>Native video renderer</strong>
                       <span>
-                        Draw libmpv inside the app compositor instead of a separate Windows
-                        surface. Applies the next time Native playback starts and falls back
-                        automatically.
-                        {nativeAvailability?.textureAvailable === false &&
-                          ` ${nativeAvailability.textureReason ?? ""}`}
+                        Efficient HLS lets Chromium decode and present Twitch and Kick video
+                        directly. It keeps VioletWire&apos;s Streamlink quality/auth resolution;
+                        Twitch stitched-ad filtering remains best-effort. The libmpv texture
+                        renderer remains available as the compatibility fallback.
                       </span>
                     </div>
-                    <button
-                      aria-pressed={experimentalTexturePlayer}
-                      className={
-                        experimentalTexturePlayer
-                          ? "settings-switch active"
-                          : "settings-switch"
-                      }
-                      onClick={() => setExperimentalTexturePlayer((current) => !current)}
-                      type="button"
-                    >
-                      <span />
-                    </button>
-                  </div>
-                  <div className="settings-card">
-                    <div>
-                      <strong>Direct VideoFrame presentation</strong>
-                      <span>
-                        Experimental alternative to ImageBitmap presentation for systems where
-                        embedded Native playback is limited to roughly 30 FPS. All Native controls
-                        and features remain available. Restart VioletWire after changing this
-                        option.
-                      </span>
+                    <div className="mode-switch">
+                      <button
+                        aria-pressed={nativePlaybackBackend === "hls"}
+                        className={nativePlaybackBackend === "hls" ? "active experimental" : "experimental"}
+                        onClick={() => void chooseNativePlaybackBackend("hls")}
+                        type="button"
+                      >
+                        Efficient HLS
+                      </button>
+                      <button
+                        aria-pressed={nativePlaybackBackend === "texture"}
+                        className={nativePlaybackBackend === "texture" ? "active" : ""}
+                        onClick={() => void chooseNativePlaybackBackend("texture")}
+                        type="button"
+                      >
+                        libmpv texture
+                      </button>
                     </div>
-                    <button
-                      aria-pressed={texturePresentationMode === "video-frame"}
-                      className={
-                        texturePresentationMode === "video-frame"
-                          ? "settings-switch active"
-                          : "settings-switch"
-                      }
-                      onClick={() =>
-                        setTexturePresentationMode((current) =>
-                          current === "video-frame" ? "bitmap" : "video-frame",
-                        )
-                      }
-                      type="button"
-                    >
-                      <span />
-                    </button>
                   </div>
                   <div className="settings-card">
                     <div>
@@ -5961,7 +5862,7 @@ export function App() {
             </section>
           </div>
         )}
-        {activeChannel && miniPlayerActive && activeNativeBackend === "texture" && (
+        {activeChannel && miniPlayerActive && (
           <div
             aria-label={`Mini player: ${streamMetadata?.displayName ?? activeChannel}`}
             className="mini-player"
@@ -6017,7 +5918,14 @@ export function App() {
               if (offset && !offset.moved) restoreMiniPlayer();
             }}
           >
-            <canvas className="native-texture-canvas mini-player-canvas" data-native-texture-canvas="main" />
+            {nativeState.backend === "hls" ? (
+              <HlsNativeVideo state={nativeState} />
+            ) : (
+              <canvas
+                className="native-texture-canvas mini-player-canvas"
+                data-native-texture-canvas="main"
+              />
+            )}
             <button
               aria-label="Close the stream"
               className="mini-player-close"

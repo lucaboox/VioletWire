@@ -32,21 +32,31 @@ Copyright (c) 2016-2026 Streamlink Team
 VioletWire redistributes Streamlink's official unmodified Windows portable
 runtime and launches it as a separate executable. The complete Streamlink
 license, Python license, and dependency notices remain inside that runtime.
-VioletWire omits Streamlink's optional FFmpeg muxer because mpv handles Twitch
-HLS playback directly.
+VioletWire omits Streamlink's optional FFmpeg muxer because its Chromium and
+libmpv playback backends handle HLS directly.
 
 The authoritative Streamlink license is:
 <https://github.com/streamlink/streamlink/blob/master/LICENSE>
+
+## hls.js
+
+Project: <https://github.com/video-dev/hls.js>
+
+License: Apache License 2.0
+
+VioletWire uses hls.js to play Streamlink-resolved HLS streams through
+Chromium's Media Source Extensions pipeline. The bundled package retains its
+license and copyright notice.
 
 ## mpv
 
 Project: <https://github.com/mpv-player/mpv>
 
-VioletWire redistributes an unmodified pinned mpv Windows build and launches it
-as a separate executable. mpv can be built under GPLv2-or-later or, with the
-relevant GPL components disabled, LGPLv2.1-or-later. Linked libraries such as
-FFmpeg also affect the resulting binary's license. The bundled runtime includes
-mpv's copyright information and complete GPL and LGPL license texts.
+VioletWire redistributes an unmodified pinned libmpv Windows build and loads it
+through its public client/render API. mpv can be built under GPLv2-or-later or,
+with the relevant GPL components disabled, LGPLv2.1-or-later. Linked libraries
+such as FFmpeg also affect the resulting binary's license. The bundled runtime
+includes mpv's copyright information and complete GPL and LGPL license texts.
 
 Authoritative licensing details:
 <https://github.com/mpv-player/mpv/blob/master/Copyright>

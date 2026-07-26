@@ -20,10 +20,7 @@ export default defineConfig({
     build: {
       outDir: path.join(projectRoot, "dist", "renderer").replaceAll("\\", "/"),
       rollupOptions: {
-        input: {
-          main: path.join(projectRoot, "src/renderer/index.html"),
-          controls: path.join(projectRoot, "src/renderer/controls.html"),
-        },
+        input: path.join(projectRoot, "src/renderer/index.html"),
       },
     },
   },
