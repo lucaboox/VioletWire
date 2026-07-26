@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.1] - 2026-07-26
+
 ### Additions
 
 - Native playback now includes an Efficient HLS backend that sends
