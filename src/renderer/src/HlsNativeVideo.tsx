@@ -114,6 +114,11 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     let measuredFps = 0;
     let hls: Hls | null = null;
     let displayedLatency = 0;
+    // Keep the user's intent separate from HTMLMediaElement.paused. Source
+    // attachment, manifest reparses, and hls.js recovery can all transiently
+    // change the media element state; none of them should undo an explicit
+    // pause.
+    let playbackRequested = !stateRef.current.paused;
 
     const report = (
       status: "playing" | "stopped" | "error",
@@ -201,11 +206,14 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       if (commandTarget !== target) return;
       switch (command.command) {
         case "toggle-pause":
-          if (video.paused) {
+          if (!playbackRequested) {
+            playbackRequested = true;
             seekToLive();
             void video.play().catch(() => undefined);
           } else {
+            playbackRequested = false;
             video.pause();
+            report("playing");
           }
           break;
         case "toggle-mute":
@@ -217,6 +225,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
           report("playing");
           break;
         case "go-live":
+          playbackRequested = true;
           seekToLive();
           void video.play().catch(() => undefined);
           break;
@@ -267,7 +276,8 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       player.loadSource(source.playlistUrl);
     });
     player.on(Events.MANIFEST_PARSED, () => {
-      void video.play().catch(() => undefined);
+      if (playbackRequested) void video.play().catch(() => undefined);
+      else video.pause();
     });
     player.on(Events.LEVEL_SWITCHED, (_event, data) => {
       streamBitrate = player.levels[data.level]?.bitrate ?? streamBitrate;
@@ -307,7 +317,13 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       report("error", "Chromium could not play the filtered HLS stream.");
     });
 
-    const onPlaying = () => report("playing");
+    const onPlaying = () => {
+      if (!playbackRequested) {
+        video.pause();
+        return;
+      }
+      report("playing");
+    };
     const onPause = () => report("playing");
     const onEnded = () => report("stopped");
     video.addEventListener("playing", onPlaying);
@@ -349,7 +365,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
   return (
     <video
       aria-hidden="true"
-      autoPlay
       className="native-hls-video"
       playsInline
       ref={videoRef}
