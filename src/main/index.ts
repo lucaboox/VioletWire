@@ -93,84 +93,27 @@ let latestNativePlayerState: NativePlayerState | null = null;
 
 type ThumbarGlyph = "play" | "pause" | "speaker" | "speaker-muted";
 
-function renderThumbarGlyph(kind: ThumbarGlyph, size: number): Buffer {
-  const pixels = Buffer.alloc(size * size * 4);
-  const scale = size / 32;
-  const coordinate = (value: number) => Math.round(value * scale);
-  const pixel = (x: number, y: number, red = 255, green = 255, blue = 255) => {
-    if (x < 0 || y < 0 || x >= size || y >= size) return;
-    const offset = (y * size + x) * 4;
-    pixels[offset] = blue;
-    pixels[offset + 1] = green;
-    pixels[offset + 2] = red;
-    pixels[offset + 3] = 255;
-  };
-  const rect = (
-    left: number,
-    top: number,
-    right: number,
-    bottom: number,
-    color?: readonly [number, number, number],
-  ) => {
-    for (let y = coordinate(top); y <= coordinate(bottom); y += 1) {
-      for (let x = coordinate(left); x <= coordinate(right); x += 1) {
-        pixel(x, y, ...(color ?? [255, 255, 255]));
-      }
-    }
-  };
-  const line = (
-    startX: number,
-    startY: number,
-    endX: number,
-    endY: number,
-    color?: readonly [number, number, number],
-  ) => {
-    const steps = Math.max(Math.abs(endX - startX), Math.abs(endY - startY));
-    for (let step = 0; step <= steps; step += 1) {
-      const x = startX + ((endX - startX) * step) / steps;
-      const y = startY + ((endY - startY) * step) / steps;
-      rect(x - 1, y - 1, x + 1, y + 1, color);
-    }
-  };
-
-  if (kind === "play") {
-    // Wide edge on the left and the point on the right.
-    for (let x = 9; x <= 24; x += 1) {
-      const halfHeight = Math.round((24 - x) * 0.62);
-      rect(x, 16 - halfHeight, x + 1, 16 + halfHeight);
-    }
-  } else if (kind === "pause") {
-    rect(8, 7, 12, 25);
-    rect(20, 7, 24, 25);
-  } else {
-    rect(6, 13, 10, 19);
-    for (let x = 11; x <= 17; x += 1) {
-      const halfHeight = 3 + Math.floor((x - 11) / 2);
-      rect(x, 16 - halfHeight, x, 16 + halfHeight);
-    }
-    if (kind === "speaker-muted") {
-      line(5, 6, 27, 26, [239, 68, 68]);
-    } else {
-      line(21, 12, 23, 14);
-      line(23, 14, 23, 18);
-      line(23, 18, 21, 20);
-      line(25, 9, 28, 12);
-      line(28, 12, 28, 20);
-      line(28, 20, 25, 23);
-    }
-  }
-
-  return pixels;
-}
+// Antialiased 32px PNGs rendered from the same simple media glyphs used in the
+// React controls. A raw 16px bitmap looked jagged in Windows' thumbnail
+// toolbar, especially when its preview crossed monitors with different DPI.
+const thumbarGlyphPng: Record<ThumbarGlyph, string> = {
+  play:
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAEPSURBVFhH7ZS9DcIwEIUTfiToGICKDRiBDRiAjp4JmAAxAnvABjSUUCJRIlFQI0UJn+EiQDrInx0af9Ip5uy893RGCTweTx6SJAll+R/iOO5Sc4IMpFUvGDcIcKauURTNzG/ZqgcJsOf5gPWWGsm2e/A0AQ5P+xf0VlRfjrkDLzWAgf7F+bUY8W8BUth3dy3oZwZI4Zz9a0E3dwADZ+1eixEqEuCNHTWmmiJVDgTKBjDTWPJoi1Q5ECgcgPNraigS1UCvyJ/wyP1P5FU7oJsZgP0btWDZk9fsgejPAOzZG7cGHmoAevbHrYHXRwDW7satgVGI4UnM3Y5bA98OphtqKq16IUCLqvYx8Xg8KkFwByXmot5AxK36AAAAAElFTkSuQmCC",
+  pause:
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAACmSURBVFhH7ZZBCsJAFEMHXXiRrrRe3qtIxVUvUpwx/0+wFIT+78pFHoShmRDSrlqEEBFaawfoyNPFqw3RXAorqbXeoAc0UXdoYMSJ5tKweMa5Ad6VEQdWKJcGHVY89boOnl/QhREHdiiXBj0aoAEaoAEaoAF/MeDZK1fgjYw4sEK5NOiwYvuxMOyNTAv07Qvs5n4CJQM0Whl1hk68/gAvlBNCrJTyBrKL5R7QmxMSAAAAAElFTkSuQmCC",
+  speaker:
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAIiSURBVFhH7ZS/axRRFIU3u0YQbERJF9NIDEkaFQI2aVOLEPAf0GhjIQFRZLGxFCs7OxuTQtDGhGChIGglaCSkEG0sRPKjS2R39Tt3DmF3Z3bd2ZAUMh9c3nvnnnvnZudNSgUFBf8FjUbjEnHWx8OFB8//AdbzlrqC7xrxlrhpqX9o8kgPF+zHLXcE2yl8taQias45lQ9qj1P8PGkTjerEhNMBcqVWq82h32J/VBr7Y/V6fT2KgPOzMOeBohHig3sEnLMGuJpkI//QsupvWJb+y3Ia8mWi4lUxQMFF4jv7FtBSA3DWXx6w32E5bf0k+61IsIa5HRJljC+IL8Qq8Zn4ROwmda2gZ/0Cet8/E0d4rjulIVasbVhqhZwG+CpTL+BNDSB4309tkeeJZQ0Ql5e16wCrMvUC3swBuIR3bJHnlWUNcNfawQ6A1nwPXltW/9vWug6wJlMv4O00QPP/ib1Pjv0Da10H0KUTah6hoiycb7+E0SNxhOeeUxpg0Vr2AILkGWKSmCDGHfHu2kFPDcD5stMB5ynpbAfZf7O2GeY8UHSF0He9B+fUAHwB951W/g3LgHT2M4ka+naY80LhNPHDfTIH4DxMrBDvsIxJY9VrWY4iYP8+zP1AsV7RRzcSqUvYDp6heLLhM511qj/ocYKfeknNaD5puSPYjuBfwPubeFmtVstO9Q9NKzR7zHrB0j/BP4p//w9vhoaD3hYUFOSgVPoL9Y71fZLSQlIAAAAASUVORK5CYII=",
+  "speaker-muted":
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAJRSURBVFhH7ZY7b9NQGIajVrAzsbGQcullIUvbKCTR8aWXdCAlVan6NxBCDJ26FiYGpo7MbMywIDEgoSJQBbmQuFzUODfXpY398X7OUWmoCUW1I4Y80isfndh+H8fSOY4MGPBfQrnceVNR7tm6/rASj1+S0/2jKsR9WlggymSopaqFcjp9Vf7UHyDwhObnaVcIotlZlij1knBd9xYSnGRdUUaaqlpxZ2Y8CbeHBIrvEsDxhpwKhh1VHd/TtBMS33X9SAKlj7icwXhUTgfHTjJ5QsJMJouNjY0ECp/Kbi53kDF5WbBUYrFrlhCltqbRrqLQXipFzeVlItOU9SEJ4L5DyDCPvwgx0UqlChbKTYjU43GqLy2RUy6HI8DluOEz5B2yhbw62N42WiitTk56Enys5XLkGkZoAp+8xztGO5+nWjbbJWGtrNBBscgCI/Lys4MuFtjq1HbTLhS6JGrT02SvrrqN9fWEvPzsoOePAkyXhKqSnU5TS4h8YCsmOljgfafOn+MSVUj0Wqz+GdyfBd4iDL9fL53qX4QqgcIoMo6MIaMyD2T3ESxRX1ykRiJBVawTgUr4AYk7yL7s9zjM5/fNTMb+gdXyb3tHIEDgJmLIfl4Hmtbm5u361NTH02xggYBSfkVvpANLXPwajV7228BCk0DvBcdxnkuBCZ7z28DClhhG+WMcY3LKVwLfF6VvQlyRpwQPBM7JocfvEjQ3R/jOfElra0PylPBhCUtVDS73BIT4/DoW6xINHUNRrtua9uJQ1z/gH8jK6f7T9ycfcDoikZ9LxubWak28NwAAAABJRU5ErkJggg==",
+};
 
 function createThumbarGlyph(kind: ThumbarGlyph) {
-  const icon = nativeImage.createFromBitmap(renderThumbarGlyph(kind, 16), {
-    width: 16,
-    height: 16,
-    scaleFactor: 1,
-  });
+  const source = nativeImage.createFromDataURL(
+    `data:image/png;base64,${thumbarGlyphPng[kind]}`,
+  );
+  const icon = source.resize({ width: 16, height: 16, quality: "best" });
   icon.addRepresentation({
-    buffer: renderThumbarGlyph(kind, 32),
+    buffer: source.toPNG(),
     width: 32,
     height: 32,
     scaleFactor: 2,
@@ -206,10 +149,6 @@ function updateThumbnailToolbar(state = latestNativePlayerState): void {
     return;
   }
 
-  // Replacing the toolbar directly can leave a cached icon on a secondary
-  // monitor's taskbar preview. Clearing it first makes Explorer rebuild the
-  // button image list for every monitor/DPI representation.
-  mainWindow.setThumbarButtons([]);
   mainWindow.setThumbarButtons([
     {
       icon: state.paused ? thumbarIcons.play : thumbarIcons.pause,
