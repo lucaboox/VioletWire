@@ -4266,7 +4266,7 @@ export function App() {
                           : (nativeState.error ??
                             (nativeState.transition?.kind === "quality"
                               ? "Reconnecting the stream at the new quality."
-                              : "Streamlink is resolving the Twitch stream and connecting it to mpv."))}
+                              : "Streamlink is resolving and connecting the live stream."))}
                       </p>
                       {(nativeStreamOffline || nativeState.status === "error") && (
                         <button onClick={() => void retryNativePlayer()} type="button">

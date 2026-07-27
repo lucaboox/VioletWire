@@ -119,7 +119,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     // change the media element state; none of them should undo an explicit
     // pause.
     let playbackRequested = !stateRef.current.paused;
-    let pausedPosition: number | null = stateRef.current.paused ? video.currentTime : null;
 
     const report = (
       status: "playing" | "stopped" | "error",
@@ -209,13 +208,11 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         case "toggle-pause":
           if (!playbackRequested) {
             playbackRequested = true;
-            pausedPosition = null;
             seekToLive();
             void video.play().catch(() => undefined);
           } else {
             playbackRequested = false;
             video.pause();
-            pausedPosition = video.currentTime;
             report("playing");
           }
           break;
@@ -229,7 +226,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
           break;
         case "go-live":
           playbackRequested = true;
-          pausedPosition = null;
           seekToLive();
           void video.play().catch(() => undefined);
           break;
@@ -329,19 +325,9 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       report("playing");
     };
     const onPause = () => report("playing");
-    const onTimeUpdate = () => {
-      if (
-        !playbackRequested &&
-        pausedPosition !== null &&
-        Math.abs(video.currentTime - pausedPosition) > 0.05
-      ) {
-        video.currentTime = pausedPosition;
-      }
-    };
     const onEnded = () => report("stopped");
     video.addEventListener("playing", onPlaying);
     video.addEventListener("pause", onPause);
-    video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("ended", onEnded);
 
     const statsTimer = window.setInterval(() => {
@@ -366,7 +352,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       removeCommandListener();
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("pause", onPause);
-      video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("ended", onEnded);
       player.destroy();
       video.removeAttribute("src");
