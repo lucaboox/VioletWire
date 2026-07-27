@@ -91,36 +91,52 @@ let rendererServer: RendererServer | null = null;
 let trustedRendererOrigin: string | null = null;
 let latestNativePlayerState: NativePlayerState | null = null;
 
-type ThumbarGlyph = "play" | "pause" | "mute" | "unmute";
+type ThumbarGlyph = "play" | "pause" | "speaker" | "speaker-muted";
 
-function createThumbarGlyph(kind: ThumbarGlyph) {
-  const size = 32;
+function renderThumbarGlyph(kind: ThumbarGlyph, size: number): Buffer {
   const pixels = Buffer.alloc(size * size * 4);
-  const pixel = (x: number, y: number) => {
+  const scale = size / 32;
+  const coordinate = (value: number) => Math.round(value * scale);
+  const pixel = (x: number, y: number, red = 255, green = 255, blue = 255) => {
     if (x < 0 || y < 0 || x >= size || y >= size) return;
     const offset = (y * size + x) * 4;
-    pixels[offset] = 255;
-    pixels[offset + 1] = 255;
-    pixels[offset + 2] = 255;
+    pixels[offset] = blue;
+    pixels[offset + 1] = green;
+    pixels[offset + 2] = red;
     pixels[offset + 3] = 255;
   };
-  const rect = (left: number, top: number, right: number, bottom: number) => {
-    for (let y = top; y <= bottom; y += 1) {
-      for (let x = left; x <= right; x += 1) pixel(x, y);
+  const rect = (
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+    color?: readonly [number, number, number],
+  ) => {
+    for (let y = coordinate(top); y <= coordinate(bottom); y += 1) {
+      for (let x = coordinate(left); x <= coordinate(right); x += 1) {
+        pixel(x, y, ...(color ?? [255, 255, 255]));
+      }
     }
   };
-  const line = (startX: number, startY: number, endX: number, endY: number) => {
+  const line = (
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    color?: readonly [number, number, number],
+  ) => {
     const steps = Math.max(Math.abs(endX - startX), Math.abs(endY - startY));
     for (let step = 0; step <= steps; step += 1) {
-      const x = Math.round(startX + ((endX - startX) * step) / steps);
-      const y = Math.round(startY + ((endY - startY) * step) / steps);
-      rect(x - 1, y - 1, x + 1, y + 1);
+      const x = startX + ((endX - startX) * step) / steps;
+      const y = startY + ((endY - startY) * step) / steps;
+      rect(x - 1, y - 1, x + 1, y + 1, color);
     }
   };
 
   if (kind === "play") {
-    for (let x = 9; x <= 23; x += 1) {
-      const halfHeight = Math.round((x - 9) * 0.62);
+    // Wide edge on the left and the point on the right.
+    for (let x = 9; x <= 24; x += 1) {
+      const halfHeight = Math.round((24 - x) * 0.62);
       rect(x, 16 - halfHeight, x + 1, 16 + halfHeight);
     }
   } else if (kind === "pause") {
@@ -132,9 +148,8 @@ function createThumbarGlyph(kind: ThumbarGlyph) {
       const halfHeight = 3 + Math.floor((x - 11) / 2);
       rect(x, 16 - halfHeight, x, 16 + halfHeight);
     }
-    if (kind === "mute") {
-      line(21, 11, 27, 21);
-      line(27, 11, 21, 21);
+    if (kind === "speaker-muted") {
+      line(5, 6, 27, 26, [239, 68, 68]);
     } else {
       line(21, 12, 23, 14);
       line(23, 14, 23, 18);
@@ -145,11 +160,22 @@ function createThumbarGlyph(kind: ThumbarGlyph) {
     }
   }
 
-  return nativeImage.createFromBitmap(pixels, {
-    width: size,
-    height: size,
+  return pixels;
+}
+
+function createThumbarGlyph(kind: ThumbarGlyph) {
+  const icon = nativeImage.createFromBitmap(renderThumbarGlyph(kind, 16), {
+    width: 16,
+    height: 16,
+    scaleFactor: 1,
+  });
+  icon.addRepresentation({
+    buffer: renderThumbarGlyph(kind, 32),
+    width: 32,
+    height: 32,
     scaleFactor: 2,
   });
+  return icon;
 }
 
 const thumbarIcons =
@@ -157,8 +183,8 @@ const thumbarIcons =
     ? {
         play: createThumbarGlyph("play"),
         pause: createThumbarGlyph("pause"),
-        mute: createThumbarGlyph("mute"),
-        unmute: createThumbarGlyph("unmute"),
+        speaker: createThumbarGlyph("speaker"),
+        speakerMuted: createThumbarGlyph("speaker-muted"),
       }
     : null;
 
@@ -180,6 +206,10 @@ function updateThumbnailToolbar(state = latestNativePlayerState): void {
     return;
   }
 
+  // Replacing the toolbar directly can leave a cached icon on a secondary
+  // monitor's taskbar preview. Clearing it first makes Explorer rebuild the
+  // button image list for every monitor/DPI representation.
+  mainWindow.setThumbarButtons([]);
   mainWindow.setThumbarButtons([
     {
       icon: state.paused ? thumbarIcons.play : thumbarIcons.pause,
@@ -188,7 +218,7 @@ function updateThumbnailToolbar(state = latestNativePlayerState): void {
         controlActiveNativePlayer({ command: state.paused ? "go-live" : "toggle-pause" }),
     },
     {
-      icon: state.muted ? thumbarIcons.unmute : thumbarIcons.mute,
+      icon: state.muted ? thumbarIcons.speakerMuted : thumbarIcons.speaker,
       tooltip: state.muted ? "Unmute" : "Mute",
       click: () => controlActiveNativePlayer({ command: "toggle-mute" }),
     },
@@ -825,12 +855,14 @@ async function createWindow(): Promise<void> {
   });
   mainWindow.on("moved", () => {
     persistWindowState();
+    updateThumbnailToolbar();
   });
   mainWindow.on("resized", () => {
     persistWindowState();
   });
   mainWindow.on("maximize", () => persistWindowState(true));
   mainWindow.on("unmaximize", () => persistWindowState(true));
+  mainWindow.on("focus", () => updateThumbnailToolbar());
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl) {
