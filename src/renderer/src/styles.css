@@ -68,6 +68,7 @@ button { color: inherit; }
 .followed-copy small { margin-top: 2px; color: #9696a0; font-size: 13px; }
 .viewer-count { display: flex; align-items: center; gap: 5px; color: #c3c3ca; font-size: 13px; font-weight: 650; }
 .viewer-count i { width: 6px; height: 6px; border-radius: 50%; background: #eb4057; }
+.viewer-count i.kick { background: #34d399; }
 .followed-empty { display: flex; flex-direction: column; align-items: center; margin: 7px 5px; padding: 23px 14px; border: 1px dashed #303037; border-radius: 10px; color: #8b8b96; background: #151519; text-align: center; }
 .followed-empty .empty-orbit { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 10px; border: 1px solid #42344f; border-radius: 50%; color: #b79ad5; background: #241a2d; }
 .followed-empty strong { color: #c7c7cf; font-size: 11px; }
@@ -975,6 +976,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 /* Live dot on the avatar, shown only when the sidebar is an icon rail so live
    channels stay recognizable without their names. */
 .channel-live-dot { position: absolute; right: -1px; bottom: -1px; display: none; width: 11px; height: 11px; border: 2px solid #111114; border-radius: 50%; background: #eb4057; }
+.channel-live-dot.kick { background: #34d399; }
 .oled-mode .channel-live-dot { border-color: #000; }
 
 /* Manual collapse to an icon rail: mirrors the responsive narrow layout below,

@@ -42,32 +42,28 @@
 }
 
 .multi-chat-tabs {
-  display: flex;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(var(--multi-chat-tab-count, 1), minmax(0, 1fr));
+  gap: 0;
   min-width: 0;
-  overflow-x: auto;
+  overflow: hidden;
 }
 
 .multi-chat-tabbar {
   height: 54px;
   box-sizing: border-box;
   align-items: center;
-  padding: 0 8px;
+  padding: 0;
   border-bottom: 1px solid #202024;
-  scrollbar-width: thin;
-}
-
-.multi-chat-tab svg {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 auto;
 }
 
 /* Cap tab width so four channels never push the row (and anything after it)
    off screen — long names ellipsize and the row scrolls horizontally. */
 .multi-chat-tab span {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
-  max-width: 116px;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -83,12 +79,18 @@
 }
 
 .multi-chat-tab {
+  position: relative;
   display: inline-flex;
+  align-self: center;
+  box-sizing: border-box;
+  height: 35px;
+  min-width: 0;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid #2a2a30;
-  border-radius: 7px;
+  justify-content: center;
+  padding: 6px 8px;
+  border: 0;
+  border-right: 1px solid #0e0e10;
+  border-radius: 0;
   color: #b7b7c0;
   background: #17171b;
   cursor: pointer;
@@ -99,21 +101,57 @@
 
 .multi-chat-tab:hover {
   color: #f4f4f5;
-  background: #222228;
+  filter: brightness(1.13);
+}
+
+.multi-chat-tab:last-child {
+  border-right: 0;
 }
 
 .multi-chat-tab.active {
-  border-color: #7c3aed;
-  color: #f4f4f5;
-  background: #2c1c44;
+  color: #fff;
 }
 
-.multi-chat-tab-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
+.multi-chat-tab.twitch {
+  color: #e9d5ff;
+  background: #2b1a3c;
+}
+
+.multi-chat-tab.kick {
+  color: #bbf7d0;
+  background: #123322;
+}
+
+.multi-chat-tab.twitch.active {
+  background: #3a2251;
+  box-shadow: inset 0 0 0 2px #c4b5fd;
+}
+
+.multi-chat-tab.kick.active {
+  background: #16442d;
+  box-shadow: inset 0 0 0 2px #6ee7b7;
+}
+
+/* Audio focus is independent from the selected chat. Keep it as a compact
+   colored underline so the tab row stays icon-free. */
+.multi-chat-tab.audio-active::after {
+  position: absolute;
+  right: 9px;
+  bottom: 3px;
+  left: 9px;
+  height: 2px;
+  border-radius: 999px;
+  content: "";
+}
+
+.multi-chat-tab.twitch.audio-active::after {
   background: #a970ff;
+  box-shadow: 0 0 7px #a970ff99;
+}
+
+.multi-chat-tab.kick.audio-active::after {
+  background: #34d399;
+  box-shadow: 0 0 7px #34d39999;
 }
 
 /* The paused pill: keep it on one line and sit it just above the composer,
@@ -374,8 +412,16 @@
   height: 8px;
   flex: 0 0 auto;
   border-radius: 50%;
+}
+
+.multi-tile-live-dot.twitch {
   background: #a970ff;
   box-shadow: 0 0 6px #a970ff;
+}
+
+.multi-tile-live-dot.kick {
+  background: #34d399;
+  box-shadow: 0 0 6px #34d399;
 }
 
 .multi-tile-btn {

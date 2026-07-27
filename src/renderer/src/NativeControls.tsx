@@ -507,14 +507,25 @@ export function NativeControls({
   const chatComposerHost = useRef<HTMLFormElement>(null);
   const currentChannel = useRef<string | null>(null);
   const channel = context?.channel;
-  const [chatRestrictions, setChatRestrictions] = useState<ChatRestrictions>(
-    NO_CHAT_RESTRICTIONS,
+  const [chatRestrictionState, setChatRestrictionState] = useState<{
+    channel: string | undefined;
+    restrictions: ChatRestrictions;
+  }>({ channel: undefined, restrictions: NO_CHAT_RESTRICTIONS });
+  const chatRestrictions =
+    chatRestrictionState.channel === channel
+      ? chatRestrictionState.restrictions
+      : NO_CHAT_RESTRICTIONS;
+  useEffect(
+    () =>
+      window.desktop.chat.onRestrictions((restrictions) => {
+        setChatRestrictionState({ channel, restrictions });
+      }),
+    [channel],
   );
-  useEffect(() => window.desktop.chat.onRestrictions(setChatRestrictions), []);
   const chatRestrictionLabel = useMemo(() => {
     const parts: string[] = [];
     // Followers-only no longer applies once you follow; the rest still do.
-    if (chatRestrictions.followersOnly && context?.isFollowed !== true) {
+    if (chatRestrictions.followersOnly && context?.isFollowed === false) {
       parts.push("Followers-only chat");
     }
     if (chatRestrictions.subscribersOnly) parts.push("Subscribers-only chat");

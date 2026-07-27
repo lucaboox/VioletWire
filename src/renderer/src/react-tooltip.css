@@ -36,7 +36,18 @@
   display: grid;
   justify-items: center;
   gap: 2px;
-  white-space: pre;
+  width: min(300px, calc(100vw - 40px));
+  max-width: 100%;
+  white-space: normal;
+}
+
+.violetwire-tooltip-lines strong,
+.violetwire-tooltip-lines > span {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .violetwire-tooltip-lines strong {

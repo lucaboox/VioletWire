@@ -29,6 +29,7 @@ interface MultiStreamViewProps {
   tiles: MultiStreamTileState[];
   followedLive: FollowedChannel[];
   nameFor: (login: string) => string;
+  tooltipFor: (channel: string) => string;
   controlsHideDelay: number;
   onAdd: (channel: string) => void;
   onRemove: (id: number) => void;
@@ -48,6 +49,7 @@ export function MultiStreamView({
   tiles,
   followedLive,
   nameFor,
+  tooltipFor,
   controlsHideDelay,
   onAdd,
   onRemove,
@@ -149,6 +151,7 @@ export function MultiStreamView({
             key={tile.id}
             tile={tile}
             name={nameFor(tile.channel)}
+            tooltip={tooltipFor(tile.channel)}
             platform={parseChannelKey(tile.channel).platform}
             controlsHideDelay={controlsHideDelay}
             onRemove={onRemove}
@@ -175,6 +178,7 @@ export function MultiStreamView({
 interface MultiTileProps {
   tile: MultiStreamTileState;
   name: string;
+  tooltip: string;
   platform: Platform;
   controlsHideDelay: number;
   onRemove: (id: number) => void;
@@ -188,6 +192,7 @@ interface MultiTileProps {
 const MultiTile = memo(function MultiTile({
   tile,
   name,
+  tooltip,
   platform,
   controlsHideDelay,
   onRemove,
@@ -313,9 +318,9 @@ const MultiTile = memo(function MultiTile({
         </div>
       )}
       <div className="multi-tile-name-box">
-        {tile.active && <span className="multi-tile-live-dot" title="Audio playing" />}
+        {tile.active && <span className={`multi-tile-live-dot ${platform}`} title="Audio playing" />}
         <ProviderLogo name={platform} />
-        <span className="multi-tile-name">{name}</span>
+        <span className="multi-tile-name" title={tooltip}>{name}</span>
       </div>
       <div className="multi-tile-controls" onClick={(event) => event.stopPropagation()}>
         <button

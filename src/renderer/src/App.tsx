@@ -182,11 +182,21 @@ function formatFollowDuration(minutes: number): string {
   return `${months} month${months === 1 ? "" : "s"}`;
 }
 
-function formatUptime(startedAt: string | undefined, now: number): string {
+function formatUptime(
+  startedAt: string | undefined,
+  now: number,
+  includeSeconds = false,
+): string {
   if (!startedAt) return "";
   const elapsed = Math.max(0, now - new Date(startedAt).getTime());
   const hours = Math.floor(elapsed / 3_600_000);
   const minutes = Math.floor((elapsed % 3_600_000) / 60_000);
+  const seconds = Math.floor((elapsed % 60_000) / 1_000);
+  if (includeSeconds) {
+    return hours > 0
+      ? `${hours}h ${minutes}m ${seconds}s`
+      : `${minutes}m ${seconds}s`;
+  }
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
@@ -505,6 +515,7 @@ export function App() {
     currentVersion: "",
   });
   const [uptimeNow, setUptimeNow] = useState(() => Date.now());
+  const [toolbarUptimeNow, setToolbarUptimeNow] = useState(() => Date.now());
   const [authState, setAuthState] = useState<TwitchAuthState>(signedOutState);
   const [authBusy, setAuthBusy] = useState(true);
   const [deviceAuthorization, setDeviceAuthorization] =
@@ -536,9 +547,10 @@ export function App() {
   const [sevenTvBusy, setSevenTvBusy] = useState(false);
   const [chatConnectionState, setChatConnectionState] =
     useState<ChatConnectionState>("disconnected");
-  const [chatRestrictions, setChatRestrictions] = useState<ChatRestrictions>(
-    NO_CHAT_RESTRICTIONS,
-  );
+  const [chatRestrictionState, setChatRestrictionState] = useState<{
+    channel: string | null;
+    restrictions: ChatRestrictions;
+  }>({ channel: null, restrictions: NO_CHAT_RESTRICTIONS });
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -679,6 +691,10 @@ export function App() {
   // The channel the chat pane (connection, emotes, badges, sending) follows:
   // the selected tab in multistream, otherwise the single watched channel.
   const chatChannel = multiStreamActive ? effectiveMultiChatChannel : activeChannel;
+  const chatRestrictions =
+    chatRestrictionState.channel === chatChannel
+      ? chatRestrictionState.restrictions
+      : NO_CHAT_RESTRICTIONS;
   const chatIsKick =
     chatChannel !== null && parseChannelKey(chatChannel).platform === "kick";
   // Chat resolves provider emotes by name, so Kick messages render 7TV emotes
@@ -1267,7 +1283,13 @@ export function App() {
   }, [mentionSoundEnabled, mentionSoundVolume, mentionSoundId, viewerLogin]);
 
   useEffect(() => window.desktop.chat.onState(setChatConnectionState), []);
-  useEffect(() => window.desktop.chat.onRestrictions(setChatRestrictions), []);
+  useEffect(
+    () =>
+      window.desktop.chat.onRestrictions((restrictions) => {
+        setChatRestrictionState({ channel: chatChannel, restrictions });
+      }),
+    [chatChannel],
+  );
 
   // Load a channel's emotes (global + channel sets) into the cache once and
   // return the bundle. Keyed by channel + broadcaster id so it refreshes when
@@ -2009,6 +2031,26 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [activeChannel, hasLiveFollowedChannel]);
 
+  // The player header is the only place that needs second-level precision.
+  // Keeping this separate avoids re-rendering every live card once per second.
+  useEffect(() => {
+    const startedAt = streamMetadata?.startedAt ?? activeChannelIdentity?.startedAt;
+    if (!activeChannel || !startedAt) return;
+
+    let interval: number | null = null;
+    const tick = () => setToolbarUptimeNow(Date.now());
+    const alignToSecond = window.setTimeout(() => {
+      tick();
+      interval = window.setInterval(tick, 1_000);
+    }, 1_000 - (Date.now() % 1_000));
+
+    tick();
+    return () => {
+      window.clearTimeout(alignToSecond);
+      if (interval !== null) window.clearInterval(interval);
+    };
+  }, [activeChannel, activeChannelIdentity?.startedAt, streamMetadata?.startedAt]);
+
   useEffect(() => {
     // Player shortcuts must not fire while the player is minimized to the
     // floating mini view and the user is browsing.
@@ -2091,17 +2133,27 @@ export function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [multiStreamActive, fullscreen, multiTheater]);
 
-  const activeChannelIsFollowed = useMemo(() => {
-    if (!activeChannel) return false;
+  const activeChannelFollowState = useMemo<boolean | null>(() => {
+    if (!activeChannel) return null;
     const target = parseChannelKey(activeChannel);
     if (target.platform === "kick") {
-      return (
-        kickFollowedChannels.some((channel) => channel.slug === target.login) ||
-        streamMetadata?.isFollowed === true
-      );
+      if (kickFollowedChannels.some((channel) => channel.slug === target.login)) return true;
+    } else if (followedChannels.some((channel) => channel.login === target.login)) {
+      return true;
     }
-    return streamMetadata?.isFollowed === true;
-  }, [activeChannel, kickFollowedChannels, streamMetadata?.isFollowed]);
+
+    const metadataMatchesChannel =
+      streamMetadata?.login.toLowerCase() === target.login.toLowerCase();
+    if (metadataMatchesChannel && typeof streamMetadata.isFollowed === "boolean") {
+      return streamMetadata.isFollowed;
+    }
+
+    // Signed-out accounts cannot have a follow relationship to resolve. For a
+    // signed-in account, null means Helix/Kick is still checking.
+    const signedIn = target.platform === "kick" ? kickAccount !== null : authState.status === "signed-in";
+    return signedIn ? null : false;
+  }, [activeChannel, authState.status, followedChannels, kickAccount, kickFollowedChannels, streamMetadata]);
+  const activeChannelIsFollowed = activeChannelFollowState === true;
 
   useEffect(
     () =>
@@ -2694,6 +2746,28 @@ export function App() {
     return followedChannels.find((channel) => channel.login === login)?.displayName ?? login;
   }
 
+  function streamTooltipForChannel(key: string): string {
+    const { platform, login } = parseChannelKey(key);
+    const channel =
+      platform === "kick"
+        ? kickFollowedChannels.find((entry) => entry.slug === login)
+        : followedChannels.find((entry) => entry.login === login);
+    const name = channel?.displayName ?? login;
+    if (!channel) return name;
+
+    return [
+      name,
+      channel.category || (channel.isLive ? "Live" : "Offline"),
+      channel.title &&
+        (channel.title.length > 96 ? `${channel.title.slice(0, 93).trimEnd()}…` : channel.title),
+      channel.isLive
+        ? `${Intl.NumberFormat("en").format(channel.viewerCount)} viewers`
+        : "Offline",
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+  }
+
   async function navigateTo(section: AppSection) {
     if (section === "settings") {
       setSettingsOpen(true);
@@ -2879,7 +2953,7 @@ export function App() {
     const parts: string[] = [];
     // Followers-only does not apply once you follow, so drop it while keeping
     // the modes that still do (slow, subs-only, emote-only).
-    if (chatRestrictions.followersOnly && !activeChannelIsFollowed) {
+    if (chatRestrictions.followersOnly && activeChannelFollowState === false) {
       const minutes = chatRestrictions.followersMinMinutes;
       parts.push(
         minutes && minutes > 0
@@ -2893,10 +2967,10 @@ export function App() {
       parts.push(`Slow mode · ${chatRestrictions.slowModeSeconds}s between messages`);
     }
     return parts.length > 0 ? parts.join(" · ") : null;
-  }, [activeChannelIsFollowed, chatRestrictions]);
+  }, [activeChannelFollowState, chatRestrictions]);
 
   const chatBlocked =
-    chatRestrictions.followersOnly && !activeChannelIsFollowed;
+    chatRestrictions.followersOnly && activeChannelFollowState === false;
   const activeChatPlatform = chatChannel
     ? parseChannelKey(chatChannel).platform
     : "twitch";
@@ -3028,6 +3102,7 @@ export function App() {
   const toolbarIsMature = streamMetadata?.isMature ?? activeChannelIdentity?.isMature;
 
   function renderFollowedChannel(channel: FollowedChannel) {
+    const platform = parseChannelKey(channel.login).platform;
     return (
       <button
         className={channel.isLive ? "followed-channel" : "followed-channel offline"}
@@ -3050,7 +3125,7 @@ export function App() {
           }
         >
           <img alt="" src={channel.profileImageUrl} />
-          {channel.isLive && <i className="channel-live-dot" aria-hidden="true" />}
+          {channel.isLive && <i className={`channel-live-dot ${platform}`} aria-hidden="true" />}
           {favoriteChannels.has(channel.login) && (
             <Star aria-hidden="true" className="channel-favorite-star" size={10} />
           )}
@@ -3061,7 +3136,7 @@ export function App() {
         </span>
         {channel.isLive && (
           <span className="viewer-count">
-            <i /> {Intl.NumberFormat("en", { notation: "compact" }).format(channel.viewerCount)}
+            <i className={platform} /> {Intl.NumberFormat("en", { notation: "compact" }).format(channel.viewerCount)}
           </span>
         )}
       </button>
@@ -3571,6 +3646,7 @@ export function App() {
               tiles={multiTiles}
               followedLive={liveFollowedChannels}
               nameFor={nameForChannel}
+              tooltipFor={streamTooltipForChannel}
               controlsHideDelay={controlsHideDelay}
               onAdd={(channel) => void addMultiTile(channel)}
               onRemove={removeMultiTile}
@@ -3594,28 +3670,46 @@ export function App() {
               onExit={exitMultiStream}
             />
             <aside className="multi-chat" aria-label="Stream chat">
-              <div className="multi-chat-tabs multi-chat-tabbar" role="tablist">
+              <div
+                className="multi-chat-tabs multi-chat-tabbar"
+                role="tablist"
+                style={
+                  {
+                    "--multi-chat-tab-count": Math.max(1, multiTiles.length),
+                  } as CSSProperties
+                }
+              >
                 {multiTiles.length === 0 ? (
                   <span className="multi-chat-empty-tabs">Add a stream to see its chat</span>
                 ) : (
-                  multiTiles.map((tile) => (
-                    <button
-                      aria-selected={effectiveMultiChatChannel === tile.channel}
-                      className={
-                        effectiveMultiChatChannel === tile.channel
-                          ? "multi-chat-tab active"
-                          : "multi-chat-tab"
-                      }
-                      key={tile.id}
-                      onClick={() => setMultiChatChannel(tile.channel)}
-                      role="tab"
-                      type="button"
-                    >
-                      {tile.active && <i aria-label="Audio" className="multi-chat-tab-dot" />}
-                      <ProviderLogo name={parseChannelKey(tile.channel).platform} />
-                      <span>{nameForChannel(tile.channel)}</span>
-                    </button>
-                  ))
+                  multiTiles.map((tile) => {
+                    const channelName = nameForChannel(tile.channel);
+                    const platform = parseChannelKey(tile.channel).platform;
+                    const chatSelected = effectiveMultiChatChannel === tile.channel;
+                    return (
+                      <button
+                        aria-label={`Open chat for ${channelName}${tile.active ? ", audio active" : ""}`}
+                        aria-selected={chatSelected}
+                        className={
+                          [
+                            "multi-chat-tab",
+                            platform,
+                            chatSelected ? "active" : "",
+                            tile.active ? "audio-active" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")
+                        }
+                        key={tile.id}
+                        onClick={() => setMultiChatChannel(tile.channel)}
+                        role="tab"
+                        title={streamTooltipForChannel(tile.channel)}
+                        type="button"
+                      >
+                        <span>{channelName}</span>
+                      </button>
+                    );
+                  })
                 )}
               </div>
               {visiblePinnedChatMessage && (
@@ -3926,7 +4020,7 @@ export function App() {
                   </span>
                   <span className="toolbar-uptime" title="Stream uptime">
                     <Clock size={13} />
-                    {formatUptime(toolbarStartedAt, uptimeNow)}
+                    {formatUptime(toolbarStartedAt, toolbarUptimeNow, true)}
                   </span>
                 </div>
               )}
@@ -4141,7 +4235,7 @@ export function App() {
                           chatVisible,
                           chatPresentation,
                           viewerLogin,
-                          isFollowed: activeChannelIsFollowed,
+                          isFollowed: activeChannelFollowState ?? undefined,
                         }}
                         inlineVisible={nativeControlsVisible}
                       />
