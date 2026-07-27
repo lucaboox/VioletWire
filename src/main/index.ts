@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   ipcMain,
   Menu,
+  nativeImage,
   powerMonitor,
   screen,
   shell,
@@ -24,6 +25,7 @@ import {
   playerModeSchema,
   MAX_MULTISTREAM_TILES,
   type NativePlaybackBackend,
+  type NativePlayerState,
   type PlayerMode,
 } from "../shared/player";
 import { z } from "zod";
@@ -87,6 +89,117 @@ let activeChannelName: string | null = null;
 let playerOpenGeneration = 0;
 let rendererServer: RendererServer | null = null;
 let trustedRendererOrigin: string | null = null;
+let latestNativePlayerState: NativePlayerState | null = null;
+
+type ThumbarGlyph = "play" | "pause" | "mute" | "unmute";
+
+function createThumbarGlyph(kind: ThumbarGlyph) {
+  const size = 32;
+  const pixels = Buffer.alloc(size * size * 4);
+  const pixel = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    const offset = (y * size + x) * 4;
+    pixels[offset] = 255;
+    pixels[offset + 1] = 255;
+    pixels[offset + 2] = 255;
+    pixels[offset + 3] = 255;
+  };
+  const rect = (left: number, top: number, right: number, bottom: number) => {
+    for (let y = top; y <= bottom; y += 1) {
+      for (let x = left; x <= right; x += 1) pixel(x, y);
+    }
+  };
+  const line = (startX: number, startY: number, endX: number, endY: number) => {
+    const steps = Math.max(Math.abs(endX - startX), Math.abs(endY - startY));
+    for (let step = 0; step <= steps; step += 1) {
+      const x = Math.round(startX + ((endX - startX) * step) / steps);
+      const y = Math.round(startY + ((endY - startY) * step) / steps);
+      rect(x - 1, y - 1, x + 1, y + 1);
+    }
+  };
+
+  if (kind === "play") {
+    for (let x = 9; x <= 23; x += 1) {
+      const halfHeight = Math.round((x - 9) * 0.62);
+      rect(x, 16 - halfHeight, x + 1, 16 + halfHeight);
+    }
+  } else if (kind === "pause") {
+    rect(8, 7, 12, 25);
+    rect(20, 7, 24, 25);
+  } else {
+    rect(6, 13, 10, 19);
+    for (let x = 11; x <= 17; x += 1) {
+      const halfHeight = 3 + Math.floor((x - 11) / 2);
+      rect(x, 16 - halfHeight, x, 16 + halfHeight);
+    }
+    if (kind === "mute") {
+      line(21, 11, 27, 21);
+      line(27, 11, 21, 21);
+    } else {
+      line(21, 12, 23, 14);
+      line(23, 14, 23, 18);
+      line(23, 18, 21, 20);
+      line(25, 9, 28, 12);
+      line(28, 12, 28, 20);
+      line(28, 20, 25, 23);
+    }
+  }
+
+  return nativeImage.createFromBitmap(pixels, {
+    width: size,
+    height: size,
+    scaleFactor: 2,
+  });
+}
+
+const thumbarIcons =
+  process.platform === "win32"
+    ? {
+        play: createThumbarGlyph("play"),
+        pause: createThumbarGlyph("pause"),
+        mute: createThumbarGlyph("mute"),
+        unmute: createThumbarGlyph("unmute"),
+      }
+    : null;
+
+function controlActiveNativePlayer(command: Parameters<HlsNativePlayer["control"]>[0]): void {
+  if (activePlayerMode !== "native") return;
+  if (activeNativeBackend === "hls") hlsNativePlayer.control(command);
+  else textureNativePlayer.control(command);
+}
+
+function updateThumbnailToolbar(state = latestNativePlayerState): void {
+  if (process.platform !== "win32" || !mainWindow || mainWindow.isDestroyed()) return;
+  if (
+    !thumbarIcons ||
+    activePlayerMode !== "native" ||
+    !state ||
+    state.status !== "playing"
+  ) {
+    mainWindow.setThumbarButtons([]);
+    return;
+  }
+
+  mainWindow.setThumbarButtons([
+    {
+      icon: state.paused ? thumbarIcons.play : thumbarIcons.pause,
+      tooltip: state.paused ? "Play and return to live" : "Pause",
+      click: () =>
+        controlActiveNativePlayer({ command: state.paused ? "go-live" : "toggle-pause" }),
+    },
+    {
+      icon: state.muted ? thumbarIcons.unmute : thumbarIcons.mute,
+      tooltip: state.muted ? "Unmute" : "Mute",
+      click: () => controlActiveNativePlayer({ command: "toggle-mute" }),
+    },
+  ]);
+}
+
+function publishNativePlayerState(state: NativePlayerState): void {
+  latestNativePlayerState = state;
+  sendToWindow(mainWindow, "native-player:state", state);
+  updateThumbnailToolbar(state);
+}
 const playbackSessionService = new PlaybackSessionService(
   () => mainWindow,
   applicationIcon,
@@ -189,7 +302,7 @@ const kickChatService = new KickChatService(
 );
 const textureNativePlayer = new TextureNativePlayer(
   () => mainWindow,
-  (state) => sendToWindow(mainWindow, "native-player:state", state),
+  publishNativePlayerState,
   () => playbackSessionService.getToken(),
   "main",
   () => preferencesService.get().playerVolume,
@@ -219,7 +332,7 @@ const hlsNativePlayer = new HlsNativePlayer(
   () => trustedRendererOrigin,
   (channel, quality) => textureNativePlayer.resolvePlaybackUrl(channel, quality),
   () => preferencesService.get().playerVolume,
-  (state) => sendToWindow(mainWindow, "native-player:state", state),
+  publishNativePlayerState,
   () => textureNativePlayer.cancelPlaybackResolution(),
 );
 function isAllowedTwitchNavigation(rawUrl: string): boolean {
@@ -536,6 +649,8 @@ function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false)
   activePlayerMode = null;
   activeNativeBackend = null;
   activeChannelName = null;
+  latestNativePlayerState = null;
+  updateThumbnailToolbar();
 }
 
 // Matches the renderer's .titlebar strip, which sits above the top bar and
@@ -772,6 +887,13 @@ handleTrusted(
   }
 
   activePlayerMode = requestedMode;
+  latestNativePlayerState =
+    requestedMode === "native"
+      ? requestedBackend === "hls"
+        ? hlsNativePlayer.getState()
+        : textureNativePlayer.getState()
+      : null;
+  updateThumbnailToolbar();
 
   // Each service has its own chat transport, and only one is ever live.
   const chatTarget = parseChannelKey(channel);

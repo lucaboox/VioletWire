@@ -63,7 +63,6 @@ function playbackStats(
 
 export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const pausedFrameRef = useRef<HTMLCanvasElement>(null);
   const audioGraph = useRef<AudioGraph | null>(null);
   const compressorEnabled = useRef(state.compressorEnabled);
   const stateRef = useRef(state);
@@ -120,24 +119,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     // change the media element state; none of them should undo an explicit
     // pause.
     let playbackRequested = !stateRef.current.paused;
-
-    const showPausedFrame = () => {
-      const canvas = pausedFrameRef.current;
-      if (!canvas || video.videoWidth < 1 || video.videoHeight < 1) return;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
-      canvas.hidden = false;
-    };
-
-    const hidePausedFrame = () => {
-      const canvas = pausedFrameRef.current;
-      if (!canvas) return;
-      canvas.hidden = true;
-      // Release the full-resolution backing store while playback is active.
-      canvas.width = 1;
-      canvas.height = 1;
-    };
+    let pausedPosition: number | null = stateRef.current.paused ? video.currentTime : null;
 
     const report = (
       status: "playing" | "stopped" | "error",
@@ -227,15 +209,13 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         case "toggle-pause":
           if (!playbackRequested) {
             playbackRequested = true;
-            hidePausedFrame();
-            hls?.startLoad(-1);
+            pausedPosition = null;
             seekToLive();
             void video.play().catch(() => undefined);
           } else {
             playbackRequested = false;
             video.pause();
-            showPausedFrame();
-            hls?.stopLoad();
+            pausedPosition = video.currentTime;
             report("playing");
           }
           break;
@@ -249,8 +229,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
           break;
         case "go-live":
           playbackRequested = true;
-          hidePausedFrame();
-          hls?.startLoad(-1);
+          pausedPosition = null;
           seekToLive();
           void video.play().catch(() => undefined);
           break;
@@ -302,11 +281,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     });
     player.on(Events.MANIFEST_PARSED, () => {
       if (playbackRequested) void video.play().catch(() => undefined);
-      else {
-        video.pause();
-        showPausedFrame();
-        player.stopLoad();
-      }
+      else video.pause();
     });
     player.on(Events.LEVEL_SWITCHED, (_event, data) => {
       streamBitrate = player.levels[data.level]?.bitrate ?? streamBitrate;
@@ -354,9 +329,19 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       report("playing");
     };
     const onPause = () => report("playing");
+    const onTimeUpdate = () => {
+      if (
+        !playbackRequested &&
+        pausedPosition !== null &&
+        Math.abs(video.currentTime - pausedPosition) > 0.05
+      ) {
+        video.currentTime = pausedPosition;
+      }
+    };
     const onEnded = () => report("stopped");
     video.addEventListener("playing", onPlaying);
     video.addEventListener("pause", onPause);
+    video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("ended", onEnded);
 
     const statsTimer = window.setInterval(() => {
@@ -381,9 +366,9 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       removeCommandListener();
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("pause", onPause);
+      video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("ended", onEnded);
       player.destroy();
-      hidePausedFrame();
       video.removeAttribute("src");
       video.load();
       const graph = audioGraph.current;
@@ -393,19 +378,11 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
   }, [hlsPlaylistUrl, hlsSessionId, state.backend, target]);
 
   return (
-    <>
-      <video
-        aria-hidden="true"
-        className="native-hls-video"
-        playsInline
-        ref={videoRef}
-      />
-      <canvas
-        aria-hidden="true"
-        className="native-hls-paused-frame"
-        hidden
-        ref={pausedFrameRef}
-      />
-    </>
+    <video
+      aria-hidden="true"
+      className="native-hls-video"
+      playsInline
+      ref={videoRef}
+    />
   );
 }
