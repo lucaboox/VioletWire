@@ -375,6 +375,15 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       report("error", "Chromium could not play the filtered HLS stream.");
     });
 
+    const onPlay = () => {
+      if (document.pictureInPictureElement !== video || playbackRequested) return;
+      // The stock browser PiP controls call HTMLVideoElement.play() directly
+      // instead of going through VioletWire's go-live command. Treat that as a
+      // request to resume at the current live edge.
+      playbackRequested = true;
+      seekToLive();
+      revealFreshPlaybackFrame(video.currentTime);
+    };
     const onPlaying = () => {
       if (!playbackRequested) {
         video.pause();
@@ -384,10 +393,18 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       report("playing");
     };
     const onPause = () => {
+      if (document.pictureInPictureElement === video && playbackRequested) {
+        // Likewise, pausing from the legacy browser PiP window bypasses the
+        // command handler. The custom VioletWire PiP controls use the normal
+        // command path and do not need this fallback.
+        playbackRequested = false;
+        cancelPendingVideoFrame();
+      }
       if (!playbackRequested) showPausedFrame();
       report("playing");
     };
     const onEnded = () => report("stopped");
+    video.addEventListener("play", onPlay);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("pause", onPause);
     video.addEventListener("ended", onEnded);
@@ -413,6 +430,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       window.clearInterval(statsTimer);
       cancelPendingVideoFrame();
       removeCommandListener();
+      video.removeEventListener("play", onPlay);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("ended", onEnded);

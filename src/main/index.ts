@@ -80,6 +80,12 @@ app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 const applicationIcon = app.isPackaged
   ? path.join(process.resourcesPath, "icon.png")
   : path.join(currentDirectory, "../../build/icon.png");
+// Chromium creates Document Picture-in-Picture windows internally rather than
+// through VioletWire's normal BrowserWindow constructors. Apply the app icon
+// globally so those windows do not fall back to Electron's default icon.
+app.on("browser-window-created", (_event, window) => {
+  window.setIcon(applicationIcon);
+});
 let mainWindow: BrowserWindow | null = null;
 let channelActionWindow: BrowserWindow | null = null;
 let subscriptionWindow: BrowserWindow | null = null;

@@ -74,6 +74,7 @@ import {
 import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
 import { useChatFeed } from "./chat-feed";
+import violetWireIcon from "./assets/violetwire-icon.png";
 
 // The sidebar-layout pair, drawn here rather than pulled from another icon set
 // so the app keeps a single icon dependency. Stroked to sit alongside lucide:
@@ -184,6 +185,24 @@ function clampOverlayGeometry(
 interface NativeControlsProps {
   inlineContext: NativeControlsContext;
   inlineVisible?: boolean;
+}
+
+interface DocumentPictureInPictureApi {
+  window: Window | null;
+  requestWindow(options?: {
+    width?: number;
+    height?: number;
+    disallowReturnToOpener?: boolean;
+    preferInitialWindowPlacement?: boolean;
+  }): Promise<Window>;
+}
+
+function documentPictureInPictureApi(): DocumentPictureInPictureApi | null {
+  return (
+    window as typeof window & {
+      documentPictureInPicture?: DocumentPictureInPictureApi;
+    }
+  ).documentPictureInPicture ?? null;
 }
 
 function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>> {
@@ -428,6 +447,8 @@ export function NativeControls({
   const [stats, setStats] = useState<Record<string, string> | null>(null);
   const [fpsOverlay, setFpsOverlay] = useState(false);
   const [pictureInPictureActive, setPictureInPictureActive] = useState(false);
+  const pictureInPictureCleanup = useRef<(() => void) | null>(null);
+  const controlsMounted = useRef(true);
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -579,6 +600,15 @@ export function NativeControls({
       }),
     [],
   );
+
+  useEffect(() => {
+    controlsMounted.current = true;
+    return () => {
+      controlsMounted.current = false;
+      pictureInPictureCleanup.current?.();
+      pictureInPictureCleanup.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (state.backend !== "hls") return;
@@ -1166,25 +1196,156 @@ export function NativeControls({
   }
 
   async function togglePictureInPicture() {
-    if (
-      state.backend !== "hls" ||
-      !document.pictureInPictureEnabled
-    ) {
+    if (state.backend !== "hls") return;
+    if (pictureInPictureCleanup.current) {
+      pictureInPictureCleanup.current();
+      pictureInPictureCleanup.current = null;
+      setPictureInPictureActive(false);
       return;
     }
     const video = document.querySelector<HTMLVideoElement>(
       ".player-host > .native-hls-video",
     );
     if (!video) return;
+    const documentPip = documentPictureInPictureApi();
     try {
-      if (document.pictureInPictureElement === video) {
-        await document.exitPictureInPicture();
-      } else {
-        await video.requestPictureInPicture();
+      if (!documentPip) {
+        if (!document.pictureInPictureEnabled) return;
+        if (document.pictureInPictureElement === video) {
+          await document.exitPictureInPicture();
+        } else {
+          await video.requestPictureInPicture();
+        }
+        return;
       }
+
+      const pipWindow = await documentPip.requestWindow({
+        width: 480,
+        height: 270,
+        disallowReturnToOpener: true,
+      });
+      const pipDocument = pipWindow.document;
+      pipDocument.title = "VioletWire";
+
+      const favicon = pipDocument.createElement("link");
+      favicon.rel = "icon";
+      favicon.href = violetWireIcon;
+      pipDocument.head.append(favicon);
+
+      const style = pipDocument.createElement("style");
+      style.textContent = `
+        :root { color-scheme: dark; font-family: "Segoe UI Variable", "Segoe UI", sans-serif; }
+        * { box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #000; }
+        .vw-document-pip { position: relative; width: 100%; height: 100%; background: #000; }
+        .vw-document-pip video {
+          position: absolute !important;
+          width: 100% !important;
+          height: 100% !important;
+          inset: 0 !important;
+          object-fit: contain !important;
+          background: #000 !important;
+        }
+        .vw-pip-brand {
+          position: absolute; top: 10px; left: 10px; display: flex; align-items: center;
+          gap: 7px; padding: 6px 9px; border-radius: 7px; color: #fff;
+          background: rgb(10 10 12 / 76%); box-shadow: 0 4px 16px #0008;
+          font-size: 12px; font-weight: 700; opacity: 0;
+          transition: opacity 120ms ease; pointer-events: none;
+        }
+        .vw-pip-brand img { width: 18px; height: 18px; border-radius: 4px; }
+        .vw-pip-controls {
+          position: absolute; right: 0; bottom: 0; left: 0; display: flex;
+          align-items: center; gap: 7px; height: 52px; padding: 8px 10px;
+          background: linear-gradient(transparent, rgb(3 3 5 / 94%));
+          opacity: 0; transition: opacity 120ms ease;
+        }
+        .vw-document-pip:hover .vw-pip-brand,
+        .vw-document-pip:hover .vw-pip-controls,
+        .vw-pip-controls:focus-within { opacity: 1; }
+        .vw-pip-controls button {
+          display: grid; width: 36px; height: 34px; padding: 0; place-items: center;
+          border: 1px solid transparent; border-radius: 7px; color: #fff;
+          background: transparent; cursor: pointer; font: 700 18px/1 "Segoe UI Symbol";
+        }
+        .vw-pip-controls button:hover { border-color: #ffffff28; background: #ffffff1c; }
+        .vw-pip-live {
+          margin-left: auto; color: #fb7185; font-size: 11px; font-weight: 750;
+          letter-spacing: .04em; text-transform: uppercase;
+        }
+      `;
+      pipDocument.head.append(style);
+
+      const host = pipDocument.createElement("div");
+      host.className = "vw-document-pip";
+      const brand = pipDocument.createElement("div");
+      brand.className = "vw-pip-brand";
+      const brandIcon = pipDocument.createElement("img");
+      brandIcon.alt = "";
+      brandIcon.src = violetWireIcon;
+      const brandName = pipDocument.createElement("span");
+      brandName.textContent = "VioletWire";
+      brand.append(brandIcon, brandName);
+
+      const controls = pipDocument.createElement("div");
+      controls.className = "vw-pip-controls";
+      const playbackButton = pipDocument.createElement("button");
+      playbackButton.type = "button";
+      const muteButton = pipDocument.createElement("button");
+      muteButton.type = "button";
+      const liveLabel = pipDocument.createElement("span");
+      liveLabel.className = "vw-pip-live";
+      liveLabel.textContent = "Live";
+      controls.append(playbackButton, muteButton, liveLabel);
+
+      const marker = document.createComment("VioletWire picture-in-picture video");
+      video.replaceWith(marker);
+      host.append(video, brand, controls);
+      pipDocument.body.append(host);
+
+      let latestState = state;
+      const renderControls = (nextState: NativePlayerState) => {
+        latestState = nextState;
+        playbackButton.textContent = nextState.paused ? "▶" : "Ⅱ";
+        playbackButton.title = nextState.paused ? "Play and return to live" : "Pause";
+        playbackButton.ariaLabel = playbackButton.title;
+        muteButton.textContent = nextState.muted ? "🔇" : "🔊";
+        muteButton.title = nextState.muted ? "Unmute" : "Mute";
+        muteButton.ariaLabel = muteButton.title;
+      };
+      renderControls(latestState);
+      const removeStateListener = window.desktop.player.onNativeState(renderControls);
+      playbackButton.addEventListener("click", () => {
+        window.desktop.player.controlNative({
+          command: latestState.paused ? "go-live" : "toggle-pause",
+        });
+      });
+      muteButton.addEventListener("click", () => {
+        window.desktop.player.controlNative({ command: "toggle-mute" });
+      });
+
+      let restored = false;
+      const restoreVideo = () => {
+        if (restored) return;
+        restored = true;
+        removeStateListener();
+        pipWindow.removeEventListener("pagehide", restoreVideo);
+        if (marker.parentNode) marker.replaceWith(video);
+        if (controlsMounted.current) setPictureInPictureActive(false);
+        if (pictureInPictureCleanup.current === closePictureInPicture) {
+          pictureInPictureCleanup.current = null;
+        }
+      };
+      const closePictureInPicture = () => {
+        restoreVideo();
+        if (!pipWindow.closed) pipWindow.close();
+      };
+      pictureInPictureCleanup.current = closePictureInPicture;
+      pipWindow.addEventListener("pagehide", restoreVideo, { once: true });
+      setPictureInPictureActive(true);
     } catch {
-      // Chromium rejects PiP while the video has no presented frame. The
-      // button remains available once playback reaches the playing state.
+      // Chromium rejects PiP without a user gesture or before the video has a
+      // presented frame. The button remains available once playback is ready.
     }
   }
 
@@ -1930,7 +2091,9 @@ export function NativeControls({
         >
           <SidebarLayoutIcon filled={context.theaterMode} />
         </button>
-        {state.backend === "hls" && document.pictureInPictureEnabled && (
+        {state.backend === "hls" &&
+          (documentPictureInPictureApi() !== null ||
+            document.pictureInPictureEnabled) && (
           <button
             aria-label={
               pictureInPictureActive
