@@ -22,6 +22,30 @@ export interface ChatMentionCandidate {
   login: string;
 }
 
+export const RECENT_CHATTER_LIMIT = 2_000;
+
+/** A per-channel, bounded index independent of the rendered message history. */
+export class RecentChatterIndex {
+  private readonly items = new Map<string, ChatMentionCandidate>();
+
+  add(candidate: ChatMentionCandidate): void {
+    const login = candidate.login.trim().toLowerCase();
+    if (!login) return;
+    // Map insertion order gives us a small LRU: refresh an existing user by
+    // moving them to the newest end, then evict the oldest if needed.
+    this.items.delete(login);
+    this.items.set(login, { ...candidate, login });
+    if (this.items.size > RECENT_CHATTER_LIMIT) {
+      const oldest = this.items.keys().next().value;
+      if (oldest) this.items.delete(oldest);
+    }
+  }
+
+  allNewestFirst(): ChatMentionCandidate[] {
+    return [...this.items.values()].reverse();
+  }
+}
+
 const linkPattern =
   /(?:https?:\/\/|www\.)[^\s<>"']+|(?<![@\w])(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{2,5})?(?:\/[^\s<>"']*)?/gi;
 const trailingPunctuation = /[.,!?;:)\]}]+$/;
@@ -110,6 +134,28 @@ export function getChatMentionCandidates(
   limit = 8,
   preferred?: ChatMentionCandidate,
 ): ChatMentionCandidate[] {
+  const recentChatters: ChatMentionCandidate[] = [];
+  const seen = new Set<string>();
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const login = message.login.toLowerCase();
+    if (!login || seen.has(login)) continue;
+    seen.add(login);
+    recentChatters.push({
+      color: message.color,
+      displayName: message.displayName,
+      login,
+    });
+  }
+  return filterChatMentionCandidates(recentChatters, query, limit, preferred);
+}
+
+export function filterChatMentionCandidates(
+  recentChatters: readonly ChatMentionCandidate[],
+  query: string,
+  limit = 8,
+  preferred?: ChatMentionCandidate,
+): ChatMentionCandidate[] {
   if (limit <= 0) return [];
   const normalizedQuery = query.toLowerCase();
   const seen = new Set<string>();
@@ -131,15 +177,14 @@ export function getChatMentionCandidates(
     }
   }
 
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    const login = message.login.toLowerCase();
+  for (const chatter of recentChatters) {
+    const login = chatter.login.toLowerCase();
     if (!login || seen.has(login)) continue;
     seen.add(login);
-    if (!matchesQuery({ displayName: message.displayName, login })) continue;
+    if (!matchesQuery({ displayName: chatter.displayName, login })) continue;
     candidates.push({
-      color: message.color,
-      displayName: message.displayName,
+      color: chatter.color,
+      displayName: chatter.displayName,
       login,
     });
     if (candidates.length >= limit) break;

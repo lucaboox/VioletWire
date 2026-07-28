@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "./chat";
 import {
+  filterChatMentionCandidates,
   getChatMentionCandidates,
   getLinkImagePreviewUrl,
+  RecentChatterIndex,
+  RECENT_CHATTER_LIMIT,
   tokenizeChatLinks,
   tokenizeChatMentions,
 } from "./chat-content";
@@ -90,6 +93,50 @@ describe("getChatMentionCandidates", () => {
         login: "the_streamer",
       }).map(({ login }) => login),
     ).toEqual(["the_streamer", "viewer"]);
+  });
+});
+
+describe("RecentChatterIndex", () => {
+  it("keeps recently observed users independently of message history", () => {
+    const index = new RecentChatterIndex();
+    index.add({ color: "#111111", displayName: "First", login: "first" });
+    index.add({ color: "#222222", displayName: "Second", login: "second" });
+    index.add({ color: "#333333", displayName: "First Updated", login: "FIRST" });
+
+    expect(index.allNewestFirst()).toEqual([
+      { color: "#333333", displayName: "First Updated", login: "first" },
+      { color: "#222222", displayName: "Second", login: "second" },
+    ]);
+  });
+
+  it("evicts the least recently observed user at the channel limit", () => {
+    const index = new RecentChatterIndex();
+    for (let position = 0; position <= RECENT_CHATTER_LIMIT; position += 1) {
+      index.add({
+        color: "",
+        displayName: `User ${position}`,
+        login: `user_${position}`,
+      });
+    }
+
+    const users = index.allNewestFirst();
+    expect(users).toHaveLength(RECENT_CHATTER_LIMIT);
+    expect(users.at(-1)?.login).toBe("user_1");
+    expect(users.some(({ login }) => login === "user_0")).toBe(false);
+  });
+
+  it("filters a recent-chatter index while pinning the broadcaster", () => {
+    expect(
+      filterChatMentionCandidates(
+        [
+          { color: "", displayName: "Viewer Two", login: "viewer_two" },
+          { color: "", displayName: "Viewer One", login: "viewer_one" },
+        ],
+        "view",
+        8,
+        { color: "#9147ff", displayName: "Viewer Stream", login: "viewer_stream" },
+      ).map(({ login }) => login),
+    ).toEqual(["viewer_stream", "viewer_two", "viewer_one"]);
   });
 });
 

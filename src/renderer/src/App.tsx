@@ -85,7 +85,7 @@ import {
   formatModerationAction,
   messageMentionsLogin,
 } from "../../shared/chat";
-import { getChatMentionCandidates } from "../../shared/chat-content";
+import { filterChatMentionCandidates } from "../../shared/chat-content";
 import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
 import {
   mergeChangelogEntries,
@@ -806,6 +806,7 @@ export function App() {
   }, []);
   const {
     messages: chatMessages,
+    recentChatters,
     autoScroll: chatAutoScroll,
     pausedNewCount: pausedChatNewMessages,
     revealedDeleted: revealedDeletedMessages,
@@ -817,7 +818,7 @@ export function App() {
     scrollToCurrent: scrollChatToCurrent,
     revealDeleted: revealDeletedMessage,
     reset: resetChatFeed,
-  } = useChatFeed(handleIncomingChatMessage);
+  } = useChatFeed(chatChannel, handleIncomingChatMessage);
   const browseCategoryLoadSentinel = useRef<HTMLDivElement>(null);
   const categoryStreamLoadSentinel = useRef<HTMLDivElement>(null);
   const browseCategoryLoadPending = useRef(false);
@@ -1443,8 +1444,8 @@ export function App() {
   );
   const chatMentionCandidates = useMemo(
     () =>
-      getChatMentionCandidates(
-        chatMessages,
+      filterChatMentionCandidates(
+        recentChatters,
         "",
         100,
         activeChannel
@@ -1455,7 +1456,7 @@ export function App() {
             }
           : undefined,
       ),
-    [activeChannel, activeChannelDisplayName, chatMessages],
+    [activeChannel, activeChannelDisplayName, recentChatters],
   );
 
   useEffect(() => {

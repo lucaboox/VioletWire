@@ -56,7 +56,7 @@ import type {
   ProviderEmote,
 } from "../../shared/emotes";
 import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
-import { getChatMentionCandidates } from "../../shared/chat-content";
+import { filterChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { parseChannelKey } from "../../shared/platform";
 import { ChatComposerInput } from "./ChatComposerInput";
@@ -515,6 +515,7 @@ export function NativeControls({
   const lastPointerPosition = useRef<{ x: number; y: number } | null>(null);
   const {
     messages: chatMessages,
+    recentChatters,
     autoScroll: chatAutoScroll,
     pausedNewCount: pausedChatNewMessages,
     revealedDeleted: revealedDeletedMessages,
@@ -526,7 +527,7 @@ export function NativeControls({
     scrollToCurrent: scrollChatToCurrent,
     revealDeleted: revealDeletedMessage,
     reset: resetChatFeed,
-  } = useChatFeed();
+  } = useChatFeed(context?.channel);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
   const currentChannel = useRef<string | null>(null);
@@ -1363,7 +1364,7 @@ export function NativeControls({
     -1,
   );
   const channelLogin = parseChannelKey(context.channel).login;
-  const chatMentionCandidates = getChatMentionCandidates(chatMessages, "", 100, {
+  const chatMentionCandidates = filterChatMentionCandidates(recentChatters, "", 100, {
     color: "#9147ff",
     displayName: context.channelDisplayName ?? channelLogin,
     login: channelLogin,

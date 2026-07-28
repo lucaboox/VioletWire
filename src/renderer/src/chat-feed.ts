@@ -2,6 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { MutableRefObject, RefObject } from "react";
 import type { ChatMessage } from "../../shared/chat";
 import {
+  RecentChatterIndex,
+  type ChatMentionCandidate,
+} from "../../shared/chat-content";
+import {
   applyChatMessageBatch,
   CHAT_MESSAGE_LIMIT,
   CHAT_PAUSED_HARD_LIMIT,
@@ -30,9 +34,30 @@ const LIVE_EDGE_THRESHOLD = 36;
 // on some machines. A wheel tick or a pointer press cannot be forged by
 // layout, so requiring one makes phantom pauses structurally impossible.
 const USER_SCROLL_INTENT_WINDOW = 600;
+const RECENT_CHATTER_CHANNEL_LIMIT = 20;
+const recentChattersByChannel = new Map<string, RecentChatterIndex>();
+
+function channelChatterIndex(channel: string): RecentChatterIndex {
+  const key = channel.trim().toLowerCase();
+  const existing = recentChattersByChannel.get(key);
+  if (existing) {
+    // Refresh channel recency as well, bounding retained session data.
+    recentChattersByChannel.delete(key);
+    recentChattersByChannel.set(key, existing);
+    return existing;
+  }
+  const created = new RecentChatterIndex();
+  recentChattersByChannel.set(key, created);
+  if (recentChattersByChannel.size > RECENT_CHATTER_CHANNEL_LIMIT) {
+    const oldest = recentChattersByChannel.keys().next().value;
+    if (oldest) recentChattersByChannel.delete(oldest);
+  }
+  return created;
+}
 
 export interface ChatFeed {
   messages: ChatMessage[];
+  recentChatters: ChatMentionCandidate[];
   autoScroll: boolean;
   /** New non-deleted messages that arrived while the reader was scrolled up. */
   pausedNewCount: number;
@@ -61,8 +86,21 @@ export interface ChatFeed {
  * @param onIncoming Called for each raw incoming message before batching (used
  *   for mention alerts). Read through a ref so the subscription stays stable.
  */
-export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFeed {
+export function useChatFeed(
+  channel: string | null | undefined,
+  onIncoming?: (message: ChatMessage) => void,
+): ChatFeed {
+  const channelKey = channel?.trim().toLowerCase() ?? "";
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [recentChatterState, setRecentChatterState] = useState<{
+    channel: string;
+    items: ChatMentionCandidate[];
+  }>(() => ({
+    channel: channelKey,
+    items: channelKey
+      ? (recentChattersByChannel.get(channelKey)?.allNewestFirst() ?? [])
+      : [],
+  }));
   const [autoScroll, setAutoScroll] = useState(true);
   const [pausedNewCount, setPausedNewCount] = useState(0);
   const [revealedDeleted, setRevealedDeleted] = useState<Set<string>>(new Set());
@@ -73,12 +111,23 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
   const lastScrollTop = useRef(0);
   const lastUserScrollIntentAt = useRef(0);
   const messageCount = useRef(0);
+  const channelRef = useRef(channelKey);
+  const recentChattersDirty = useRef(false);
   const batch = useRef<ChatMessage[]>([]);
   const batchTimer = useRef<number | null>(null);
   const onIncomingRef = useRef(onIncoming);
   useEffect(() => {
     onIncomingRef.current = onIncoming;
   }, [onIncoming]);
+  useEffect(() => {
+    channelRef.current = channelKey;
+  }, [channelKey]);
+  const recentChatters =
+    recentChatterState.channel === channelKey
+      ? recentChatterState.items
+      : channelKey
+        ? (recentChattersByChannel.get(channelKey)?.allNewestFirst() ?? [])
+        : [];
 
   const flushBatch = useCallback(() => {
     if (batchTimer.current !== null) {
@@ -88,6 +137,14 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
     const pending = batch.current;
     if (pending.length === 0) return;
     batch.current = [];
+    if (recentChattersDirty.current) {
+      recentChattersDirty.current = false;
+      const key = channelRef.current;
+      setRecentChatterState({
+        channel: key,
+        items: key ? channelChatterIndex(key).allNewestFirst() : [],
+      });
+    }
     const paused = !autoScrollRef.current;
     if (paused) {
       const newMessageCount = pending.filter(
@@ -130,6 +187,17 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
           next.delete(message.id);
           return next;
         });
+      }
+      if (!message.deleted && message.login) {
+        const key = channelRef.current;
+        if (key) {
+          channelChatterIndex(key).add({
+            color: message.color,
+            displayName: message.displayName,
+            login: message.login,
+          });
+          recentChattersDirty.current = true;
+        }
       }
       onIncomingRef.current?.(message);
       batch.current.push(message);
@@ -236,6 +304,7 @@ export function useChatFeed(onIncoming?: (message: ChatMessage) => void): ChatFe
 
   return {
     messages,
+    recentChatters,
     autoScroll,
     pausedNewCount,
     revealedDeleted,
