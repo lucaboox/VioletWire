@@ -4203,6 +4203,34 @@ export function App() {
                   className="player-host"
                   ref={playerHost}
                   aria-label={`${activeMode === "native" ? "Native" : "Official Twitch"} player for ${activeChannel}`}
+                  onAuxClick={(event) => {
+                    if (activeMode !== "native" || event.button !== 1) return;
+                    if (
+                      event.target instanceof Element &&
+                      event.target.closest(
+                        'button, input, textarea, select, a, [contenteditable="true"], [role="dialog"], [role="menu"], .native-video-chat',
+                      )
+                    ) {
+                      return;
+                    }
+                    event.preventDefault();
+                    window.desktop.player.controlNative({ command: "toggle-mute" });
+                    revealNativeControls();
+                  }}
+                  onMouseDown={(event) => {
+                    if (activeMode !== "native" || event.button !== 1) return;
+                    if (
+                      event.target instanceof Element &&
+                      event.target.closest(
+                        'button, input, textarea, select, a, [contenteditable="true"], [role="dialog"], [role="menu"], .native-video-chat',
+                      )
+                    ) {
+                      return;
+                    }
+                    // Suppress Chromium's middle-button autoscroll cursor over
+                    // the video; auxclick performs the actual mute toggle.
+                    event.preventDefault();
+                  }}
                 >
                   {activeMode === "official" && (
                     <iframe
@@ -5963,6 +5991,23 @@ export function App() {
             ref={miniPlayerRef}
             role="region"
             style={{ ...(miniPlayerPosition ?? {}), width: miniPlayerWidth }}
+            onAuxClick={(event) => {
+              if (activeMode !== "native" || event.button !== 1) return;
+              if (event.target instanceof Element && event.target.closest("button, input")) {
+                return;
+              }
+              event.preventDefault();
+              window.desktop.player.controlNative({ command: "toggle-mute" });
+            }}
+            onMouseDown={(event) => {
+              if (
+                activeMode === "native" &&
+                event.button === 1 &&
+                !(event.target instanceof Element && event.target.closest("button, input"))
+              ) {
+                event.preventDefault();
+              }
+            }}
             onPointerDown={(event) => {
               if (event.button !== 0) return;
               if (event.target instanceof Element && event.target.closest("button")) return;

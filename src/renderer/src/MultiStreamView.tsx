@@ -292,6 +292,21 @@ const MultiTile = memo(function MultiTile({
         .join(" ")}
       ref={hostRef}
       onClick={() => onActivate(tile.id)}
+      onAuxClick={(event) => {
+        if (event.button !== 1) return;
+        if (event.target instanceof Element && event.target.closest("button, input")) return;
+        event.preventDefault();
+        onToggleMute(tile.id);
+        revealControls();
+      }}
+      onMouseDown={(event) => {
+        if (
+          event.button === 1 &&
+          !(event.target instanceof Element && event.target.closest("button, input"))
+        ) {
+          event.preventDefault();
+        }
+      }}
       onMouseMove={revealControls}
       onMouseLeave={hideControls}
     >
