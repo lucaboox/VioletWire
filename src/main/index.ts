@@ -80,12 +80,6 @@ app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 const applicationIcon = app.isPackaged
   ? path.join(process.resourcesPath, "icon.png")
   : path.join(currentDirectory, "../../build/icon.png");
-// Chromium creates Document Picture-in-Picture windows internally rather than
-// through VioletWire's normal BrowserWindow constructors. Apply the app icon
-// globally so those windows do not fall back to Electron's default icon.
-app.on("browser-window-created", (_event, window) => {
-  window.setIcon(applicationIcon);
-});
 let mainWindow: BrowserWindow | null = null;
 let channelActionWindow: BrowserWindow | null = null;
 let subscriptionWindow: BrowserWindow | null = null;
@@ -96,7 +90,6 @@ let playerOpenGeneration = 0;
 let rendererServer: RendererServer | null = null;
 let trustedRendererOrigin: string | null = null;
 let latestNativePlayerState: NativePlayerState | null = null;
-let documentPictureInPictureAllowanceExpiresAt = 0;
 
 type ThumbarGlyph = "play" | "pause" | "speaker" | "speaker-muted";
 
@@ -242,19 +235,7 @@ function onTrusted<Arguments extends unknown[]>(
 function lockLocalRendererNavigation(
   window: BrowserWindow,
 ): void {
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    // Document Picture-in-Picture creates one same-origin about:blank window.
-    // Keep the normal popup deny-list intact and permit only the next window
-    // explicitly armed by the trusted renderer's PiP button.
-    if (
-      url === "about:blank" &&
-      Date.now() <= documentPictureInPictureAllowanceExpiresAt
-    ) {
-      documentPictureInPictureAllowanceExpiresAt = 0;
-      return { action: "allow" };
-    }
-    return { action: "deny" };
-  });
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   const blockUnexpectedNavigation = (event: Electron.Event, url: string) => {
     if (!isTrustedRendererUrl(url)) event.preventDefault();
   };
@@ -1282,18 +1263,6 @@ handleTrusted("updates:get-release-notes", (_event, forceRefresh: unknown) => {
     throw new Error("Invalid release-notes refresh request.");
   }
   return githubReleaseNotesService.getMarkdown(forceRefresh === true);
-});
-
-ipcMain.on("window:prepare-document-picture-in-picture", (event) => {
-  if (!isTrustedIpcSender(event)) {
-    event.returnValue = false;
-    return;
-  }
-  // requestWindow() must retain the button's transient user activation, so
-  // preload uses this narrowly scoped synchronous handshake immediately before
-  // the browser API call. The allowance is consumed once or expires quickly.
-  documentPictureInPictureAllowanceExpiresAt = Date.now() + 1_000;
-  event.returnValue = true;
 });
 
 handleTrusted("system:get-link-preview", (_event, input: unknown) => {

@@ -259,7 +259,6 @@ export interface DesktopApi {
     preresolveStream(channel: string): void;
     setFullscreen(fullscreen: boolean): Promise<boolean>;
     onFullscreenChanged(listener: (fullscreen: boolean) => void): () => void;
-    prepareDocumentPictureInPicture(): boolean;
     openChannelAction(channel: string, action: ChannelAction): Promise<void>;
     // Opens Twitch's subscribe page for the channel in a titled modal window.
     openSubscription(channel: string, title: string): Promise<void>;

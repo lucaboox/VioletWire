@@ -301,8 +301,6 @@ const api: DesktopApi = {
       ipcRenderer.on("window:fullscreen-changed", handler);
       return () => ipcRenderer.removeListener("window:fullscreen-changed", handler);
     },
-    prepareDocumentPictureInPicture: () =>
-      ipcRenderer.sendSync("window:prepare-document-picture-in-picture") === true,
     openChannelAction: (channel: string, action: ChannelAction) =>
       ipcRenderer.invoke("channel:open-action", channel, action),
     openSubscription: (channel: string, title: string) =>
