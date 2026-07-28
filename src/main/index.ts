@@ -96,6 +96,7 @@ let playerOpenGeneration = 0;
 let rendererServer: RendererServer | null = null;
 let trustedRendererOrigin: string | null = null;
 let latestNativePlayerState: NativePlayerState | null = null;
+let documentPictureInPictureAllowanceExpiresAt = 0;
 
 type ThumbarGlyph = "play" | "pause" | "speaker" | "speaker-muted";
 
@@ -241,7 +242,19 @@ function onTrusted<Arguments extends unknown[]>(
 function lockLocalRendererNavigation(
   window: BrowserWindow,
 ): void {
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    // Document Picture-in-Picture creates one same-origin about:blank window.
+    // Keep the normal popup deny-list intact and permit only the next window
+    // explicitly armed by the trusted renderer's PiP button.
+    if (
+      url === "about:blank" &&
+      Date.now() <= documentPictureInPictureAllowanceExpiresAt
+    ) {
+      documentPictureInPictureAllowanceExpiresAt = 0;
+      return { action: "allow" };
+    }
+    return { action: "deny" };
+  });
   const blockUnexpectedNavigation = (event: Electron.Event, url: string) => {
     if (!isTrustedRendererUrl(url)) event.preventDefault();
   };
@@ -1269,6 +1282,18 @@ handleTrusted("updates:get-release-notes", (_event, forceRefresh: unknown) => {
     throw new Error("Invalid release-notes refresh request.");
   }
   return githubReleaseNotesService.getMarkdown(forceRefresh === true);
+});
+
+ipcMain.on("window:prepare-document-picture-in-picture", (event) => {
+  if (!isTrustedIpcSender(event)) {
+    event.returnValue = false;
+    return;
+  }
+  // requestWindow() must retain the button's transient user activation, so
+  // preload uses this narrowly scoped synchronous handshake immediately before
+  // the browser API call. The allowance is consumed once or expires quickly.
+  documentPictureInPictureAllowanceExpiresAt = Date.now() + 1_000;
+  event.returnValue = true;
 });
 
 handleTrusted("system:get-link-preview", (_event, input: unknown) => {

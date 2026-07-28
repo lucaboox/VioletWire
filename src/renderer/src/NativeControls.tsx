@@ -1221,6 +1221,7 @@ export function NativeControls({
         return;
       }
 
+      if (!window.desktop.player.prepareDocumentPictureInPicture()) return;
       const pipWindow = await documentPip.requestWindow({
         width: 480,
         height: 270,
@@ -1346,8 +1347,14 @@ export function NativeControls({
       pipWindow.addEventListener("pagehide", restoreVideo, { once: true });
       setPictureInPictureActive(true);
     } catch {
-      // Chromium rejects PiP without a user gesture or before the video has a
-      // presented frame. The button remains available once playback is ready.
+      // If Chromium cannot create the custom Document PiP window, retain a
+      // functional mini-player through the standard video-only API.
+      if (
+        document.pictureInPictureEnabled &&
+        document.pictureInPictureElement !== video
+      ) {
+        await video.requestPictureInPicture().catch(() => undefined);
+      }
     }
   }
 
