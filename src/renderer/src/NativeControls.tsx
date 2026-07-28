@@ -25,6 +25,7 @@ import {
   Minimize,
   MoveDiagonal2,
   Pause,
+  PictureInPicture2,
   Play,
   Reply,
   SlidersHorizontal,
@@ -426,6 +427,7 @@ export function NativeControls({
   const [statsHovered, setStatsHovered] = useState(false);
   const [stats, setStats] = useState<Record<string, string> | null>(null);
   const [fpsOverlay, setFpsOverlay] = useState(false);
+  const [pictureInPictureActive, setPictureInPictureActive] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -577,6 +579,25 @@ export function NativeControls({
       }),
     [],
   );
+
+  useEffect(() => {
+    if (state.backend !== "hls") return;
+    const video = document.querySelector<HTMLVideoElement>(
+      ".player-host > .native-hls-video",
+    );
+    if (!video) return;
+    const updatePictureInPictureState = () => {
+      setPictureInPictureActive(document.pictureInPictureElement === video);
+    };
+    const initialStateTimer = window.setTimeout(updatePictureInPictureState, 0);
+    video.addEventListener("enterpictureinpicture", updatePictureInPictureState);
+    video.addEventListener("leavepictureinpicture", updatePictureInPictureState);
+    return () => {
+      window.clearTimeout(initialStateTimer);
+      video.removeEventListener("enterpictureinpicture", updatePictureInPictureState);
+      video.removeEventListener("leavepictureinpicture", updatePictureInPictureState);
+    };
+  }, [channel, state.backend]);
 
   useEffect(() => {
     if (currentChannel.current !== channel) {
@@ -1142,6 +1163,29 @@ export function NativeControls({
     window.desktop.player.controlNative({
       command: state.paused ? "go-live" : "toggle-pause",
     });
+  }
+
+  async function togglePictureInPicture() {
+    if (
+      state.backend !== "hls" ||
+      !document.pictureInPictureEnabled
+    ) {
+      return;
+    }
+    const video = document.querySelector<HTMLVideoElement>(
+      ".player-host > .native-hls-video",
+    );
+    if (!video) return;
+    try {
+      if (document.pictureInPictureElement === video) {
+        await document.exitPictureInPicture();
+      } else {
+        await video.requestPictureInPicture();
+      }
+    } catch {
+      // Chromium rejects PiP while the video has no presented frame. The
+      // button remains available once playback reaches the playing state.
+    }
   }
 
   function selectChatLayout(action: "hide-chat" | "side-chat" | "overlay-chat") {
@@ -1886,6 +1930,27 @@ export function NativeControls({
         >
           <SidebarLayoutIcon filled={context.theaterMode} />
         </button>
+        {state.backend === "hls" && document.pictureInPictureEnabled && (
+          <button
+            aria-label={
+              pictureInPictureActive
+                ? "Exit picture-in-picture"
+                : "Picture-in-picture"
+            }
+            aria-pressed={pictureInPictureActive}
+            className={pictureInPictureActive ? "active" : ""}
+            data-tooltip={
+              pictureInPictureActive
+                ? "Exit picture-in-picture"
+                : "Picture-in-picture"
+            }
+            disabled={state.status !== "playing"}
+            onClick={() => void togglePictureInPicture()}
+            type="button"
+          >
+            <PictureInPicture2 size={18} />
+          </button>
+        )}
         <button
           aria-label={context.fullscreen ? "Exit fullscreen" : "Fullscreen"}
           aria-pressed={context.fullscreen}
