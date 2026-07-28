@@ -1442,8 +1442,20 @@ export function App() {
     -1,
   );
   const chatMentionCandidates = useMemo(
-    () => getChatMentionCandidates(chatMessages, "", 100),
-    [chatMessages],
+    () =>
+      getChatMentionCandidates(
+        chatMessages,
+        "",
+        100,
+        activeChannel
+          ? {
+              color: "#9147ff",
+              displayName: activeChannelDisplayName ?? parseChannelKey(activeChannel).login,
+              login: parseChannelKey(activeChannel).login,
+            }
+          : undefined,
+      ),
+    [activeChannel, activeChannelDisplayName, chatMessages],
   );
 
   useEffect(() => {
@@ -4262,6 +4274,7 @@ export function App() {
                           theaterMode,
                           chatVisible,
                           chatPresentation,
+                          channelDisplayName: activeChannelDisplayName ?? undefined,
                           viewerLogin,
                           isFollowed: activeChannelFollowState ?? undefined,
                         }}

@@ -69,6 +69,7 @@ export const nativeControlsContextSchema = z.object({
   theaterMode: z.boolean(),
   chatVisible: z.boolean(),
   chatPresentation: chatPresentationSchema,
+  channelDisplayName: z.string().min(1).max(50).optional(),
   viewerLogin: z.string().max(25).regex(/^[a-z0-9_]*$/).optional(),
   // Whether the viewer follows the channel, so the overlay composer can block a
   // followers-only chat it is certain the viewer cannot post to.
@@ -112,6 +113,7 @@ export interface NativeControlsContext {
   theaterMode: boolean;
   chatVisible: boolean;
   chatPresentation: ChatPresentation;
+  channelDisplayName?: string;
   viewerLogin?: string;
   isFollowed?: boolean;
 }

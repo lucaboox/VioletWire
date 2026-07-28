@@ -754,6 +754,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .native-chat-message.mentioned:hover { background: #9147ff3d; }
 .oled-mode .native-chat-message.mentioned { background: #9147ff33; }
 .oled-mode .native-chat-message.mentioned:hover { background: #9147ff4d; }
+.chat-text-mention { font-weight: 750; }
 .native-chat-message strong { font-weight: 750; }
 .chat-reply-parent { display: block; width: 100%; overflow: hidden; margin: 2px 0 4px; padding: 0 0 0 8px; border: 0; border-left: 2px solid #8b5cf6; color: #aaaab4; background: transparent; cursor: pointer; font: inherit; font-size: 12px; line-height: 18px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .chat-reply-parent:hover { color: #ded5e9; background: #ffffff08; }

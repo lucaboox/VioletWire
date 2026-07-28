@@ -4,6 +4,7 @@ import {
   getChatMentionCandidates,
   getLinkImagePreviewUrl,
   tokenizeChatLinks,
+  tokenizeChatMentions,
 } from "./chat-content";
 
 function message(login: string, displayName = login): ChatMessage {
@@ -64,6 +65,48 @@ describe("getChatMentionCandidates", () => {
     expect(getChatMentionCandidates(messages, "luca").map(({ login }) => login)).toEqual([
       "lucaboox",
       "lucasaurus",
+    ]);
+  });
+
+  it("keeps the current streamer first even when they have not chatted", () => {
+    const messages = [message("viewer"), message("recent_chatter")];
+
+    expect(
+      getChatMentionCandidates(messages, "", 8, {
+        color: "#9147ff",
+        displayName: "The Streamer",
+        login: "the_streamer",
+      }).map(({ login }) => login),
+    ).toEqual(["the_streamer", "recent_chatter", "viewer"]);
+  });
+
+  it("does not duplicate a preferred streamer who has chatted", () => {
+    const messages = [message("the_streamer", "The Streamer"), message("viewer")];
+
+    expect(
+      getChatMentionCandidates(messages, "", 8, {
+        color: "#9147ff",
+        displayName: "The Streamer",
+        login: "the_streamer",
+      }).map(({ login }) => login),
+    ).toEqual(["the_streamer", "viewer"]);
+  });
+});
+
+describe("tokenizeChatMentions", () => {
+  it("separates Twitch-style mentions from surrounding chat text", () => {
+    expect(tokenizeChatMentions("hello @Streamer, and @viewer_2!")).toEqual([
+      { kind: "text", text: "hello " },
+      { kind: "mention", text: "@Streamer" },
+      { kind: "text", text: ", and " },
+      { kind: "mention", text: "@viewer_2" },
+      { kind: "text", text: "!" },
+    ]);
+  });
+
+  it("does not treat email addresses as chat mentions", () => {
+    expect(tokenizeChatMentions("person@example.org")).toEqual([
+      { kind: "text", text: "person@example.org" },
     ]);
   });
 });

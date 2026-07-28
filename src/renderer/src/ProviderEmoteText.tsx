@@ -3,6 +3,7 @@ import type { ProviderEmote } from "../../shared/emotes";
 import {
   getLinkImagePreviewUrl,
   tokenizeChatLinks,
+  tokenizeChatMentions,
 } from "../../shared/chat-content";
 import { ChatEmote } from "./ChatEmote";
 import {
@@ -133,7 +134,20 @@ export function renderProviderText(
     }
 
     return plainTextSegments(content.text, emotes).map((segment, segmentIndex) => {
-      if (segment.kind === "text") return segment.text;
+      if (segment.kind === "text") {
+        return tokenizeChatMentions(segment.text).map((token, tokenIndex) =>
+          token.kind === "mention" ? (
+            <strong
+              className="chat-text-mention"
+              key={`${key}-${contentIndex}-${segmentIndex}-mention-${tokenIndex}`}
+            >
+              {token.text}
+            </strong>
+          ) : (
+            token.text
+          ),
+        );
+      }
       const variant =
         segment.emote.variants.find((item) => item.scale === 2) ??
         segment.emote.variants.at(-1);

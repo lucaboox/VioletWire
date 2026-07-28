@@ -58,6 +58,7 @@ import type {
 import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
 import { getChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
+import { parseChannelKey } from "../../shared/platform";
 import { ChatComposerInput } from "./ChatComposerInput";
 import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
 import type { ChatRestrictions } from "../../shared/chat";
@@ -1361,7 +1362,12 @@ export function NativeControls({
     (lastIndex, message, index) => (message.historical ? index : lastIndex),
     -1,
   );
-  const chatMentionCandidates = getChatMentionCandidates(chatMessages, "", 100);
+  const channelLogin = parseChannelKey(context.channel).login;
+  const chatMentionCandidates = getChatMentionCandidates(chatMessages, "", 100, {
+    color: "#9147ff",
+    displayName: context.channelDisplayName ?? channelLogin,
+    login: channelLogin,
+  });
   const chatOverlayActive = context.chatVisible && context.chatPresentation === "overlay";
 
   return (

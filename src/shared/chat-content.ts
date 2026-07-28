@@ -12,6 +12,9 @@ export interface ChatTextToken {
 }
 
 export type ChatContentToken = ChatLinkToken | ChatTextToken;
+export type ChatMentionTextToken =
+  | ChatTextToken
+  | { kind: "mention"; text: string };
 
 export interface ChatMentionCandidate {
   color: string;
@@ -22,6 +25,7 @@ export interface ChatMentionCandidate {
 const linkPattern =
   /(?:https?:\/\/|www\.)[^\s<>"']+|(?<![@\w])(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{2,5})?(?:\/[^\s<>"']*)?/gi;
 const trailingPunctuation = /[.,!?;:)\]}]+$/;
+const mentionPattern = /(?<![\w@])@[a-z0-9_]{1,25}(?![a-z0-9_])/gi;
 
 export function tokenizeChatLinks(text: string): ChatContentToken[] {
   const tokens: ChatContentToken[] = [];
@@ -54,6 +58,19 @@ export function tokenizeChatLinks(text: string): ChatContentToken[] {
   }
 
   if (cursor < text.length) pushText(text.slice(cursor));
+  return tokens.length > 0 ? tokens : [{ kind: "text", text }];
+}
+
+export function tokenizeChatMentions(text: string): ChatMentionTextToken[] {
+  const tokens: ChatMentionTextToken[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(mentionPattern)) {
+    const start = match.index;
+    if (start > cursor) tokens.push({ kind: "text", text: text.slice(cursor, start) });
+    tokens.push({ kind: "mention", text: match[0] });
+    cursor = start + match[0].length;
+  }
+  if (cursor < text.length) tokens.push({ kind: "text", text: text.slice(cursor) });
   return tokens.length > 0 ? tokens : [{ kind: "text", text }];
 }
 
@@ -91,23 +108,35 @@ export function getChatMentionCandidates(
   messages: ChatMessage[],
   query: string,
   limit = 8,
+  preferred?: ChatMentionCandidate,
 ): ChatMentionCandidate[] {
+  if (limit <= 0) return [];
   const normalizedQuery = query.toLowerCase();
   const seen = new Set<string>();
   const candidates: ChatMentionCandidate[] = [];
+  const matchesQuery = (candidate: Pick<ChatMentionCandidate, "displayName" | "login">) =>
+    !normalizedQuery ||
+    candidate.login.toLowerCase().startsWith(normalizedQuery) ||
+    candidate.displayName.toLowerCase().startsWith(normalizedQuery);
+
+  if (preferred?.login) {
+    const normalizedPreferred = {
+      ...preferred,
+      login: preferred.login.toLowerCase(),
+    };
+    if (matchesQuery(normalizedPreferred)) {
+      candidates.push(normalizedPreferred);
+      seen.add(normalizedPreferred.login);
+      if (candidates.length >= limit) return candidates;
+    }
+  }
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     const login = message.login.toLowerCase();
     if (!login || seen.has(login)) continue;
     seen.add(login);
-    if (
-      normalizedQuery &&
-      !login.startsWith(normalizedQuery) &&
-      !message.displayName.toLowerCase().startsWith(normalizedQuery)
-    ) {
-      continue;
-    }
+    if (!matchesQuery({ displayName: message.displayName, login })) continue;
     candidates.push({
       color: message.color,
       displayName: message.displayName,
