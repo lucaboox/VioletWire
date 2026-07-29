@@ -63,6 +63,35 @@ describe("applyChatMessage", () => {
     expect(next[0].sentAt).toBe(1_000);
   });
 
+  it("replaces a pending sent message with Twitch's authoritative copy", () => {
+    const pending = makeMessage("sent-id", 1_000, {
+      color: "#a1a1aa",
+      badges: [],
+      pending: true,
+    });
+    const confirmed = makeMessage("sent-id", 1_050, {
+      color: "#9147ff",
+      badges: ["subscriber/12"],
+      twitchEmotes: [{ id: "25", start: 0, end: 4 }],
+    });
+
+    const next = applyChatMessage([pending], confirmed);
+
+    expect(next).not.toEqual([pending]);
+    expect(next).toHaveLength(1);
+    expect(next[0]).toBe(confirmed);
+  });
+
+  it("does not let a late pending copy replace an already confirmed message", () => {
+    const confirmed = makeMessage("sent-id", 1_000, {
+      color: "#9147ff",
+      badges: ["subscriber/12"],
+    });
+    const pending = makeMessage("sent-id", 1_050, { pending: true });
+
+    expect(applyChatMessage([confirmed], pending)).toEqual([confirmed]);
+  });
+
   it("marks an existing message deleted and ignores unmatched deletions", () => {
     const original = [makeMessage("a", 1_000), makeMessage("b", 2_000)];
     const next = applyChatMessage(original, makeMessage("a", 1_000, { deleted: true }));

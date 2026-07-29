@@ -24,7 +24,7 @@ import {
   type TwitchPinnedChatMessage,
   type TwitchSearchResults,
 } from "../shared/twitch";
-import type { TwitchChatAssets } from "../shared/chat";
+import type { ChatMessage, TwitchChatAssets } from "../shared/chat";
 
 // Twitch documents Client IDs as public identifiers that may be embedded in
 // client applications. VioletWire's public Device Code client never uses a secret.
@@ -296,6 +296,8 @@ class TwitchRequestError extends Error {
 export const VALIDATION_LIFETIME = 55 * 60_000;
 const CHAT_ASSETS_LIFETIME = 10 * 60_000;
 const USER_PROFILE_LIFETIME = 60_000;
+const CHAT_BROADCASTER_LIFETIME = 60 * 60_000;
+const CHAT_BROADCASTER_CACHE_LIMIT = 100;
 const IVR_SUBAGE_TIMEOUT = 5_000;
 const SESSION_CHANGED_MESSAGE =
   "The Twitch session changed; the stale result was discarded.";
@@ -332,6 +334,10 @@ export class TwitchService {
   private readonly userProfileCache = new Map<
     string,
     { expiresAt: number; result: Promise<ChatUserProfile> }
+  >();
+  private readonly chatBroadcasterCache = new Map<
+    string,
+    { expiresAt: number; result: Promise<string> }
   >();
 
   private get tokenPath(): string {
@@ -894,19 +900,14 @@ export class TwitchService {
     channel: string,
     message: string,
     replyParentMessageId?: string,
-  ): Promise<void> {
+  ): Promise<ChatMessage | null> {
     const account = await this.requireAccount();
-    const users = await this.helix(
-      `/users?login=${encodeURIComponent(channel)}`,
-      usersResponseSchema,
-    );
-    const broadcaster = users.data[0];
-    if (!broadcaster) throw new Error("Twitch channel was not found.");
+    const broadcasterId = await this.getChatBroadcasterId(channel);
     const result = await this.helix("/chat/messages", sendChatResponseSchema, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        broadcaster_id: broadcaster.id,
+        broadcaster_id: broadcasterId,
         sender_id: account.id,
         message,
         ...(replyParentMessageId
@@ -918,6 +919,50 @@ export class TwitchService {
     if (!delivery?.is_sent) {
       throw new Error(delivery?.drop_reason?.message ?? "Twitch did not send the chat message.");
     }
+    if (!delivery.message_id) return null;
+    const action = message.startsWith("/me ") && message.length > 4;
+    return {
+      id: delivery.message_id,
+      channel,
+      login: account.login,
+      displayName: account.displayName,
+      color: "#a1a1aa",
+      text: action ? message.slice(4) : message,
+      badges: [],
+      sentAt: Date.now(),
+      twitchEmotes: [],
+      pending: true,
+      ...(action ? { action: true } : {}),
+    };
+  }
+
+  private getChatBroadcasterId(channel: string): Promise<string> {
+    const login = channel.trim().toLowerCase();
+    const cached = this.chatBroadcasterCache.get(login);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+    if (cached) this.chatBroadcasterCache.delete(login);
+
+    const result = this.helix(
+      `/users?login=${encodeURIComponent(login)}`,
+      usersResponseSchema,
+    ).then((users) => {
+      const broadcaster = users.data[0];
+      if (!broadcaster) throw new Error("Twitch channel was not found.");
+      return broadcaster.id;
+    });
+    this.chatBroadcasterCache.set(login, {
+      expiresAt: Date.now() + CHAT_BROADCASTER_LIFETIME,
+      result,
+    });
+    if (this.chatBroadcasterCache.size > CHAT_BROADCASTER_CACHE_LIMIT) {
+      const oldest = this.chatBroadcasterCache.keys().next().value;
+      if (oldest) this.chatBroadcasterCache.delete(oldest);
+    }
+    result.catch(() => {
+      const entry = this.chatBroadcasterCache.get(login);
+      if (entry?.result === result) this.chatBroadcasterCache.delete(login);
+    });
+    return result;
   }
 
   async getChatAssets(channel: string): Promise<TwitchChatAssets> {

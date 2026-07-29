@@ -47,7 +47,14 @@ export function applyChatMessage(
     return next;
   }
 
-  if (current.some((item) => item.id === message.id)) return current;
+  const existingIndex = current.findIndex((item) => item.id === message.id);
+  if (existingIndex >= 0) {
+    const existing = current[existingIndex];
+    if (!existing.pending || message.pending) return current;
+    const confirmed = current.slice();
+    confirmed[existingIndex] = message;
+    return confirmed;
+  }
 
   const last = current.at(-1);
   if (!last || message.sentAt >= last.sentAt) {

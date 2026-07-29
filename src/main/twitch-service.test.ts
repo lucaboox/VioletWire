@@ -700,7 +700,7 @@ describe("TwitchService chat replies", () => {
     internals.account = testAccount;
     internals.validatedAt = Date.now();
 
-    await service.sendChatMessage(
+    const sent = await service.sendChatMessage(
       "somechannel",
       "This is a reply",
       "719e45c4-5861-4c3f-932d-e34141177b0e",
@@ -712,6 +712,35 @@ describe("TwitchService chat replies", () => {
       message: "This is a reply",
       reply_parent_message_id: "719e45c4-5861-4c3f-932d-e34141177b0e",
     });
+    expect(sent).toMatchObject({
+      id: "sent-id",
+      channel: "somechannel",
+      login: "tester",
+      displayName: "Tester",
+      text: "This is a reply",
+      pending: true,
+    });
+  });
+
+  it("reuses a channel id for subsequent messages", async () => {
+    let sentCount = 0;
+    installFetch((url) => {
+      if (url.includes("/helix/users?login=")) return json(broadcasterPayload);
+      if (url.includes("/helix/chat/messages")) {
+        sentCount += 1;
+        return json({ data: [{ message_id: `sent-${sentCount}`, is_sent: true }] });
+      }
+      return defaultRoutes(url);
+    });
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+
+    await service.sendChatMessage("somechannel", "First");
+    await service.sendChatMessage("somechannel", "Second");
+
+    expect(requestCount("/helix/users?login=somechannel")).toBe(1);
+    expect(requestCount("/helix/chat/messages")).toBe(2);
   });
 });
 

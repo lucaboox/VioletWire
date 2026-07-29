@@ -61,6 +61,11 @@ export interface ChatMessage {
     durationSeconds?: number;
   };
   historical?: boolean;
+  /**
+   * Locally published after Twitch accepts an outgoing message. The
+   * authoritative chat copy with the same id replaces it when it arrives.
+   */
+  pending?: boolean;
   /** IRC "/me" message: rendered in the sender's color, Twitch-style. */
   action?: boolean;
 }

@@ -43,11 +43,7 @@ export class MultiChatService {
       // The map key stays the full channel key so the renderer's buffers line up
       // with each tile; the service connects to the bare login for its platform.
       const { platform, login } = parseChannelKey(channel);
-      const onMessage = (message: ChatMessage) => {
-        buffer.push(message);
-        if (buffer.length > BUFFER_LIMIT) buffer.splice(0, buffer.length - BUFFER_LIMIT);
-        this.onMessage(channel, message);
-      };
+      const onMessage = (message: ChatMessage) => this.recordMessage(channel, message);
       const onState = (state: ChatConnectionState) => this.onState(channel, state);
       // Multistream tiles have no composer, so restrictions are not surfaced.
       const service: TileChatService =
@@ -60,6 +56,10 @@ export class MultiChatService {
     }
   }
 
+  publishSentMessage(channel: string, message: ChatMessage): void {
+    this.recordMessage(channel.toLowerCase(), message);
+  }
+
   setHistoryLimit(limit: number): void {
     this.historyLimit = limit;
     for (const service of this.services.values()) service.setHistoryLimit(limit);
@@ -69,5 +69,20 @@ export class MultiChatService {
     for (const service of this.services.values()) service.disconnect();
     this.services.clear();
     this.buffers.clear();
+  }
+
+  private recordMessage(channel: string, message: ChatMessage): void {
+    const buffer = this.buffers.get(channel);
+    if (!buffer) return;
+    const existingIndex = buffer.findIndex((item) => item.id === message.id);
+    if (existingIndex >= 0) {
+      const existing = buffer[existingIndex];
+      if (!existing.pending || message.pending) return;
+      buffer[existingIndex] = message;
+    } else {
+      buffer.push(message);
+      if (buffer.length > BUFFER_LIMIT) buffer.splice(0, buffer.length - BUFFER_LIMIT);
+    }
+    this.onMessage(channel, message);
   }
 }

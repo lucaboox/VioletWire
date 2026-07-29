@@ -1217,7 +1217,7 @@ handleTrusted("emotes:bttv-channel", (_event, broadcasterId: unknown) => {
 handleTrusted("emotes:clear-cache", async () => {
   await Promise.all([sevenTvService.clear(), thirdPartyEmoteService.clear()]);
 });
-handleTrusted("chat:send", (
+handleTrusted("chat:send", async (
   _event,
   rawChannel: unknown,
   rawMessage: unknown,
@@ -1237,7 +1237,14 @@ handleTrusted("chat:send", (
     rawReplyParentMessageId === undefined
       ? undefined
       : chatReplyParentIdSchema.parse(rawReplyParentMessageId);
-  return twitchService.sendChatMessage(channel, message, replyParentMessageId);
+  const sentMessage = await twitchService.sendChatMessage(
+    channel,
+    message,
+    replyParentMessageId,
+  );
+  if (!sentMessage) return;
+  sendToWindow(mainWindow, "chat:message", sentMessage);
+  multiChatService.publishSentMessage(channel, sentMessage);
 });
 handleTrusted("chat:get-assets", (_event, rawChannel: unknown) => {
   // These come from Helix and are keyed by a Twitch login. A channel on another
