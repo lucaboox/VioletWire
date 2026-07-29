@@ -1939,15 +1939,6 @@ export function NativeControls({
             <MessageSquareOff size={18} />
           )}
         </button>
-        <button
-          aria-label="Theater mode"
-          aria-pressed={context.theaterMode}
-          data-tooltip="Theater mode (T)"
-          onClick={() => window.desktop.player.sendNativeControlAction("toggle-theater")}
-          type="button"
-        >
-          <SidebarLayoutIcon filled={context.theaterMode} />
-        </button>
         {state.backend === "hls" && document.pictureInPictureEnabled && (
           <button
             aria-label={
@@ -1969,6 +1960,15 @@ export function NativeControls({
             <PictureInPicture2 size={18} />
           </button>
         )}
+        <button
+          aria-label="Theater mode"
+          aria-pressed={context.theaterMode}
+          data-tooltip="Theater mode (T)"
+          onClick={() => window.desktop.player.sendNativeControlAction("toggle-theater")}
+          type="button"
+        >
+          <SidebarLayoutIcon filled={context.theaterMode} />
+        </button>
         <button
           aria-label={context.fullscreen ? "Exit fullscreen" : "Fullscreen"}
           aria-pressed={context.fullscreen}

@@ -734,12 +734,11 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .oled-mode .pinned-chat-banner {
   background: linear-gradient(135deg, #1b1224 0%, #050506 75%);
 }
-.chat-panel.overlay .chat-messages { margin-bottom: 0; padding-top: 38px; padding-bottom: 14px; scrollbar-color: transparent transparent; scrollbar-gutter: auto; scrollbar-width: none; transition: margin-bottom 180ms ease; }
-.chat-panel.overlay .chat-messages::-webkit-scrollbar { width: 0; }
+.chat-panel.overlay .chat-messages { margin-bottom: 0; padding-top: 38px; padding-bottom: 14px; scrollbar-color: transparent transparent; scrollbar-gutter: stable; scrollbar-width: thin; transition: margin-bottom 180ms ease; }
+.chat-panel.overlay .chat-messages::-webkit-scrollbar { width: 10px; }
 .chat-panel.overlay .chat-messages::-webkit-scrollbar-track { background: transparent; }
 .chat-panel.overlay .chat-messages::-webkit-scrollbar-thumb { border-color: transparent; background: transparent; }
-.chat-panel.overlay .chat-messages:hover { scrollbar-color: #55515f var(--overlay-scroll-track); scrollbar-width: thin; }
-.chat-panel.overlay .chat-messages:hover::-webkit-scrollbar { width: 10px; }
+.chat-panel.overlay .chat-messages:hover { scrollbar-color: #55515f var(--overlay-scroll-track); }
 .chat-panel.overlay .chat-messages:hover::-webkit-scrollbar-track { background: var(--overlay-scroll-track); }
 .chat-panel.overlay .chat-messages:hover::-webkit-scrollbar-thumb { border-color: var(--overlay-scroll-track); background: #55515f; }
 .chat-panel.overlay .chat-messages:hover::-webkit-scrollbar-thumb:hover { background: #716b7c; }

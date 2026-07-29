@@ -160,14 +160,15 @@ input {
   padding: 38px 10px 14px;
   overscroll-behavior: contain;
   scrollbar-color: transparent transparent;
-  scrollbar-width: none;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
   transition: margin-bottom 180ms ease;
   contain: layout paint style;
   will-change: scroll-position;
 }
 
 .native-video-chat-messages::-webkit-scrollbar {
-  width: 0;
+  width: 10px;
 }
 
 .native-video-chat-messages::-webkit-scrollbar-track {
@@ -181,11 +182,6 @@ input {
 
 .native-video-chat-messages:hover {
   scrollbar-color: #55515f var(--overlay-scroll-track);
-  scrollbar-width: thin;
-}
-
-.native-video-chat-messages:hover::-webkit-scrollbar {
-  width: 10px;
 }
 
 .native-video-chat-messages:hover::-webkit-scrollbar-track {
