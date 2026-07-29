@@ -4,6 +4,46 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.2] - 2026-07-29
+
+### Additions
+
+- Efficient HLS playback now includes Chromium picture-in-picture support with
+  a dedicated player control and live-edge synchronization when playback
+  resumes.
+- Windows taskbar previews now provide Play/Pause and Mute/Unmute controls for
+  Native playback, with icons that stay synchronized with the current state.
+- Middle-clicking a passive video surface now toggles mute in the main player,
+  mini player, and multistream tiles.
+
+### Improvements
+
+- Multistream chat tabs use a more compact connected layout, distinguish
+  Twitch and Kick status and active audio, and show bounded stream-detail
+  tooltips without overflowing the window.
+- Stream uptime now updates every second without forcing the channel grid to
+  rerender.
+- Username autocomplete always includes the broadcaster, retains up to 2,000
+  recently observed chatters per channel, and renders recognized mentions in
+  bold.
+- Paused HLS playback keeps the displayed frame stable and resumes at the
+  current live edge instead of briefly replaying stale buffered video.
+- Picture-in-picture uses Chromium's stable native video path, avoiding the
+  Electron crash caused by the experimental document-based implementation.
+
+### Fixes
+
+- Community gift bombs now appear as one summary card instead of filling chat
+  with a separate card for every recipient; standalone gift notices remain
+  visible.
+- Resubscription and renewal message cards now show the sender's badges in
+  both regular chat and the fullscreen chat overlay.
+- Explicitly paused HLS streams are no longer restarted by manifest refreshes,
+  media recovery, or other background playback events.
+- Native HLS connection messages no longer incorrectly refer to mpv.
+- Followers-only warnings no longer flash while VioletWire is still resolving
+  the viewer's follow status after switching channels.
+
 ## [0.3.4-alpha.1] - 2026-07-26
 
 ### Additions
