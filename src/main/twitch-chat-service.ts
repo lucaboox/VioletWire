@@ -17,6 +17,12 @@ type StateListener = (state: ChatConnectionState) => void;
 const WATCHDOG_INTERVAL = 30_000;
 const KEEPALIVE_AFTER_SILENCE = 4 * 60_000;
 const DEAD_AFTER_SILENCE = 330_000;
+const COMMUNITY_GIFT_BATCH_TTL = 20_000;
+
+interface CommunityGiftBatch {
+  remainingRecipients: number;
+  expiresAt: number;
+}
 
 export class TwitchChatService {
   private socket: WebSocket | null = null;
@@ -27,6 +33,7 @@ export class TwitchChatService {
   private buffer = "";
   private readonly recentMessageIds = new Set<string>();
   private readonly recentMessageOrder: string[] = [];
+  private readonly communityGiftBatches = new Map<string, CommunityGiftBatch>();
   private historyLimit = 20;
   private restrictions: ChatRestrictions = { ...NO_CHAT_RESTRICTIONS };
   private lastActivityAt = 0;
@@ -45,6 +52,7 @@ export class TwitchChatService {
     this.manuallyClosed = false;
     this.recentMessageIds.clear();
     this.recentMessageOrder.length = 0;
+    this.communityGiftBatches.clear();
     this.onRestrictions(NO_CHAT_RESTRICTIONS);
     this.open("connecting");
     void this.loadRecentMessages(this.channel);
@@ -60,6 +68,7 @@ export class TwitchChatService {
     this.channel = null;
     this.buffer = "";
     this.reconnectAttempt = 0;
+    this.communityGiftBatches.clear();
     this.onState("disconnected");
   }
 
@@ -427,7 +436,40 @@ export class TwitchChatService {
       const oldest = this.recentMessageOrder.shift();
       if (oldest) this.recentMessageIds.delete(oldest);
     }
+    if (this.shouldFoldIntoCommunityGift(message)) return;
     this.onMessage(message);
+  }
+
+  private shouldFoldIntoCommunityGift(message: ChatMessage): boolean {
+    const notice = message.notice;
+    if (!notice) return false;
+
+    const key = this.communityGiftBatchKey(message);
+    const now = Date.now();
+    for (const [batchKey, batch] of this.communityGiftBatches) {
+      if (batch.expiresAt <= now) this.communityGiftBatches.delete(batchKey);
+    }
+
+    if (notice.type === "submysterygift" && notice.giftCount) {
+      this.communityGiftBatches.set(key, {
+        remainingRecipients: notice.giftCount,
+        expiresAt: now + COMMUNITY_GIFT_BATCH_TTL,
+      });
+      return false;
+    }
+
+    if (notice.type !== "subgift") return false;
+    const batch = this.communityGiftBatches.get(key);
+    if (!batch || batch.expiresAt <= now || batch.remainingRecipients <= 0) return false;
+
+    batch.remainingRecipients -= 1;
+    if (batch.remainingRecipients === 0) this.communityGiftBatches.delete(key);
+    return true;
+  }
+
+  private communityGiftBatchKey(message: ChatMessage): string {
+    const sender = message.login.trim().toLowerCase() || message.displayName.trim().toLowerCase();
+    return `${message.channel.trim().toLowerCase()}:${sender}`;
   }
 
   private parseTags(rawTags: string): Record<string, string> {

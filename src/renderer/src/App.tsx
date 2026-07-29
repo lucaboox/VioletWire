@@ -337,6 +337,22 @@ const ChatMessageRow = memo(function ChatMessageRow({
                 {formatChatTimestamp(message.sentAt)}
               </time>
             )}
+            {message.badgeAssets && message.badgeAssets.length > 0 ? (
+              <span className="native-chat-badges">
+                {message.badgeAssets.slice(0, 4).map((badge) => (
+                  <ChatBadge badge={badge} key={badge.key} />
+                ))}
+              </span>
+            ) : (
+              message.badges.length > 0 && (
+                <span className="native-chat-badges" title={message.badges.join(", ")}>
+                  {message.badges.slice(0, 4).map((badgeKey) => {
+                    const badge = badges.get(badgeKey);
+                    return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
+                  })}
+                </span>
+              )
+            )}
             <button
               className="chat-username"
               onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}

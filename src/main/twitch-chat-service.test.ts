@@ -4,6 +4,7 @@ import { TwitchChatService } from "./twitch-chat-service";
 
 interface TwitchChatServiceInternals {
   parseMessageLine(line: string): ChatMessage | null;
+  emitMessage(message: ChatMessage): void;
 }
 
 class FakeWebSocket {
@@ -183,6 +184,7 @@ describe("TwitchChatService replies", () => {
     expect(message).toMatchObject({
       displayName: "VioletFan",
       text: "Love the stream!",
+      badges: ["subscriber/12"],
       notice: {
         type: "resub",
         cumulativeMonths: 14,
@@ -192,5 +194,50 @@ describe("TwitchChatService replies", () => {
           "VioletFan subscribed at Tier 1. They've subscribed for 14 months!",
       },
     });
+  });
+
+  it("folds community-gift recipient notices into the matching summary", () => {
+    const onMessage = vi.fn();
+    const service = new TwitchChatService(onMessage, vi.fn(), vi.fn());
+    const internals = service as unknown as TwitchChatServiceInternals;
+    const summary = internals.parseMessageLine(
+      "@badges=sub-gifter/10;color=#9147FF;display-name=CyanFlare;id=gift-summary;login=cyanflare;msg-id=submysterygift;msg-param-mass-gift-count=2;msg-param-sub-plan=1000;system-msg=CyanFlare\\sis\\sgifting\\s2\\sTier\\s1\\sSubs\\sto\\sthe\\scommunity!;tmi-sent-ts=1720000000000 :tmi.twitch.tv USERNOTICE #channel",
+    );
+    const firstRecipient = internals.parseMessageLine(
+      "@badges=sub-gifter/10;color=#9147FF;display-name=CyanFlare;id=gift-one;login=cyanflare;msg-id=subgift;msg-param-recipient-display-name=FirstViewer;msg-param-sub-plan=1000;system-msg=CyanFlare\\sgifted\\sa\\sTier\\s1\\ssub\\sto\\sFirstViewer!;tmi-sent-ts=1720000000001 :tmi.twitch.tv USERNOTICE #channel",
+    );
+    const secondRecipient = internals.parseMessageLine(
+      "@badges=sub-gifter/10;color=#9147FF;display-name=CyanFlare;id=gift-two;login=cyanflare;msg-id=subgift;msg-param-recipient-display-name=SecondViewer;msg-param-sub-plan=1000;system-msg=CyanFlare\\sgifted\\sa\\sTier\\s1\\ssub\\sto\\sSecondViewer!;tmi-sent-ts=1720000000002 :tmi.twitch.tv USERNOTICE #channel",
+    );
+
+    expect(summary).not.toBeNull();
+    expect(firstRecipient).not.toBeNull();
+    expect(secondRecipient).not.toBeNull();
+    internals.emitMessage(summary!);
+    internals.emitMessage(firstRecipient!);
+    internals.emitMessage(secondRecipient!);
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "gift-summary",
+        notice: expect.objectContaining({ type: "submysterygift", giftCount: 2 }),
+      }),
+    );
+  });
+
+  it("keeps standalone gift notices visible", () => {
+    const onMessage = vi.fn();
+    const service = new TwitchChatService(onMessage, vi.fn(), vi.fn());
+    const internals = service as unknown as TwitchChatServiceInternals;
+    const gift = internals.parseMessageLine(
+      "@badges=sub-gifter/1;color=#9147FF;display-name=CyanFlare;id=single-gift;login=cyanflare;msg-id=subgift;msg-param-recipient-display-name=Viewer;msg-param-sub-plan=1000;system-msg=CyanFlare\\sgifted\\sa\\sTier\\s1\\ssub\\sto\\sViewer!;tmi-sent-ts=1720000000000 :tmi.twitch.tv USERNOTICE #channel",
+    );
+
+    expect(gift).not.toBeNull();
+    internals.emitMessage(gift!);
+
+    expect(onMessage).toHaveBeenCalledOnce();
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ id: "single-gift" }));
   });
 });

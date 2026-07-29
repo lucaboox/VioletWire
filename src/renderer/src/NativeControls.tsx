@@ -289,6 +289,22 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
         </div>
         {message.text && (
           <div className="native-chat-notice-text">
+            {message.badgeAssets && message.badgeAssets.length > 0 ? (
+              <span className="native-video-chat-badges">
+                {message.badgeAssets.slice(0, 4).map((badge) => (
+                  <ChatBadge badge={badge} key={badge.key} />
+                ))}
+              </span>
+            ) : (
+              message.badges.length > 0 && (
+                <span className="native-video-chat-badges" title={message.badges.join(", ")}>
+                  {message.badges.slice(0, 4).map((badgeKey) => {
+                    const badge = badges.get(badgeKey);
+                    return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
+                  })}
+                </span>
+              )
+            )}
             <button
               className="chat-username"
               onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}
