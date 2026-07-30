@@ -93,6 +93,7 @@ describe("LinkPreviewService YouTube channels", () => {
     });
     expect(resolvePreview).toHaveBeenCalledWith(
       new URL("https://www.youtube.com/@Psi"),
+      1_000_000,
     );
   });
 

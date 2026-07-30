@@ -185,6 +185,7 @@ export function parseGenericLinkPreviewHtml(
 async function loadHtml(
   url: URL,
   redirectsRemaining = MAX_REDIRECTS,
+  maxHtmlBytes = MAX_HTML_BYTES,
 ): Promise<{ body: string; finalUrl: URL }> {
   const selectedAddress = await resolvePublicAddress(url);
 
@@ -226,7 +227,7 @@ async function loadHtml(
             reject(new Error("The preview returned an invalid redirect."));
             return;
           }
-          resolve(loadHtml(redirectedUrl, redirectsRemaining - 1));
+          resolve(loadHtml(redirectedUrl, redirectsRemaining - 1, maxHtmlBytes));
           return;
         }
         if (status < 200 || status >= 300) {
@@ -247,7 +248,6 @@ async function loadHtml(
         const chunks: Buffer[] = [];
         let receivedBytes = 0;
         let settled = false;
-        let markupTail = "";
         const finish = () => {
           if (settled) return;
           settled = true;
@@ -258,21 +258,22 @@ async function loadHtml(
         };
         response.on("data", (chunk: Buffer) => {
           if (settled) return;
-          receivedBytes += chunk.length;
-          if (receivedBytes > MAX_HTML_BYTES) {
-            settled = true;
-            response.destroy(new Error("The preview page is too large."));
-            return;
-          }
-          chunks.push(chunk);
-          const markup = markupTail + chunk.toString("utf8");
-          if (/<\/head\s*>/i.test(markup)) {
+          const remainingBytes = maxHtmlBytes - receivedBytes;
+          if (remainingBytes <= 0) {
             response.pause();
             finish();
             response.destroy();
             return;
           }
-          markupTail = markup.slice(-32);
+          const acceptedChunk =
+            chunk.length > remainingBytes ? chunk.subarray(0, remainingBytes) : chunk;
+          receivedBytes += acceptedChunk.length;
+          chunks.push(acceptedChunk);
+          if (acceptedChunk.length < chunk.length || receivedBytes >= maxHtmlBytes) {
+            response.pause();
+            finish();
+            response.destroy();
+          }
         });
         response.on("end", finish);
         response.on("error", (error) => {
@@ -288,8 +289,11 @@ async function loadHtml(
   });
 }
 
-export async function resolveGenericLinkPreview(url: URL): Promise<LinkPreview> {
-  const { body, finalUrl } = await loadHtml(url);
+export async function resolveGenericLinkPreview(
+  url: URL,
+  maxHtmlBytes = MAX_HTML_BYTES,
+): Promise<LinkPreview> {
+  const { body, finalUrl } = await loadHtml(url, MAX_REDIRECTS, maxHtmlBytes);
   const preview = parseGenericLinkPreviewHtml(body, finalUrl);
   if (preview.thumbnailUrl) {
     try {

@@ -6,7 +6,9 @@ All notable changes to VioletWire are documented in this file.
 
 ### Fixed
 
-- YouTube channel and `@handle` links now show trusted hover previews without requiring generic link previews.
+- YouTube channel and `@handle` links now show trusted hover previews without
+  requiring generic link previews, including channel pages with unusually
+  large document headers.
 
 ### Additions
 

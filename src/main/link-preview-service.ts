@@ -14,7 +14,10 @@ const youTubeOEmbedSchema = z.object({
 });
 
 type CachedPreview = { expiresAt: number; value: LinkPreview | null };
-type GenericPreviewResolver = (url: URL) => Promise<LinkPreview>;
+type GenericPreviewResolver = (
+  url: URL,
+  maxHtmlBytes?: number,
+) => Promise<LinkPreview>;
 
 function twitchClipId(url: URL): string | null {
   const host = url.hostname.toLowerCase();
@@ -212,7 +215,7 @@ export class LinkPreviewService {
   }
 
   private async getYouTubeChannel(channelUrl: URL): Promise<LinkPreview | null> {
-    const preview = await this.genericPreviewResolver(channelUrl);
+    const preview = await this.genericPreviewResolver(channelUrl, 1_000_000);
     return {
       ...preview,
       kind: "youtube",
