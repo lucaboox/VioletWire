@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../../shared/chat";
+import { parseChannelKey } from "../../shared/platform";
+import {
+  cleanChatSendError,
+  isTwitchDuplicateMessageError,
+  makeTwitchMessageDistinct,
+} from "./chat-send-errors";
 
 export interface ChatSendStatus {
   kind: "queued" | "error";
@@ -9,6 +15,7 @@ export interface ChatSendStatus {
 interface OutgoingChat {
   channel: string;
   message: string;
+  originalMessage?: string;
   reply?: ChatMessage;
 }
 
@@ -46,10 +53,25 @@ export function useChatSendQueue(
         lastSentAt.current = Date.now();
         setStatus(null);
       } catch (reason) {
-        const message =
-          reason instanceof Error
-            ? reason.message
-            : "The chat message could not be sent.";
+        const message = cleanChatSendError(reason);
+        if (
+          allowRetry &&
+          parseChannelKey(outgoing.channel).platform === "twitch" &&
+          isTwitchDuplicateMessageError(message)
+        ) {
+          const distinctMessage = makeTwitchMessageDistinct(outgoing.message);
+          if (distinctMessage !== null) {
+            await sendOutgoing(
+              {
+                ...outgoing,
+                message: distinctMessage,
+                originalMessage: outgoing.originalMessage ?? outgoing.message,
+              },
+              false,
+            );
+            return;
+          }
+        }
         if (
           allowRetry &&
           /(too (?:quickly|fast)|slow.?mode|rate.?limit|wait\s+\d+)/i.test(message)
@@ -74,7 +96,7 @@ export function useChatSendQueue(
           }, delay);
           return;
         }
-        restore(outgoing.message, outgoing.reply);
+        restore(outgoing.originalMessage ?? outgoing.message, outgoing.reply);
         setStatus({
           kind: "error",
           message,

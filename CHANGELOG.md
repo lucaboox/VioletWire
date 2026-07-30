@@ -6,6 +6,8 @@ All notable changes to VioletWire are documented in this file.
 
 ### Fixed
 
+- Repeated Twitch messages now retry once with an invisible differentiator
+  instead of showing Twitch's 30-second duplicate-message error.
 - YouTube channel and `@handle` links now show trusted hover previews without
   requiring generic link previews, including channel pages with unusually
   large document headers and their channel profile pictures.
