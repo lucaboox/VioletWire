@@ -6,8 +6,8 @@ All notable changes to VioletWire are documented in this file.
 
 ### Additions
 
-- Settings now use dedicated Account, Playback, Chat, Emotes, Appearance, and
-  Updates sections with a persistent navigation rail.
+- Settings now use dedicated Account, Playback, Chat, Emotes, and Appearance
+  sections with a persistent navigation rail.
 - The full Settings modal now includes chat color, timestamps, mention audio,
   deleted-message style, chat placement, font and emote sizing, history, and
   overlay-opacity controls.
@@ -16,6 +16,8 @@ All notable changes to VioletWire are documented in this file.
 
 - In-player chat settings menus now link directly to the full Chat settings
   section while keeping their existing quick controls.
+- Version information now appears in the Settings header, with update and
+  changelog actions kept compact at the bottom of the navigation rail.
 
 ## [0.3.4-alpha.3] - 2026-07-30
 

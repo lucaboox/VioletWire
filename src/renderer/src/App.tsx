@@ -135,8 +135,7 @@ type SettingsSection =
   | "playback"
   | "chat"
   | "emotes"
-  | "appearance"
-  | "updates";
+  | "appearance";
 type ChannelNavigationIdentity = {
   login: string;
   displayName: string;
@@ -161,7 +160,6 @@ const settingsSections = [
   { id: "chat", label: "Chat", icon: Reply },
   { id: "emotes", label: "Emotes", icon: Smile },
   { id: "appearance", label: "Appearance", icon: Star },
-  { id: "updates", label: "Updates", icon: RefreshCw },
 ] satisfies ReadonlyArray<{
   id: SettingsSection;
   label: string;
@@ -5704,7 +5702,11 @@ export function App() {
                 <div>
                   <span>VIOLETWIRE</span>
                   <h2 id="settings-modal-title">Settings</h2>
-                  <p>Changes save automatically without closing your stream.</p>
+                  <p>
+                    {updateStatus.currentVersion
+                      ? `Version ${updateStatus.currentVersion}`
+                      : "Version information unavailable"}
+                  </p>
                 </div>
                 <button
                   aria-label="Close settings"
@@ -5729,6 +5731,53 @@ export function App() {
                       <span>{label}</span>
                     </button>
                   ))}
+                  <div className="settings-modal-nav-footer">
+                    <button
+                      className="settings-nav-update"
+                      disabled={
+                        updateStatus.state === "disabled" ||
+                        updateStatus.state === "checking" ||
+                        updateStatus.state === "downloading"
+                      }
+                      onClick={() => {
+                        if (updateStatus.state === "downloaded") {
+                          window.desktop.updates.install();
+                        } else {
+                          void window.desktop.updates.check().then(setUpdateStatus);
+                        }
+                      }}
+                      title={updateStatus.message ?? "Check GitHub Releases for a VioletWire update"}
+                      type="button"
+                    >
+                      <RefreshCw
+                        className={
+                          updateStatus.state === "checking" ||
+                          updateStatus.state === "downloading"
+                            ? "spin"
+                            : undefined
+                        }
+                        size={16}
+                      />
+                      <span>
+                        {updateStatus.state === "downloaded"
+                          ? "Restart to update"
+                          : updateStatus.state === "checking"
+                            ? "Checking…"
+                            : updateStatus.state === "downloading"
+                              ? "Downloading…"
+                              : "Check for updates"}
+                      </span>
+                    </button>
+                    <button
+                      aria-label="View changelog"
+                      className="settings-nav-changelog"
+                      onClick={() => openChangelog(true)}
+                      title="View changelog"
+                      type="button"
+                    >
+                      <History size={17} />
+                    </button>
+                  </div>
                 </nav>
                 <div className="settings-modal-content">
                 {settingsSection === "account" && (
@@ -6074,56 +6123,6 @@ export function App() {
                     >
                       <span />
                     </button>
-                  </div>
-                  </section>
-                )}
-                {settingsSection === "updates" && (
-                  <section className="settings-section-panel">
-                    <header className="settings-section-heading">
-                      <span>UPDATES</span>
-                      <h3>VioletWire updates</h3>
-                      <p>Check for releases and review what changed.</p>
-                    </header>
-                  <div className="settings-card">
-                    <div>
-                      <strong>VioletWire updates</strong>
-                      <span>
-                        {updateStatus.currentVersion
-                          ? `Version ${updateStatus.currentVersion} · `
-                          : ""}
-                        {updateStatus.message ?? "Checks GitHub Releases automatically."}
-                      </span>
-                    </div>
-                    <div className="settings-card-actions">
-                      <button
-                        aria-label="View changelog"
-                        className="secondary-button icon-button"
-                        onClick={() => openChangelog(true)}
-                        title="View changelog"
-                        type="button"
-                      >
-                        <History size={16} />
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={
-                          updateStatus.state === "disabled" ||
-                          updateStatus.state === "checking" ||
-                          updateStatus.state === "downloading"
-                        }
-                        onClick={() => {
-                          if (updateStatus.state === "downloaded") {
-                            window.desktop.updates.install();
-                          } else {
-                            void window.desktop.updates.check().then(setUpdateStatus);
-                          }
-                        }}
-                        type="button"
-                      >
-                        <RefreshCw size={14} />
-                        {updateStatus.state === "downloaded" ? "Restart to update" : "Check now"}
-                      </button>
-                    </div>
                   </div>
                   </section>
                 )}

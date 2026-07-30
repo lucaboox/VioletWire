@@ -911,6 +911,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .settings-modal-nav button:hover { color: #ededf0; background: #ffffff0b; }
 .settings-modal-nav button.active { border-color: #6d4b913d; color: #f4eefe; background: #2a1d35; box-shadow: 0 0 0 1px #a78bfa0b inset; }
 .settings-modal-nav button.active svg { color: #b794f6; }
+.settings-modal-nav-footer { display: grid; gap: 6px; margin-top: auto; padding-top: 12px; grid-template-columns: minmax(0, 1fr) 40px; border-top: 1px solid #29272e; }
+.settings-modal-nav .settings-nav-update { padding-inline: 10px; }
+.settings-modal-nav .settings-nav-changelog { width: 40px; padding: 0; justify-content: center; }
+.settings-modal-nav-footer button:disabled { cursor: default; opacity: .5; }
 .settings-modal-content { min-height: 0; padding: 24px 28px 30px; overflow-y: auto; }
 .settings-section-panel { display: grid; align-content: start; gap: 10px; }
 .settings-section-heading { margin-bottom: 8px; }
