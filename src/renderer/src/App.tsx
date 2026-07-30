@@ -183,6 +183,57 @@ const languageNames: Record<string, string> = {
   zh: "chinese",
 };
 
+function KoFiIcon({ size = 17 }: { size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height={size}
+      viewBox="0 0 24 24"
+      width={size}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M4 6h13v8a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V6Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path d="M17 8h1.4a2.6 2.6 0 0 1 0 5.2H17" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M10.5 14.5 7.7 11.8a1.8 1.8 0 0 1 2.6-2.5l.2.2.2-.2a1.8 1.8 0 0 1 2.6 2.5l-2.8 2.7Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function GitHubIcon({ size = 17 }: { size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height={size}
+      viewBox="0 0 24 24"
+      width={size}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.8-1.6 6.8-7.4A5.8 5.8 0 0 0 19.3 3a5.4 5.4 0 0 0-.1-4S18 1 15 1.5a13.4 13.4 0 0 0-6 0C6 1 4.8-1 4.8-1a5.4 5.4 0 0 0-.1 4A5.8 5.8 0 0 0 3.2 7.1c0 5.8 3.5 7 6.8 7.4A4.8 4.8 0 0 0 9 18v4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M9 19c-3 .9-3-1.5-4.2-2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
 function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>> {
   return new Map(emoteProviders.map((provider) => [provider, new Map()]));
 }
@@ -1594,6 +1645,14 @@ export function App() {
     setChatSettingsOpen(false);
     setSettingsSection("chat");
     setSettingsOpen(true);
+  }
+
+  function runUpdateAction(): void {
+    if (updateStatus.state === "downloaded") {
+      window.desktop.updates.install();
+    } else {
+      void window.desktop.updates.check().then(setUpdateStatus);
+    }
   }
 
   function openChangelog(returnToSettings = false): void {
@@ -5750,13 +5809,7 @@ export function App() {
                         updateStatus.state === "checking" ||
                         updateStatus.state === "downloading"
                       }
-                      onClick={() => {
-                        if (updateStatus.state === "downloaded") {
-                          window.desktop.updates.install();
-                        } else {
-                          void window.desktop.updates.check().then(setUpdateStatus);
-                        }
-                      }}
+                      onClick={runUpdateAction}
                       title={updateStatus.message ?? "Check GitHub Releases for a VioletWire update"}
                       type="button"
                     >
@@ -6128,7 +6181,7 @@ export function App() {
                     </header>
                     <div className="settings-about-hero">
                       <img alt="" src={violetWireIcon} />
-                      <div>
+                      <div className="settings-about-copy">
                         <strong>VioletWire</strong>
                         <span>Created by lucaboox</span>
                         <small>
@@ -6138,14 +6191,44 @@ export function App() {
                           · GPL-3.0-or-later
                         </small>
                       </div>
-                      <button
-                        className="secondary-button"
-                        onClick={() => openChangelog(true)}
-                        type="button"
-                      >
-                        <History size={15} />
-                        Version history
-                      </button>
+                      <div className="settings-about-actions">
+                        <button
+                          className="secondary-button"
+                          disabled={
+                            updateStatus.state === "disabled" ||
+                            updateStatus.state === "checking" ||
+                            updateStatus.state === "downloading"
+                          }
+                          onClick={runUpdateAction}
+                          type="button"
+                        >
+                          <RefreshCw
+                            className={
+                              updateStatus.state === "checking" ||
+                              updateStatus.state === "downloading"
+                                ? "spin"
+                                : undefined
+                            }
+                            size={15}
+                          />
+                          {updateStatus.state === "downloaded"
+                            ? "Restart to update"
+                            : updateStatus.state === "checking"
+                              ? "Checking…"
+                              : updateStatus.state === "downloading"
+                                ? "Downloading…"
+                                : "Check for updates"}
+                        </button>
+                        <button
+                          aria-label="View version history"
+                          className="secondary-button icon-button"
+                          onClick={() => openChangelog(true)}
+                          title="Version history"
+                          type="button"
+                        >
+                          <History size={16} />
+                        </button>
+                      </div>
                     </div>
                     <div className="settings-about-links">
                       {[
@@ -6185,7 +6268,13 @@ export function App() {
                           onClick={() => void window.desktop.system.openExternal(link.url)}
                           type="button"
                         >
-                          <ExternalLink size={16} />
+                          {link.label === "Support on Ko-fi" ? (
+                            <KoFiIcon size={17} />
+                          ) : link.label === "GitHub Sponsors" ? (
+                            <GitHubIcon size={17} />
+                          ) : (
+                            <ExternalLink size={16} />
+                          )}
                           <span>
                             <strong>{link.label}</strong>
                             <small>{link.detail}</small>

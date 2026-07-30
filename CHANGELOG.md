@@ -11,8 +11,9 @@ All notable changes to VioletWire are documented in this file.
 - The full Settings modal now includes chat color, timestamps, mention audio,
   deleted-message style, chat placement, font and emote sizing, history, and
   overlay-opacity controls.
-- Added an About section with VioletWire version history, project and support
-  links, license information, and core dependency credits.
+- Added an About section with update checks, version history, project links,
+  branded Ko-fi and GitHub support links, license information, and core
+  dependency credits.
 
 ### Improvements
 
