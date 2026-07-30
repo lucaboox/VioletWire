@@ -10,7 +10,10 @@ All notable changes to VioletWire are documented in this file.
   requiring generic link previews, including channel pages with unusually
   large document headers and their channel profile pictures.
 - Kick message deletions, timeouts, and bans now use the same revealable
-  deleted-message treatment as Twitch chat, including moderation durations.
+  deleted-message treatment as Twitch chat, including moderation durations,
+  normalized live-message IDs, and current and legacy deletion payloads.
+- Kick user cards now use Kick profile data, Kick profile links, and the
+  badges retained from that user's current chat messages.
 
 ### Additions
 
@@ -18,6 +21,8 @@ All notable changes to VioletWire are documented in this file.
   metadata, with Always, Ctrl-hover, and Alt-hover activation choices.
 - Kick chat now displays reply context and can send replies through the
   existing reply composer and conversation-thread interface.
+- Kick accounts can view and change their Kick chat username color from the
+  same chat settings used for Twitch colors.
 
 ### Improvements
 
@@ -25,6 +30,9 @@ All notable changes to VioletWire are documented in this file.
   address and protect local networks with HTTPS-only fetching, DNS and redirect
   validation, strict timeouts, response-size limits, and script-free metadata
   parsing.
+- Expected chat-send failures now appear beside the chat composer instead of
+  as app-wide toasts. Slow-mode messages wait locally, and explicit rate-limit
+  rejections retry once after the required delay.
 
 ## [0.3.4-alpha.4] - 2026-07-30
 

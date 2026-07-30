@@ -1193,6 +1193,35 @@ handleTrusted("twitch:get-pinned-chat-message", (_event, rawBroadcasterId: unkno
     .parse(rawBroadcasterId);
   return twitchService.getPinnedChatMessage(broadcasterId);
 });
+
+handleTrusted(
+  "kick:get-chat-user-profile",
+  (_event, rawChannel: unknown, rawLogin: unknown) => {
+    const channel = z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^[a-z0-9_-]{1,32}$/)
+      .parse(rawChannel);
+    const login = z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^[a-z0-9_-]{1,32}$/)
+      .parse(rawLogin);
+    return kickService.getChatUserProfile(channel, login);
+  },
+);
+handleTrusted("kick:get-chat-color", () => kickService.getChatColor());
+handleTrusted("kick:update-chat-color", (_event, rawColor: unknown) => {
+  const color = z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^#[0-9A-F]{6}$/)
+    .parse(rawColor);
+  return kickService.updateChatColor(color);
+});
 handleTrusted("twitch:create-clip", (_event, rawChannel: unknown) =>
   twitchService.createClip(channelNameSchema.parse(rawChannel)),
 );

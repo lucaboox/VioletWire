@@ -75,6 +75,8 @@ import {
 import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
 import { useChatFeed } from "./chat-feed";
+import { ChatSendStatus } from "./ChatSendStatus";
+import { useChatSendQueue } from "./use-chat-send-queue";
 
 // The sidebar-layout pair, drawn here rather than pulled from another icon set
 // so the app keeps a single icon dependency. Stroked to sit alongside lucide:
@@ -537,6 +539,15 @@ export function NativeControls({
     chatRestrictionState.channel === channel
       ? chatRestrictionState.restrictions
       : NO_CHAT_RESTRICTIONS;
+  const restoreUnsentChat = useCallback((message: string, reply?: ChatMessage) => {
+    setChatInput(message);
+    setReplyingTo(reply ?? null);
+  }, []);
+  const chatSender = useChatSendQueue(
+    channel ?? null,
+    chatRestrictions.slowModeSeconds,
+    restoreUnsentChat,
+  );
   useEffect(
     () =>
       window.desktop.chat.onRestrictions((restrictions) => {
@@ -940,12 +951,7 @@ export function NativeControls({
     const replyTarget = replyingTo;
     setChatInput("");
     setReplyingTo(null);
-    try {
-      await window.desktop.chat.send(channel, message, replyTarget?.id);
-    } catch {
-      setChatInput(message);
-      setReplyingTo(replyTarget);
-    }
+    await chatSender.send(message, replyTarget ?? undefined);
   }
 
   useEffect(() => {
@@ -1329,7 +1335,9 @@ export function NativeControls({
               onPointerDown={(event) => event.stopPropagation()}
             >
               <strong>Chat settings</strong>
-              <TwitchChatColorControls />
+              <TwitchChatColorControls
+                platform={channel ? parseChannelKey(channel).platform : "twitch"}
+              />
               <label>
                 <span>{chatOpacity}%</span>
                 <input
@@ -1496,6 +1504,10 @@ export function NativeControls({
             </button>
           )}
           <form className="native-video-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>
+            <ChatSendStatus
+              onDismiss={chatSender.dismiss}
+              status={chatSender.status}
+            />
             {chatRestrictionLabel && (
               <div className={chatBlocked ? "chat-restriction blocked" : "chat-restriction"}>
                 <Lock size={13} aria-hidden="true" />

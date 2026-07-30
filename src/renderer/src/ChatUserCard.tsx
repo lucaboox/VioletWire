@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { ExternalLink, MessageSquare, X } from "lucide-react";
 import type { ChatBadgeAsset, ChatMessage } from "../../shared/chat";
 import type { ChatUserProfile } from "../../shared/twitch";
+import { channelUrl, parseChannelKey } from "../../shared/platform";
 import { ChatBadge } from "./ChatBadge";
 import "./chat-user-card.css";
 
@@ -116,12 +117,26 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
     () => [...new Set([...selected.badges, ...userMessages.flatMap((message) => message.badges)])],
     [selected.badges, userMessages],
   );
+  const badgeAssets = useMemo(() => {
+    const assets = new Map<string, ChatBadgeAsset>();
+    for (const asset of [
+      ...(selected.badgeAssets ?? []),
+      ...userMessages.flatMap((message) => message.badgeAssets ?? []),
+    ]) {
+      assets.set(asset.key, asset);
+    }
+    return [...assets.values()];
+  }, [selected.badgeAssets, userMessages]);
   const badgeSubscription = badgeSubscriptionLabel(badgeKeys);
+  const target = useMemo(() => parseChannelKey(channel), [channel]);
 
   useEffect(() => {
     let cancelled = false;
-    void window.desktop.twitch
-      .getChatUserProfile(channel, selected.login)
+    const request =
+      target.platform === "kick"
+        ? window.desktop.kick.getChatUserProfile(target.login, selected.login)
+        : window.desktop.twitch.getChatUserProfile(target.login, selected.login);
+    void request
       .then((value) => {
         if (!cancelled) setProfile(value);
       })
@@ -133,7 +148,7 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
     return () => {
       cancelled = true;
     };
-  }, [channel, selected.login]);
+  }, [selected.login, target.login, target.platform]);
 
   useLayoutEffect(() => {
     const host = messagesHost.current;
@@ -271,11 +286,13 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
             <small>@{profile?.login ?? selected.login}</small>
           </div>
           <button
-            aria-label="Open Twitch profile"
+            aria-label={`Open ${target.platform === "kick" ? "Kick" : "Twitch"} profile`}
             onClick={() =>
-              window.desktop.system.openExternal(`https://www.twitch.tv/${encodeURIComponent(selected.login)}`)
+              window.desktop.system.openExternal(
+                channelUrl(target.platform, selected.login),
+              )
             }
-            title="Open Twitch profile"
+            title={`Open ${target.platform === "kick" ? "Kick" : "Twitch"} profile`}
             type="button"
           >
             <ExternalLink size={16} />
@@ -288,6 +305,9 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
         {profile?.description && <p className="chat-user-description">{profile.description}</p>}
 
         <div className="chat-user-badges">
+          {badgeAssets.map((badge) => (
+            <ChatBadge badge={badge} key={badge.key} />
+          ))}
           {badgeKeys.map((badgeKey) => {
             const badge = badges.get(badgeKey);
             return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;

@@ -1,6 +1,7 @@
 import { LoaderCircle, Play } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 import type { TwitchChatColorInput } from "../../shared/twitch";
+import type { Platform } from "../../shared/platform";
 import type { MentionSoundId } from "../../shared/preferences";
 import { MENTION_SOUNDS, playMentionSound } from "./mention-sound";
 import "./chat-settings-controls.css";
@@ -27,7 +28,7 @@ const TWITCH_CHAT_COLORS: {
   { label: "Yellow green", name: "yellow_green", hex: "#9ACD32" },
 ];
 
-export function TwitchChatColorControls() {
+export function TwitchChatColorControls({ platform = "twitch" }: { platform?: Platform }) {
   const [color, setColor] = useState("");
   const [customColor, setCustomColor] = useState("#9146FF");
   const [canUpdate, setCanUpdate] = useState(false);
@@ -37,8 +38,11 @@ export function TwitchChatColorControls() {
 
   useEffect(() => {
     let disposed = false;
-    void window.desktop.twitch
-      .getChatColor()
+    const request =
+      platform === "kick"
+        ? window.desktop.kick.getChatColor()
+        : window.desktop.twitch.getChatColor();
+    void request
       .then((state) => {
         if (disposed) return;
         setColor(state.color);
@@ -46,7 +50,9 @@ export function TwitchChatColorControls() {
         if (/^#[0-9a-f]{6}$/i.test(state.color)) setCustomColor(state.color);
       })
       .catch(() => {
-        if (!disposed) setError("Sign in with Twitch to change your chat color.");
+        if (!disposed) {
+          setError(`Sign in to ${platform === "kick" ? "Kick" : "Twitch"} to change your chat color.`);
+        }
       })
       .finally(() => {
         if (!disposed) setLoading(false);
@@ -54,19 +60,29 @@ export function TwitchChatColorControls() {
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [platform]);
 
   const applyColor = async (nextColor: TwitchChatColorInput) => {
     if (!canUpdate || saving) return;
     setSaving(true);
     setError("");
     try {
-      const state = await window.desktop.twitch.updateChatColor(nextColor);
+      const state =
+        platform === "kick"
+          ? await window.desktop.kick.updateChatColor(
+              TWITCH_CHAT_COLORS.find((option) => option.name === nextColor)?.hex ??
+                String(nextColor),
+            )
+          : await window.desktop.twitch.updateChatColor(nextColor);
       setColor(state.color);
       setCanUpdate(state.canUpdate);
       if (/^#[0-9a-f]{6}$/i.test(state.color)) setCustomColor(state.color);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Twitch could not change the color.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : `${platform === "kick" ? "Kick" : "Twitch"} could not change the color.`,
+      );
     } finally {
       setSaving(false);
     }
@@ -75,18 +91,22 @@ export function TwitchChatColorControls() {
   return (
     <section className="twitch-chat-color-controls">
       <div className="twitch-chat-color-heading">
-        <span>Username color</span>
+        <span>Username color · {platform === "kick" ? "Kick" : "Twitch"}</span>
         {loading || saving ? (
           <LoaderCircle aria-label="Loading chat color" className="spin" size={13} />
         ) : (
           <span
-            aria-label={color ? `Current color ${color}` : "No Twitch color selected"}
+            aria-label={color ? `Current color ${color}` : `No ${platform} color selected`}
             className="twitch-chat-current-color"
             style={{ backgroundColor: color || "#9146ff" }}
           />
         )}
       </div>
-      <div aria-label="Twitch username colors" className="twitch-chat-color-grid" role="group">
+      <div
+        aria-label={`${platform === "kick" ? "Kick" : "Twitch"} username colors`}
+        className="twitch-chat-color-grid"
+        role="group"
+      >
         {TWITCH_CHAT_COLORS.map((option) => (
           <button
             aria-label={option.label}
@@ -102,7 +122,7 @@ export function TwitchChatColorControls() {
       </div>
       <div className="twitch-chat-custom-color">
         <input
-          aria-label="Custom Twitch username color"
+          aria-label={`Custom ${platform === "kick" ? "Kick" : "Twitch"} username color`}
           disabled={!canUpdate || saving}
           onChange={(event) => setCustomColor(event.target.value)}
           type="color"
@@ -120,7 +140,11 @@ export function TwitchChatColorControls() {
         <small>Sign in again once to enable chat-color and moderation permissions.</small>
       )}
       {error && <small className="twitch-chat-color-error">{error}</small>}
-      <small>Custom colors require Twitch Prime or Turbo.</small>
+      {platform === "twitch" ? (
+        <small>Custom colors require Twitch Prime or Turbo.</small>
+      ) : (
+        <small>Kick may limit colors to the choices supported by your account.</small>
+      )}
     </section>
   );
 }

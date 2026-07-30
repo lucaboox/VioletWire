@@ -85,7 +85,7 @@ interface KickChatSender {
 }
 
 interface KickChatMessagePayload {
-  id?: string;
+  id?: string | number;
   content?: string;
   created_at?: string;
   type?: string;
@@ -187,11 +187,30 @@ export function parseKickModerationEvent(
   if (data === null) return null;
 
   if (
-    eventName === "App\\Events\\MessageDeletedEvent" ||
-    eventName === "App\\Events\\ChatMessageDeletedEvent"
+    eventName === "MessageDeletedEvent" ||
+    eventName === "ChatMessageDeletedEvent" ||
+    eventName.endsWith("\\MessageDeletedEvent") ||
+    eventName.endsWith("\\ChatMessageDeletedEvent")
   ) {
-    const nestedMessage = record(data.message);
-    const messageId = textValue(data.message_id) ?? textValue(nestedMessage?.id);
+    const nestedMessage =
+      record(data.message) ??
+      (typeof data.message === "string"
+        ? (() => {
+            try {
+              return record(JSON.parse(data.message));
+            } catch {
+              return null;
+            }
+          })()
+        : null);
+    const messageId =
+      textValue(data.message_id) ??
+      textValue(data.deleted_message_id) ??
+      textValue(nestedMessage?.message_id) ??
+      textValue(nestedMessage?.id) ??
+      (typeof data.message === "string" && !data.message.trim().startsWith("{")
+        ? textValue(data.message)
+        : undefined);
     if (!messageId) return null;
     return {
       id: messageId,
@@ -208,7 +227,12 @@ export function parseKickModerationEvent(
     };
   }
 
-  if (eventName !== "App\\Events\\UserBannedEvent") return null;
+  if (
+    eventName !== "UserBannedEvent" &&
+    !eventName.endsWith("\\UserBannedEvent")
+  ) {
+    return null;
+  }
   const user = record(data.user);
   const login =
     textValue(user?.slug) ??
@@ -537,7 +561,10 @@ export class KickChatService {
     const sentAt = typedPayload.created_at
       ? Date.parse(typedPayload.created_at)
       : Number.NaN;
-    const id = typedPayload.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const id =
+      typedPayload.id === undefined
+        ? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+        : String(typedPayload.id);
     if (typeof sender.id === "number" && sender.username) {
       this.replyTargets.set(id, {
         id,

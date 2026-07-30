@@ -233,6 +233,10 @@ const api: DesktopApi = {
       ipcRenderer.invoke("kick:get-followed"),
     getEmoteSets: (slug: string): Promise<KickEmoteGroup[]> =>
       ipcRenderer.invoke("kick:get-emote-sets", slug),
+    getChatUserProfile: (channel: string, login: string) =>
+      ipcRenderer.invoke("kick:get-chat-user-profile", channel, login),
+    getChatColor: () => ipcRenderer.invoke("kick:get-chat-color"),
+    updateChatColor: (color: string) => ipcRenderer.invoke("kick:update-chat-color", color),
     setFollowing: (slug: string, follow: boolean): Promise<void> =>
       ipcRenderer.invoke("kick:set-following", slug, follow),
     openWindow: (slug: string): Promise<void> => ipcRenderer.invoke("kick:open-window", slug),

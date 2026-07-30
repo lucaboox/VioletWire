@@ -1,5 +1,10 @@
 import { z } from "zod";
-import type { BrowseCategory, BrowseStream, BrowsePage } from "./twitch";
+import type {
+  BrowseCategory,
+  BrowseStream,
+  BrowsePage,
+  ChatUserProfile,
+} from "./twitch";
 
 /**
  * VioletWire watches more than one service. Twitch remains the default so
@@ -146,6 +151,11 @@ export interface KickEmoteGroup {
   emotes: KickEmoteAsset[];
 }
 
+export interface KickChatColorState {
+  color: string;
+  canUpdate: boolean;
+}
+
 export interface KickApi {
   search(query: string): Promise<KickChannelResult[]>;
   getChannel(slug: string): Promise<KickChannelDetails | null>;
@@ -154,6 +164,9 @@ export interface KickApi {
   signOut(): Promise<void>;
   getFollowedChannels(): Promise<KickChannelDetails[]>;
   getEmoteSets(slug: string): Promise<KickEmoteGroup[]>;
+  getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile>;
+  getChatColor(): Promise<KickChatColorState>;
+  updateChatColor(color: string): Promise<KickChatColorState>;
   setFollowing(slug: string, follow: boolean): Promise<void>;
   openWindow(slug: string): Promise<void>;
   // Browse: Kick's own categories and the live channels within one. These reuse

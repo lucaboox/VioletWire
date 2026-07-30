@@ -152,6 +152,20 @@ describe("parseKickModerationEvent", () => {
     });
   });
 
+  it("normalizes nested serialized and numeric deletion message ids", () => {
+    expect(
+      parseKickModerationEvent(
+        "MessageDeletedEvent",
+        { message: JSON.stringify({ id: 12345 }) },
+        "xqc",
+      ),
+    ).toMatchObject({
+      id: "12345",
+      deleted: true,
+      moderation: { type: "message-deleted" },
+    });
+  });
+
   it("converts temporary bans from minutes to seconds", () => {
     expect(
       parseKickModerationEvent(

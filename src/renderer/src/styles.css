@@ -1182,6 +1182,39 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-restriction { display: flex; align-items: center; gap: 7px; margin: 0 7px 6px; padding: 7px 10px; border-radius: 8px; color: #e8c37a; background: #2a2212; font-size: 11px; line-height: 1.35; }
 .chat-restriction.blocked { color: #f0a9a0; background: #2c1614; }
 .chat-restriction svg { flex: 0 0 auto; }
+.chat-send-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  margin: 0 7px 6px;
+  padding: 7px 8px 7px 10px;
+  border: 1px solid #5b4930;
+  border-radius: 8px;
+  color: #f0d7a5;
+  background: #292116;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.chat-send-status.error {
+  border-color: #713a43;
+  color: #f4b4bd;
+  background: #2c171b;
+}
+.chat-send-status > svg { flex: 0 0 auto; }
+.chat-send-status button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.chat-send-status button:hover { background: #ffffff12; }
 
 /* Kick's text-only badges (subscriber, moderator) as a small coloured chip. */
 .chat-text-badge { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 4px; color: #0b0b0e; font-size: 8px; font-weight: 800; letter-spacing: .3px; line-height: 1; vertical-align: middle; }

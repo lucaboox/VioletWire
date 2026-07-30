@@ -1,6 +1,8 @@
 import { BrowserWindow, session, type Session } from "electron";
 import { z } from "zod";
 import type { BrowseCategory, BrowseStream, BrowsePage } from "../shared/twitch";
+import type { ChatUserProfile } from "../shared/twitch";
+import type { KickChatColorState } from "../shared/platform";
 
 /**
  * Kick's public API does not expose enough to run a viewer: there is no
@@ -39,6 +41,18 @@ const COOKIE_WAIT_MS = 2_500;
 // that a thumbnail does not go stale while watching.
 const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 
+type UnknownRecord = Record<string, unknown>;
+
+function record(value: unknown): UnknownRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : null;
+}
+
+function textValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
 // Kick sends far more than this; only the fields the app renders are declared,
 // and everything is optional so a shape change degrades a single card rather
 // than failing the whole response.
@@ -76,6 +90,8 @@ const kickChannelSchema = z.object({
       id: z.number().nullish(),
       username: z.string().nullish(),
       profile_pic: z.string().nullish(),
+      bio: z.string().nullish(),
+      created_at: z.string().nullish(),
     })
     .optional(),
   subscriber_badges: z
@@ -128,6 +144,49 @@ const kickUserSchema = z.object({
   id: z.number().nullish(),
   username: z.string().nullish(),
   profile_pic: z.string().nullish(),
+  color: z.string().nullish(),
+  chat_color: z.string().nullish(),
+  identity: z.object({ color: z.string().nullish() }).nullish(),
+});
+
+const kickPublicUserSchema = z.object({
+  id: z.union([z.string(), z.number()]).nullish(),
+  username: z.string().nullish(),
+  slug: z.string().nullish(),
+  profile_pic: z.string().nullish(),
+  profile_picture: z.string().nullish(),
+  bio: z.string().nullish(),
+  created_at: z.string().nullish(),
+  user: z
+    .object({
+      id: z.union([z.string(), z.number()]).nullish(),
+      username: z.string().nullish(),
+      slug: z.string().nullish(),
+      profile_pic: z.string().nullish(),
+      profile_picture: z.string().nullish(),
+      bio: z.string().nullish(),
+      created_at: z.string().nullish(),
+    })
+    .nullish(),
+  following_since: z.string().nullish(),
+  followed_at: z.string().nullish(),
+  is_following: z.boolean().nullish(),
+  following: z.boolean().nullish(),
+  subscribed: z.boolean().nullish(),
+  is_subscribed: z.boolean().nullish(),
+  subscription: z
+    .object({
+      active: z.boolean().nullish(),
+      is_subscribed: z.boolean().nullish(),
+      tier: z.union([z.string(), z.number()]).nullish(),
+      gifted: z.boolean().nullish(),
+    })
+    .nullish(),
+});
+
+const kickIdentitySchema = z.object({
+  color: z.string().nullish(),
+  data: z.object({ color: z.string().nullish() }).nullish(),
 });
 
 const kickClipSchema = z.object({
@@ -798,6 +857,135 @@ export class KickService {
   }
 
   /**
+   * Public profile details for a chatter. Kick's channel-scoped route adds
+   * relationship fields when the current account is signed in; the user route
+   * supplies the stable avatar, bio, and creation date. Both are unofficial,
+   * so every field is optional and the card degrades gracefully.
+   */
+  async getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile> {
+    const [publicPayload, relationPayload, channelPayload] = await Promise.all([
+      this.requestJson(`/api/v1/users/${encodeURIComponent(login)}`),
+      this.requestJson(
+        `/api/v2/channels/${encodeURIComponent(channel)}/users/${encodeURIComponent(login)}`,
+      ),
+      this.requestJson(`/api/v2/channels/${encodeURIComponent(login)}`),
+    ]);
+    const publicResult = kickPublicUserSchema.safeParse(publicPayload);
+    const relationResult = kickPublicUserSchema.safeParse(relationPayload);
+    const channelResult = kickChannelSchema.safeParse(channelPayload);
+    const publicData = publicResult.success ? publicResult.data : undefined;
+    const relationData = relationResult.success ? relationResult.data : undefined;
+    const channelUser = channelResult.success ? channelResult.data.user : undefined;
+    const user =
+      publicData?.user ?? relationData?.user ?? publicData ?? relationData;
+    const relationship = relationData;
+    const id = user?.id ?? publicData?.id ?? relationData?.id ?? channelUser?.id;
+    const displayName =
+      user?.username ??
+      publicData?.username ??
+      relationData?.username ??
+      channelUser?.username;
+    const isFollowing =
+      relationship?.is_following ?? relationship?.following ?? undefined;
+    const isSubscribed =
+      relationship?.is_subscribed ??
+      relationship?.subscribed ??
+      relationship?.subscription?.is_subscribed ??
+      relationship?.subscription?.active ??
+      undefined;
+
+    return {
+      id: String(id ?? channelUser?.id ?? login),
+      login: user?.slug ?? publicData?.slug ?? relationData?.slug ?? login,
+      displayName: displayName ?? channelUser?.username ?? login,
+      profileImageUrl:
+        user?.profile_pic ??
+        user?.profile_picture ??
+        publicData?.profile_pic ??
+        publicData?.profile_picture ??
+        channelUser?.profile_pic ??
+        "",
+      description: user?.bio ?? publicData?.bio ?? channelUser?.bio ?? "",
+      createdAt: user?.created_at ?? publicData?.created_at ?? channelUser?.created_at ?? "",
+      relationship:
+        isFollowing === undefined && isSubscribed === undefined
+          ? undefined
+          : {
+              isFollowing: isFollowing ?? false,
+              followedAt:
+                relationship?.following_since ?? relationship?.followed_at ?? undefined,
+              subscription:
+                isSubscribed === undefined
+                  ? undefined
+                  : {
+                      isSubscribed,
+                      tier:
+                        relationship?.subscription?.tier == null
+                          ? undefined
+                          : String(relationship.subscription.tier),
+                      isGift: relationship?.subscription?.gifted ?? undefined,
+                    },
+            },
+    };
+  }
+
+  async getChatColor(): Promise<KickChatColorState> {
+    const accountPayload = await this.requestJson("/api/v1/user");
+    const account = kickUserSchema.safeParse(accountPayload);
+    if (!account.success || account.data.id == null) {
+      return { color: "", canUpdate: false };
+    }
+    const payload = await this.requestJson(
+      `/api/internal/v1/chatroom/users/${encodeURIComponent(String(account.data.id))}/identity`,
+    );
+    const identity = kickIdentitySchema.safeParse(payload);
+    return {
+      color:
+        (identity.success
+          ? identity.data.color ?? identity.data.data?.color
+          : undefined) ??
+        account.data.identity?.color ??
+        account.data.chat_color ??
+        account.data.color ??
+        "",
+      canUpdate: true,
+    };
+  }
+
+  async updateChatColor(color: string): Promise<KickChatColorState> {
+    const token = await this.readXsrfToken();
+    const bearer = await this.readSessionToken();
+    if (token === null || bearer === null) throw new Error("Sign in to Kick to change your color.");
+
+    const path = "/api/internal/v1/chatroom/identity";
+    const body = { color };
+    const response = await this.kickSession().fetch(`${KICK_ORIGIN}${path}`, {
+      method: "PUT",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": this.userAgent(),
+        Referer: `${KICK_ORIGIN}/`,
+        "X-XSRF-TOKEN": token,
+        Authorization: `Bearer ${bearer}`,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    let status = response.status;
+    if (status === 401 || status === 403 || status === 419) {
+      status = await this.pageFetch(path, "PUT", bearer, body);
+    }
+    if (status === 401 || status === 403 || status === 419) {
+      throw new Error("Kick rejected the session. Sign in again.");
+    }
+    if (status < 200 || status >= 300) {
+      throw new Error("Kick would not change the username color.");
+    }
+    return { color, canUpdate: true };
+  }
+
+  /**
    * Channels the signed-in account follows. Kick has no public endpoint for
    * this, so it comes from the site's own paginated route and needs the
    * browser session; signed out it simply yields nothing.
@@ -993,7 +1181,24 @@ export class KickService {
       throw new Error("Kick rejected the session. Sign in again.");
     }
     if (!response.ok) {
-      throw new Error("Kick would not accept the message.");
+      let detail = "";
+      try {
+        const payload = record(await response.json());
+        const data = record(payload?.data);
+        const status = record(data?.status);
+        detail =
+          textValue(payload?.message) ??
+          textValue(payload?.error) ??
+          textValue(data?.message) ??
+          textValue(status?.message) ??
+          "";
+      } catch {
+        // A body is optional on Kick's rate-limit responses.
+      }
+      if (response.status === 429) {
+        throw new Error(detail || "You are sending messages too quickly.");
+      }
+      throw new Error(detail.slice(0, 200) || "Kick would not accept the message.");
     }
   }
 
@@ -1034,7 +1239,12 @@ export class KickService {
    * Kasada need the x-kpsdk-* headers its script attaches to every fetch on the
    * page, which cannot be generated outside one.
    */
-  private async pageFetch(path: string, method: string, bearer: string): Promise<number> {
+  private async pageFetch(
+    path: string,
+    method: string,
+    bearer: string,
+    body?: UnknownRecord,
+  ): Promise<number> {
     const window = new BrowserWindow({
       show: false,
       webPreferences: {
@@ -1063,9 +1273,11 @@ export class KickService {
             method: ${JSON.stringify(method)},
             headers: {
               "Accept": "application/json",
+              "Content-Type": "application/json",
               "Authorization": "Bearer " + ${JSON.stringify(bearer)},
               "X-App-Platform": "web",
             },
+            ${body === undefined ? "" : `body: ${JSON.stringify(JSON.stringify(body))},`}
           });
           return response.status;
         } catch (error) {

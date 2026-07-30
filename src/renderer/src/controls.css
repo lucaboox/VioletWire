@@ -1436,6 +1436,34 @@ input {
   text-align: right;
 }
 
+.native-video-chat-input .chat-send-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  margin: 0 5px 6px;
+  padding: 7px 8px 7px 10px;
+  border: 1px solid #5b4930;
+  border-radius: 8px;
+  color: #f0d7a5;
+  background: #292116;
+  font-size: 11px;
+}
+
+.native-video-chat-input .chat-send-status.error {
+  border-color: #713a43;
+  color: #f4b4bd;
+  background: #2c171b;
+}
+
+.native-video-chat-input .chat-send-status button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .stats-panel.hls-stats {
   width: 260px;
 }

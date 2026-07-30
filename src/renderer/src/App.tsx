@@ -96,6 +96,8 @@ import {
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
 import { useChatFeed } from "./chat-feed";
+import { ChatSendStatus } from "./ChatSendStatus";
+import { useChatSendQueue } from "./use-chat-send-queue";
 import { EmotePicker } from "./EmotePicker";
 import { MultiStreamView } from "./MultiStreamView";
 import { ReactTooltipLayer } from "./ReactTooltipLayer";
@@ -912,6 +914,15 @@ export function App() {
     chatRestrictionState.channel === chatChannel
       ? chatRestrictionState.restrictions
       : NO_CHAT_RESTRICTIONS;
+  const restoreUnsentChat = useCallback((message: string, reply?: ChatMessage) => {
+    setChatInput(message);
+    setReplyingTo(reply ?? null);
+  }, []);
+  const chatSender = useChatSendQueue(
+    chatChannel,
+    chatRestrictions.slowModeSeconds,
+    restoreUnsentChat,
+  );
   const chatIsKick =
     chatChannel !== null && parseChannelKey(chatChannel).platform === "kick";
   // Chat resolves provider emotes by name, so Kick messages render 7TV emotes
@@ -3177,7 +3188,7 @@ export function App() {
     if (!chatChannel || !chatInput.trim()) return;
     const platform = parseChannelKey(chatChannel).platform;
     if (platform === "kick" ? kickAccount === null : authState.status !== "signed-in") {
-      setNotice(
+      chatSender.showError(
         platform === "kick"
           ? "Sign in to Kick from Settings to send chat messages."
           : "Sign in with Twitch to send chat messages.",
@@ -3188,13 +3199,7 @@ export function App() {
     const replyTarget = replyingTo;
     setChatInput("");
     setReplyingTo(null);
-    try {
-      await window.desktop.chat.send(chatChannel, message, replyTarget?.id);
-    } catch (reason) {
-      setChatInput(message);
-      setReplyingTo(replyTarget);
-      setNotice(reason instanceof Error ? reason.message : "Unable to send the chat message.");
-    }
+    await chatSender.send(message, replyTarget ?? undefined);
   }
 
   // The active chat restriction as a line the composer can show, and whether we
@@ -4023,6 +4028,10 @@ export function App() {
                 </button>
               )}
               <form className="native-chat-input" onSubmit={sendChatMessage}>
+                <ChatSendStatus
+                  onDismiss={chatSender.dismiss}
+                  status={chatSender.status}
+                />
                 {replyingTo && (
                   <div className="chat-reply-composer">
                     <div className="chat-reply-heading">
@@ -4107,7 +4116,13 @@ export function App() {
                     {chatSettingsOpen && (
                       <div className="chat-overlay-settings multi-chat-settings-menu">
                         <strong>Chat settings</strong>
-                        <TwitchChatColorControls />
+                        <TwitchChatColorControls
+                          platform={
+                            effectiveMultiChatChannel
+                              ? parseChannelKey(effectiveMultiChatChannel).platform
+                              : "twitch"
+                          }
+                        />
                         <ChatToggleSetting
                           checked={chatTimestamps}
                           label="Show timestamps"
@@ -4623,7 +4638,7 @@ export function App() {
                       {chatSettingsOpen && (
                         <div className="chat-overlay-settings">
                           <strong>Chat settings</strong>
-                          <TwitchChatColorControls />
+                          <TwitchChatColorControls platform={activeChatPlatform} />
                           <label>
                             <span>{chatOpacity}%</span>
                             <input
@@ -4739,7 +4754,7 @@ export function App() {
                       {chatSettingsOpen && (
                         <div className="chat-overlay-settings chat-header-settings">
                           <strong>Chat settings</strong>
-                          <TwitchChatColorControls />
+                          <TwitchChatColorControls platform={activeChatPlatform} />
                           <ChatToggleSetting
                             checked={chatTimestamps}
                             label="Show timestamps"
@@ -4912,6 +4927,10 @@ export function App() {
                       </button>
                     )}
                     <form className="native-chat-input" onSubmit={sendChatMessage} ref={chatComposerHost}>
+                      <ChatSendStatus
+                        onDismiss={chatSender.dismiss}
+                        status={chatSender.status}
+                      />
                       {chatRestrictionLabel && (
                         <div className={chatBlocked ? "chat-restriction blocked" : "chat-restriction"}>
                           <Lock size={13} aria-hidden="true" />
@@ -6234,7 +6253,7 @@ export function App() {
                       <p>These settings also apply to the quick chat menu and chat overlay.</p>
                     </header>
                     <div className="settings-card settings-card-stack settings-chat-color-card">
-                      <TwitchChatColorControls />
+                      <TwitchChatColorControls platform={activeChatPlatform} />
                     </div>
                     <div className="settings-card">
                       <div>
