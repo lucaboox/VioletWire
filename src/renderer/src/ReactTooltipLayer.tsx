@@ -334,7 +334,19 @@ export function ReactTooltipLayer({
           {tooltip.linkPreview ? (
             <div className="violetwire-link-preview-card">
               {tooltip.linkPreview.thumbnailUrl && (
-                <img alt="" className="violetwire-tooltip-image" src={tooltip.linkPreview.thumbnailUrl} />
+                <img
+                  alt=""
+                  className={
+                    tooltip.linkPreview.thumbnailPresentation === "avatar"
+                      ? "violetwire-tooltip-image is-avatar"
+                      : "violetwire-tooltip-image"
+                  }
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                  }}
+                  referrerPolicy="no-referrer"
+                  src={tooltip.linkPreview.thumbnailUrl}
+                />
               )}
               <strong>{tooltip.linkPreview.title}</strong>
               <span>{tooltip.linkPreview.author}</span>

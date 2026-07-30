@@ -90,6 +90,7 @@ describe("LinkPreviewService YouTube channels", () => {
       author: "YouTube channel",
       description: "The official Psi channel.",
       thumbnailUrl: "https://yt3.googleusercontent.com/channel-avatar",
+      thumbnailPresentation: "avatar",
     });
     expect(resolvePreview).toHaveBeenCalledWith(
       new URL("https://www.youtube.com/@Psi"),

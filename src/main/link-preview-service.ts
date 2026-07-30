@@ -222,6 +222,7 @@ export class LinkPreviewService {
       url: channelUrl.toString(),
       title: preview.title.replace(/\s*-\s*YouTube\s*$/i, ""),
       author: "YouTube channel",
+      thumbnailPresentation: preview.thumbnailUrl ? "avatar" : undefined,
     };
   }
 

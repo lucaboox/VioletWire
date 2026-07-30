@@ -3,6 +3,8 @@ export interface LinkPreview {
   title: string;
   author: string;
   thumbnailUrl?: string;
+  /** Channel/user portraits should not be cropped like video thumbnails. */
+  thumbnailPresentation?: "cover" | "avatar";
   url: string;
   description?: string;
   durationSeconds?: number;

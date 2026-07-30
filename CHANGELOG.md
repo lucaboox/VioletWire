@@ -8,7 +8,7 @@ All notable changes to VioletWire are documented in this file.
 
 - YouTube channel and `@handle` links now show trusted hover previews without
   requiring generic link previews, including channel pages with unusually
-  large document headers.
+  large document headers and their channel profile pictures.
 - Kick message deletions, timeouts, and bans now use the same revealable
   deleted-message treatment as Twitch chat, including moderation durations.
 
