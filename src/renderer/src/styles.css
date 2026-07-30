@@ -150,14 +150,15 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 .top-search-direct:hover { color: white; background: #292930; }
 .top-search-direct strong { min-width: 0; overflow: hidden; color: #d8b4fe; text-overflow: ellipsis; white-space: nowrap; }
 .top-actions { grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 7px; }
-.top-mode-switch { flex: 0 0 auto; }
-.sign-in { display: flex; align-items: center; gap: 8px; padding: 8px 13px; border: 1px solid #34343b; border-radius: 8px; background: #1a1a1f; cursor: pointer; font-size: 13px; }
+.top-mode-switch { height: 40px; flex: 0 0 auto; border-radius: 9px; }
+.top-mode-switch button { min-height: 32px; border-radius: 6px; }
+.sign-in { display: flex; height: 40px; align-items: center; gap: 8px; padding: 0 13px; border: 1px solid #34343b; border-radius: 9px; background: #1a1a1f; cursor: pointer; font-size: 13px; }
 .sign-in:hover { background: #25252b; }
 .sign-in:disabled { opacity: .65; cursor: wait; }
-.top-settings-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid #34343b; border-radius: 8px; color: #a1a1aa; background: #1a1a1f; cursor: pointer; }
+.top-settings-button { display: grid; width: 40px; height: 40px; padding: 0; place-items: center; border: 1px solid #34343b; border-radius: 9px; color: #a1a1aa; background: #1a1a1f; cursor: pointer; }
 .top-settings-button:hover { color: #f4f4f5; background: #25252b; }
 .top-settings-button.active { border-color: #5a4173; color: #d8b4fe; background: #2a2035; }
-.top-multistream { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border: 1px solid #34343b; border-radius: 8px; color: #d4d4d8; background: #1a1a1f; cursor: pointer; font-size: 12px; font-weight: 600; }
+.top-multistream { display: inline-flex; height: 40px; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid #34343b; border-radius: 9px; color: #d4d4d8; background: #1a1a1f; cursor: pointer; font-size: 12px; font-weight: 600; }
 .top-multistream:hover:not(:disabled) { color: #f4f4f5; background: #25252b; }
 .top-multistream.active { border-color: #7c3aed; color: #e9d5ff; background: #2c1c44; }
 .top-multistream:disabled { opacity: .5; cursor: not-allowed; }

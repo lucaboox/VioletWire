@@ -24,6 +24,8 @@ All notable changes to VioletWire are documented in this file.
 - Settings now open in a taller modal and include a searchable option index
   that links directly to matching account, playback, chat, emote, appearance,
   update, support, and dependency settings.
+- The top-right playback, Multistream, account, and Settings controls now share
+  a consistent height and corner radius.
 
 ## [0.3.4-alpha.3] - 2026-07-30
 
