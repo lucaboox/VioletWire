@@ -113,14 +113,19 @@ export function getLinkImagePreviewUrl(rawUrl: string): string | null {
     return null;
   }
   if (url.protocol !== "https:") return null;
-  if (imageExtensionPattern.test(url.pathname)) return url.toString();
 
   const host = url.hostname.toLowerCase();
-  if (host === "imgur.com" || host === "www.imgur.com") {
-    // Single-image pages only; albums and galleries have no stable mapping.
-    const match = /^\/([A-Za-z0-9]{5,10})$/.exec(url.pathname);
-    return match ? `https://i.imgur.com/${match[1]}.jpg` : null;
+  if (host === "imgur.com" || host === "www.imgur.com" || host === "m.imgur.com") {
+    // Imgur sometimes shares a page-host URL with an image-looking suffix.
+    // Normalize both forms before the generic direct-image check below.
+    // Albums and galleries have no stable one-image mapping.
+    const match =
+      /^\/([A-Za-z0-9]{5,16})(?:\.(png|jpe?g|gif|webp))?\/?$/i.exec(url.pathname);
+    if (!match) return null;
+    const extension = match[2]?.toLowerCase().replace("jpeg", "jpg") ?? "jpg";
+    return `https://i.imgur.com/${match[1]}.${extension}`;
   }
+  if (imageExtensionPattern.test(url.pathname)) return url.toString();
   if (host === "gyazo.com" || host === "www.gyazo.com") {
     const match = /^\/([a-f0-9]{32})$/i.exec(url.pathname);
     return match ? `https://i.gyazo.com/${match[1]}.jpg` : null;

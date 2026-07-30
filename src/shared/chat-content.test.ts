@@ -172,6 +172,12 @@ describe("getLinkImagePreviewUrl", () => {
     expect(getLinkImagePreviewUrl("https://imgur.com/aB3dE9")).toBe(
       "https://i.imgur.com/aB3dE9.jpg",
     );
+    expect(getLinkImagePreviewUrl("https://imgur.com/aB3dE9.png?share=1")).toBe(
+      "https://i.imgur.com/aB3dE9.png",
+    );
+    expect(getLinkImagePreviewUrl("https://m.imgur.com/aB3dE9/")).toBe(
+      "https://i.imgur.com/aB3dE9.jpg",
+    );
     expect(
       getLinkImagePreviewUrl("https://gyazo.com/0123456789abcdef0123456789abcdef"),
     ).toBe("https://i.gyazo.com/0123456789abcdef0123456789abcdef.jpg");
