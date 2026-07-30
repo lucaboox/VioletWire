@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "./chat";
 import {
+  buildRecentChatUsers,
   filterChatMentionCandidates,
   getChatMentionCandidates,
   getLinkImagePreviewUrl,
@@ -137,6 +138,51 @@ describe("RecentChatterIndex", () => {
         { color: "#9147ff", displayName: "Viewer Stream", login: "viewer_stream" },
       ).map(({ login }) => login),
     ).toEqual(["viewer_stream", "viewer_two", "viewer_one"]);
+  });
+});
+
+describe("buildRecentChatUsers", () => {
+  it("keeps the broadcaster first and groups known roles", () => {
+    const moderator = {
+      ...message("mod_user", "Mod User"),
+      badges: ["moderator/1"],
+    };
+    const vip = {
+      ...message("vip_user", "VIP User"),
+      badges: ["vip/1"],
+    };
+    const users = buildRecentChatUsers(
+      [
+        { color: "", displayName: "Viewer", login: "viewer" },
+        { color: "", displayName: "VIP User", login: "vip_user" },
+        { color: "", displayName: "Mod User", login: "mod_user" },
+      ],
+      [moderator, vip],
+      "twitch:streamer",
+      { color: "#9147ff", displayName: "Streamer", login: "streamer" },
+    );
+
+    expect(users.map(({ message: user, role }) => [user.login, role])).toEqual([
+      ["streamer", "broadcaster"],
+      ["mod_user", "moderator"],
+      ["vip_user", "vip"],
+      ["viewer", "chatter"],
+    ]);
+  });
+
+  it("uses the newest retained message metadata for user cards", () => {
+    const older = { ...message("viewer", "Old Name"), color: "#111111" };
+    const newer = { ...message("viewer", "New Name"), color: "#22aa44" };
+    const [entry] = buildRecentChatUsers(
+      [{ color: "", displayName: "Index Name", login: "viewer" }],
+      [older, newer],
+      "kick:channel",
+    );
+
+    expect(entry.message).toMatchObject({
+      displayName: "New Name",
+      color: "#22aa44",
+    });
   });
 });
 

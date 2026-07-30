@@ -4,6 +4,17 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Twitch and Kick side chat now include a searchable user list grouped by
+  broadcaster, moderators, VIPs, and recently active chatters. Selecting a
+  user opens their existing VioletWire user card.
+
+### Improvements
+
+- Side-chat settings now live at the bottom-left of the composer, matching
+  multistream chat, while the former header position opens the user list.
+
 ## [0.3.4-alpha.5] - 2026-07-30
 
 ### Additions

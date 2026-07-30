@@ -88,7 +88,10 @@ import {
   formatModerationAction,
   messageMentionsLogin,
 } from "../../shared/chat";
-import { filterChatMentionCandidates } from "../../shared/chat-content";
+import {
+  buildRecentChatUsers,
+  filterChatMentionCandidates,
+} from "../../shared/chat-content";
 import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
 import {
   mergeChangelogEntries,
@@ -106,6 +109,7 @@ import { ChatEmote } from "./ChatEmote";
 import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
+import { ChatUserList } from "./ChatUserList";
 import {
   channelKey,
   channelUrl,
@@ -791,6 +795,7 @@ export function App() {
   >(new Map());
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [chatUserListOpen, setChatUserListOpen] = useState(false);
   const [pinnedChatResult, setPinnedChatResult] = useState<{
     channel: string;
     message: TwitchPinnedChatMessage | null;
@@ -1069,7 +1074,7 @@ export function App() {
   const lastPlayerPointerPosition = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
-    if (!emotePickerOpen && !chatSettingsOpen) return;
+    if (!emotePickerOpen && !chatSettingsOpen && !chatUserListOpen) return;
     const closeOpenChatMenus = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -1083,14 +1088,22 @@ export function App() {
       if (
         chatSettingsOpen &&
         !target.closest(".chat-overlay-tools") &&
-        !target.closest(".chat-header-actions")
+        !target.closest(".chat-header-actions") &&
+        !target.closest(".chat-composer-settings")
       ) {
         setChatSettingsOpen(false);
+      }
+      if (
+        chatUserListOpen &&
+        !target.closest(".chat-user-list") &&
+        !target.closest(".chat-user-list-anchor")
+      ) {
+        setChatUserListOpen(false);
       }
     };
     document.addEventListener("pointerdown", closeOpenChatMenus, true);
     return () => document.removeEventListener("pointerdown", closeOpenChatMenus, true);
-  }, [chatSettingsOpen, emotePickerOpen]);
+  }, [chatSettingsOpen, chatUserListOpen, emotePickerOpen]);
 
   const revealNativeControls = useCallback(() => {
     if (!activeChannel || activeMode !== "native" || selectedChatUser) return;
@@ -1714,6 +1727,28 @@ export function App() {
           : undefined,
       ),
     [activeChannel, activeChannelDisplayName, recentChatters],
+  );
+  const chatUserListEntries = useMemo(
+    () =>
+      buildRecentChatUsers(
+        recentChatters,
+        chatMessages,
+        chatChannel ?? "",
+        activeChannel
+          ? {
+              color: "#9147ff",
+              displayName: activeChannelDisplayName ?? parseChannelKey(activeChannel).login,
+              login: parseChannelKey(activeChannel).login,
+            }
+          : undefined,
+      ),
+    [
+      activeChannel,
+      activeChannelDisplayName,
+      chatChannel,
+      chatMessages,
+      recentChatters,
+    ],
   );
 
   useEffect(() => {
@@ -4674,104 +4709,31 @@ export function App() {
                           <Pin size={16} />
                         </button>
                       )}
-                      <button
-                        aria-expanded={chatSettingsOpen}
-                        aria-label="Chat overlay settings"
-                        className={chatSettingsOpen ? "active" : ""}
-                        onClick={() => setChatSettingsOpen((current) => !current)}
-                        title="Chat overlay settings"
-                        type="button"
-                      >
-                        <Settings size={16} />
-                      </button>
-                      {chatSettingsOpen && (
-                        <div className="chat-overlay-settings">
-                          <strong>Chat settings</strong>
-                          <TwitchChatColorControls platform={activeChatPlatform} />
-                          <label>
-                            <span>{chatOpacity}%</span>
-                            <input
-                              aria-label="Chat overlay opacity"
-                              max="100"
-                              min="25"
-                              onChange={(event) => setChatOpacity(Number(event.target.value))}
-                              type="range"
-                              value={chatOpacity}
-                            />
-                          </label>
-                          <ChatToggleSetting
-                            checked={chatTimestamps}
-                            label="Show timestamps"
-                            onChange={setChatTimestamps}
+                      <div className="chat-user-list-anchor">
+                        <button
+                          aria-expanded={chatUserListOpen}
+                          aria-label="Users in chat"
+                          className={chatUserListOpen ? "active" : ""}
+                          onClick={() => {
+                            setChatSettingsOpen(false);
+                            setChatUserListOpen((current) => !current);
+                          }}
+                          title="Users in chat"
+                          type="button"
+                        >
+                          <Users size={16} />
+                        </button>
+                        {chatUserListOpen && chatPresentation === "overlay" && (
+                          <ChatUserList
+                            entries={chatUserListEntries}
+                            key={`overlay-${chatChannel}`}
+                            oledMode={oledMode}
+                            onClose={() => setChatUserListOpen(false)}
+                            onOpenUser={openChatUserCard}
+                            platform={activeChatPlatform}
                           />
-                          <ChatToggleSetting
-                            checked={mentionSoundEnabled}
-                            label="Mention sound"
-                            onChange={setMentionSoundEnabled}
-                          />
-                          <MentionSoundControls
-                            onSoundChange={setMentionSoundId}
-                            onVolumeChange={setMentionSoundVolume}
-                            soundId={mentionSoundId}
-                            volume={mentionSoundVolume}
-                          />
-                          <ChatToggleSetting
-                            checked={chatDeletedMessageStyle === "dimmed"}
-                            label="Dim deleted messages"
-                            onChange={(checked) =>
-                              setChatDeletedMessageStyle(
-                                checked ? "dimmed" : "placeholder",
-                              )
-                            }
-                          />
-                          <label>
-                            <span>Font size: {chatFontSize}px</span>
-                            <input
-                              aria-label="Chat font size"
-                              max="25"
-                              min="14"
-                              onChange={(event) => setChatFontSize(Number(event.target.value))}
-                              type="range"
-                              value={chatFontSize}
-                            />
-                          </label>
-                          <label>
-                            <span>Emote size: {chatEmoteSize}px</span>
-                            <input
-                              aria-label="Chat emote size"
-                              max="48"
-                              min="18"
-                              onChange={(event) => setChatEmoteSize(Number(event.target.value))}
-                              type="range"
-                              value={chatEmoteSize}
-                            />
-                          </label>
-                          <ChatToggleSetting
-                            checked={chatOnLeft}
-                            label="Chat on left"
-                            onChange={setChatOnLeft}
-                          />
-                          <label>
-                            <span>History: {chatHistoryLimit}</span>
-                            <input
-                              aria-label="Chat history message count"
-                              max="100"
-                              min="20"
-                              onChange={(event) =>
-                                setChatHistoryLimit(Number(event.target.value))
-                              }
-                              step="10"
-                              type="range"
-                              value={chatHistoryLimit}
-                            />
-                          </label>
-                          <button className="chat-settings-more" onClick={openFullChatSettings} type="button">
-                            <Settings size={14} />
-                            More chat settings
-                            <ChevronRight size={14} />
-                          </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   )}
                   <div className="chat-panel-header">
@@ -4801,93 +4763,31 @@ export function App() {
                           <Pin size={16} />
                         </button>
                       )}
-                      <button
-                        aria-expanded={chatSettingsOpen}
-                        aria-label="Chat settings"
-                        className={chatSettingsOpen ? "toolbar-icon active" : "toolbar-icon"}
-                        onClick={() => setChatSettingsOpen((current) => !current)}
-                        title="Chat settings"
-                        type="button"
-                      >
-                        <Settings size={16} />
-                      </button>
-                      {chatSettingsOpen && (
-                        <div className="chat-overlay-settings chat-header-settings">
-                          <strong>Chat settings</strong>
-                          <TwitchChatColorControls platform={activeChatPlatform} />
-                          <ChatToggleSetting
-                            checked={chatTimestamps}
-                            label="Show timestamps"
-                            onChange={setChatTimestamps}
+                      <div className="chat-user-list-anchor">
+                        <button
+                          aria-expanded={chatUserListOpen}
+                          aria-label="Users in chat"
+                          className={chatUserListOpen ? "toolbar-icon active" : "toolbar-icon"}
+                          onClick={() => {
+                            setChatSettingsOpen(false);
+                            setChatUserListOpen((current) => !current);
+                          }}
+                          title="Users in chat"
+                          type="button"
+                        >
+                          <Users size={16} />
+                        </button>
+                        {chatUserListOpen && chatPresentation === "side" && (
+                          <ChatUserList
+                            entries={chatUserListEntries}
+                            key={chatChannel}
+                            oledMode={oledMode}
+                            onClose={() => setChatUserListOpen(false)}
+                            onOpenUser={openChatUserCard}
+                            platform={activeChatPlatform}
                           />
-                          <ChatToggleSetting
-                            checked={mentionSoundEnabled}
-                            label="Mention sound"
-                            onChange={setMentionSoundEnabled}
-                          />
-                          <MentionSoundControls
-                            onSoundChange={setMentionSoundId}
-                            onVolumeChange={setMentionSoundVolume}
-                            soundId={mentionSoundId}
-                            volume={mentionSoundVolume}
-                          />
-                          <ChatToggleSetting
-                            checked={chatDeletedMessageStyle === "dimmed"}
-                            label="Dim deleted messages"
-                            onChange={(checked) =>
-                              setChatDeletedMessageStyle(
-                                checked ? "dimmed" : "placeholder",
-                              )
-                            }
-                          />
-                          <label>
-                            <span>Font size: {chatFontSize}px</span>
-                            <input
-                              aria-label="Chat font size"
-                              max="25"
-                              min="14"
-                              onChange={(event) => setChatFontSize(Number(event.target.value))}
-                              type="range"
-                              value={chatFontSize}
-                            />
-                          </label>
-                          <label>
-                            <span>Emote size: {chatEmoteSize}px</span>
-                            <input
-                              aria-label="Chat emote size"
-                              max="48"
-                              min="18"
-                              onChange={(event) => setChatEmoteSize(Number(event.target.value))}
-                              type="range"
-                              value={chatEmoteSize}
-                            />
-                          </label>
-                          <ChatToggleSetting
-                            checked={chatOnLeft}
-                            label="Chat on left"
-                            onChange={setChatOnLeft}
-                          />
-                          <label>
-                            <span>History: {chatHistoryLimit}</span>
-                            <input
-                              aria-label="Chat history message count"
-                              max="100"
-                              min="20"
-                              onChange={(event) =>
-                                setChatHistoryLimit(Number(event.target.value))
-                              }
-                              step="10"
-                              type="range"
-                              value={chatHistoryLimit}
-                            />
-                          </label>
-                          <button className="chat-settings-more" onClick={openFullChatSettings} type="button">
-                            <Settings size={14} />
-                            More chat settings
-                            <ChevronRight size={14} />
-                          </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
                   {visiblePinnedChatMessage && (
@@ -5207,7 +5107,106 @@ export function App() {
                         </div>
                       </div>
                       <div className="chat-composer-footer">
-                        <span />
+                        <div className="chat-header-actions chat-composer-settings">
+                          <button
+                            aria-expanded={chatSettingsOpen}
+                            aria-label="Chat settings"
+                            className={chatSettingsOpen ? "toolbar-icon active" : "toolbar-icon"}
+                            onClick={() => {
+                              setChatUserListOpen(false);
+                              setChatSettingsOpen((current) => !current);
+                            }}
+                            title="Chat settings"
+                            type="button"
+                          >
+                            <Settings size={16} />
+                          </button>
+                          {chatSettingsOpen && (
+                            <div className="chat-overlay-settings chat-composer-settings-menu">
+                              <strong>Chat settings</strong>
+                              <TwitchChatColorControls platform={activeChatPlatform} />
+                              <ChatToggleSetting
+                                checked={chatTimestamps}
+                                label="Show timestamps"
+                                onChange={setChatTimestamps}
+                              />
+                              <ChatToggleSetting
+                                checked={mentionSoundEnabled}
+                                label="Mention sound"
+                                onChange={setMentionSoundEnabled}
+                              />
+                              <MentionSoundControls
+                                onSoundChange={setMentionSoundId}
+                                onVolumeChange={setMentionSoundVolume}
+                                soundId={mentionSoundId}
+                                volume={mentionSoundVolume}
+                              />
+                              <ChatToggleSetting
+                                checked={chatDeletedMessageStyle === "dimmed"}
+                                label="Dim deleted messages"
+                                onChange={(checked) =>
+                                  setChatDeletedMessageStyle(
+                                    checked ? "dimmed" : "placeholder",
+                                  )
+                                }
+                              />
+                              <label>
+                                <span>Font size: {chatFontSize}px</span>
+                                <input
+                                  aria-label="Chat font size"
+                                  max="25"
+                                  min="14"
+                                  onChange={(event) =>
+                                    setChatFontSize(Number(event.target.value))
+                                  }
+                                  type="range"
+                                  value={chatFontSize}
+                                />
+                              </label>
+                              <label>
+                                <span>Emote size: {chatEmoteSize}px</span>
+                                <input
+                                  aria-label="Chat emote size"
+                                  max="48"
+                                  min="18"
+                                  onChange={(event) =>
+                                    setChatEmoteSize(Number(event.target.value))
+                                  }
+                                  type="range"
+                                  value={chatEmoteSize}
+                                />
+                              </label>
+                              <ChatToggleSetting
+                                checked={chatOnLeft}
+                                label="Chat on left"
+                                onChange={setChatOnLeft}
+                              />
+                              <label>
+                                <span>History: {chatHistoryLimit}</span>
+                                <input
+                                  aria-label="Chat history message count"
+                                  max="100"
+                                  min="20"
+                                  onChange={(event) =>
+                                    setChatHistoryLimit(Number(event.target.value))
+                                  }
+                                  step="10"
+                                  type="range"
+                                  value={chatHistoryLimit}
+                                />
+                              </label>
+                              <button
+                                className="chat-settings-more"
+                                onClick={openFullChatSettings}
+                                type="button"
+                              >
+                                <Settings size={14} />
+                                More chat settings
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         <button
                           className={chatIsKick ? "chat-send-button kick" : "chat-send-button"}
                           disabled={singleChatDisabled || !chatInput.trim()}

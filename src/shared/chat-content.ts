@@ -22,6 +22,13 @@ export interface ChatMentionCandidate {
   login: string;
 }
 
+export type ChatUserRole = "broadcaster" | "moderator" | "vip" | "chatter";
+
+export interface ChatUserListEntry {
+  message: ChatMessage;
+  role: ChatUserRole;
+}
+
 export const RECENT_CHATTER_LIMIT = 2_000;
 
 /** A per-channel, bounded index independent of the rendered message history. */
@@ -44,6 +51,86 @@ export class RecentChatterIndex {
   allNewestFirst(): ChatMentionCandidate[] {
     return [...this.items.values()].reverse();
   }
+}
+
+function roleForChatUser(message: ChatMessage, broadcasterLogin?: string): ChatUserRole {
+  if (message.login.toLowerCase() === broadcasterLogin?.toLowerCase()) {
+    return "broadcaster";
+  }
+  const badges = [
+    ...message.badges,
+    ...(message.badgeAssets ?? []).flatMap((badge) => [
+      badge.key,
+      badge.label ?? "",
+      badge.title,
+    ]),
+  ]
+    .join(" ")
+    .toLowerCase();
+  if (/\b(broadcaster|moderator|mod)\b/.test(badges)) return "moderator";
+  if (/\bvip\b/.test(badges)) return "vip";
+  return "chatter";
+}
+
+/**
+ * Builds the searchable user-list model from the per-channel chatter index.
+ * The index outlives the small rendered message buffer, while a user's newest
+ * retained message contributes their current badges and other card metadata.
+ */
+export function buildRecentChatUsers(
+  candidates: ChatMentionCandidate[],
+  messages: ChatMessage[],
+  channel: string,
+  broadcaster?: ChatMentionCandidate,
+): ChatUserListEntry[] {
+  const latestMessages = new Map<string, ChatMessage>();
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const login = message.login.trim().toLowerCase();
+    if (login && !latestMessages.has(login)) latestMessages.set(login, message);
+  }
+
+  const allCandidates = broadcaster
+    ? [broadcaster, ...candidates.filter(({ login }) => login !== broadcaster.login)]
+    : candidates;
+  const seen = new Set<string>();
+  const entries: ChatUserListEntry[] = [];
+  for (const candidate of allCandidates) {
+    const login = candidate.login.trim().toLowerCase();
+    if (!login || seen.has(login)) continue;
+    seen.add(login);
+    const message =
+      latestMessages.get(login) ??
+      ({
+        id: `chatter-${login}`,
+        channel,
+        login,
+        displayName: candidate.displayName || candidate.login,
+        color: candidate.color,
+        text: "",
+        badges: login === broadcaster?.login.toLowerCase() ? ["broadcaster/1"] : [],
+        sentAt: 0,
+        twitchEmotes: [],
+      } satisfies ChatMessage);
+    entries.push({
+      message,
+      role: roleForChatUser(message, broadcaster?.login),
+    });
+  }
+
+  const roleOrder: Record<ChatUserRole, number> = {
+    broadcaster: 0,
+    moderator: 1,
+    vip: 2,
+    chatter: 3,
+  };
+  return entries.sort(
+    (left, right) =>
+      roleOrder[left.role] - roleOrder[right.role] ||
+      left.message.displayName.localeCompare(right.message.displayName, undefined, {
+        sensitivity: "base",
+      }),
+  );
 }
 
 const linkPattern =
