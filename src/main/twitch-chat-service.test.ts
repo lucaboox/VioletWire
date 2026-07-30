@@ -155,9 +155,38 @@ describe("TwitchChatService recent history", () => {
     service.connect("channel");
     await vi.advanceTimersByTimeAsync(2_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("https://logs.zonian.dev/rm/channel");
     expect(onMessage).toHaveBeenCalledTimes(1);
     expect(onMessage).toHaveBeenCalledWith(
       expect.objectContaining({ id: "history-message", historical: true }),
+    );
+
+    service.disconnect();
+  });
+
+  it("falls back to Robotty when Zonian is unavailable", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const line =
+      "@color=#9147FF;display-name=Viewer;id=fallback-message;tmi-sent-ts=1720000000000 :viewer!viewer@viewer.tmi.twitch.tv PRIVMSG #channel :hello";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValue(
+        new Response(JSON.stringify({ messages: [line] }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const onMessage = vi.fn();
+    const service = new TwitchChatService(onMessage, vi.fn(), vi.fn());
+
+    service.connect("channel");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toContain(
+      "https://recent-messages.robotty.de/api/v2/recent-messages/channel",
+    );
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "fallback-message", historical: true }),
     );
 
     service.disconnect();

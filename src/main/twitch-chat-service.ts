@@ -19,6 +19,7 @@ const KEEPALIVE_AFTER_SILENCE = 4 * 60_000;
 const DEAD_AFTER_SILENCE = 330_000;
 const COMMUNITY_GIFT_BATCH_TTL = 20_000;
 const HISTORY_CATCH_UP_DELAY = 2_000;
+const RECENT_MESSAGES_TIMEOUT = 5_000;
 
 interface CommunityGiftBatch {
   remainingRecipients: number;
@@ -236,14 +237,36 @@ export class TwitchChatService {
   }
 
   private async loadRecentMessages(channel: string): Promise<void> {
+    const encodedChannel = encodeURIComponent(channel);
+    const sources = [
+      `https://logs.zonian.dev/rm/${encodedChannel}?limit=${this.historyLimit}&hide_moderation_messages=false&hide_moderated_messages=false`,
+      `https://recent-messages.robotty.de/api/v2/recent-messages/${encodedChannel}?limit=${this.historyLimit}`,
+    ];
+    let lines: string[] | null = null;
+
+    for (const source of sources) {
+      lines = await this.fetchRecentMessageLines(source);
+      if (lines !== null || this.channel !== channel) break;
+    }
+    if (lines === null || this.channel !== channel) return;
+
+    const messages = lines
+      .map((line) => this.parseMessageLine(line))
+      .filter((message): message is ChatMessage => Boolean(message))
+      .sort((left, right) => left.sentAt - right.sentAt)
+      .slice(-this.historyLimit);
+    for (const message of messages) {
+      if (this.channel !== channel) return;
+      this.emitMessage({ ...message, historical: true });
+    }
+  }
+
+  private async fetchRecentMessageLines(url: string): Promise<string[] | null> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5_000);
+    const timeout = setTimeout(() => controller.abort(), RECENT_MESSAGES_TIMEOUT);
     try {
-      const response = await fetch(
-        `https://recent-messages.robotty.de/api/v2/recent-messages/${encodeURIComponent(channel)}?limit=${this.historyLimit}`,
-        { signal: controller.signal },
-      );
-      if (!response.ok) return;
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) return null;
       const payload: unknown = await response.json();
       if (
         typeof payload !== "object" ||
@@ -251,22 +274,15 @@ export class TwitchChatService {
         !("messages" in payload) ||
         !Array.isArray(payload.messages)
       ) {
-        return;
+        return null;
       }
-      if (this.channel !== channel) return;
-      const messages = payload.messages
-        .filter((line): line is string => typeof line === "string" && line.length <= 8_192)
-        .map((line) => this.parseMessageLine(line))
-        .filter((message): message is ChatMessage => Boolean(message))
-        .sort((left, right) => left.sentAt - right.sentAt)
-        .slice(-this.historyLimit);
-      for (const message of messages) {
-        if (this.channel !== channel) return;
-        this.emitMessage({ ...message, historical: true });
-      }
+      return payload.messages.filter(
+        (line): line is string => typeof line === "string" && line.length <= 8_192,
+      );
     } catch {
       // Recent history is a best-effort third-party enhancement. Live Twitch
       // IRC remains connected even when the history service is unavailable.
+      return null;
     } finally {
       clearTimeout(timeout);
     }

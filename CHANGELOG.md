@@ -4,6 +4,11 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Improvements
+
+- Twitch chat history now uses Zonian's multi-instance recent-message
+  aggregator first, with Robotty retained as an automatic fallback.
+
 ### Fixed
 
 - Twitch chat history now performs one delayed catch-up refresh after joining,
