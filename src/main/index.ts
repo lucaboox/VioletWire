@@ -1193,6 +1193,14 @@ handleTrusted("twitch:get-pinned-chat-message", (_event, rawBroadcasterId: unkno
     .parse(rawBroadcasterId);
   return twitchService.getPinnedChatMessage(broadcasterId);
 });
+handleTrusted("kick:get-pinned-chat-message", (_event, rawChannelId: unknown) => {
+  const channelId = z
+    .string()
+    .regex(/^\d+$/)
+    .max(32)
+    .parse(rawChannelId);
+  return kickService.getPinnedChatMessage(channelId);
+});
 
 handleTrusted(
   "kick:get-chat-user-profile",

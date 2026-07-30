@@ -1,7 +1,12 @@
 import { BrowserWindow, session, type Session } from "electron";
 import { z } from "zod";
-import type { BrowseCategory, BrowseStream, BrowsePage } from "../shared/twitch";
-import type { ChatUserProfile } from "../shared/twitch";
+import type {
+  BrowseCategory,
+  BrowseStream,
+  BrowsePage,
+  ChatUserProfile,
+  TwitchPinnedChatMessage,
+} from "../shared/twitch";
 import type { KickChatColorState } from "../shared/platform";
 
 /**
@@ -288,6 +293,33 @@ export interface KickChatHistoryEntry {
   } | null;
 }
 
+const kickHistorySenderSchema = z
+  .object({
+    id: z.number().nullish(),
+    slug: z.string().nullish(),
+    username: z.string().nullish(),
+    identity: z
+      .object({
+        color: z.string().nullish(),
+        badges: z
+          .array(
+            z.object({
+              type: z.string().nullish(),
+              text: z.string().nullish(),
+              count: z.number().nullish(),
+            }),
+          )
+          .nullish(),
+        badges_v2: z
+          .array(
+            z.object({ name: z.string().nullish(), image_url: z.string().nullish() }),
+          )
+          .nullish(),
+      })
+      .nullish(),
+  })
+  .nullish();
+
 const kickChatHistorySchema = z.object({
   data: z
     .object({
@@ -302,32 +334,7 @@ const kickChatHistorySchema = z.object({
             thread_parent_id: z.union([z.string(), z.number()]).nullish(),
             replied_to: z.unknown().optional(),
             replies_to: z.unknown().optional(),
-            sender: z
-              .object({
-                id: z.number().nullish(),
-                slug: z.string().nullish(),
-                username: z.string().nullish(),
-                identity: z
-                  .object({
-                    color: z.string().nullish(),
-                    badges: z
-                      .array(
-                        z.object({
-                          type: z.string().nullish(),
-                          text: z.string().nullish(),
-                          count: z.number().nullish(),
-                        }),
-                      )
-                      .nullish(),
-                    badges_v2: z
-                      .array(
-                        z.object({ name: z.string().nullish(), image_url: z.string().nullish() }),
-                      )
-                      .nullish(),
-                  })
-                  .nullish(),
-              })
-              .nullish(),
+            sender: kickHistorySenderSchema,
           }),
         )
         .nullish()
@@ -341,6 +348,26 @@ const kickChatHistorySchema = z.object({
                 : String(message.thread_parent_id),
           })),
         ),
+      pinned_message: z
+        .object({
+          duration: z.union([z.string(), z.number()]).nullish(),
+          finish_at: z.string().nullish(),
+          pinned_by: z
+            .object({
+              username: z.string().nullish(),
+              slug: z.string().nullish(),
+            })
+            .nullish(),
+          message: z
+            .object({
+              id: z.union([z.string(), z.number()]),
+              content: z.string(),
+              created_at: z.string().nullish(),
+              sender: kickHistorySenderSchema,
+            })
+            .nullish(),
+        })
+        .nullish(),
     })
     .nullish(),
 });
@@ -1332,6 +1359,67 @@ export class KickService {
     const parsed = kickChatHistorySchema.safeParse(payload);
     if (!parsed.success) return [];
     return parsed.data.data?.messages ?? [];
+  }
+
+  /**
+   * Kick includes the current pin beside its recent-message response. This is
+   * an undocumented website surface, so malformed or changed payloads degrade
+   * to no banner instead of breaking chat.
+   */
+  async getPinnedChatMessage(channelId: string): Promise<TwitchPinnedChatMessage | null> {
+    const payload = await this.requestJson(
+      `/api/v2/channels/${encodeURIComponent(channelId)}/messages`,
+    );
+    if (payload === null) return null;
+    const parsed = kickChatHistorySchema.safeParse(payload);
+    if (!parsed.success) return null;
+    const pin = parsed.data.data?.pinned_message;
+    const message = pin?.message;
+    if (!pin || !message) return null;
+    if (pin.finish_at && Date.parse(pin.finish_at) <= Date.now()) return null;
+
+    const fragments: TwitchPinnedChatMessage["fragments"] = [];
+    const emotePattern = /\[emote:(\d+):([^\]]+)\]/g;
+    let cursor = 0;
+    for (const match of message.content.matchAll(emotePattern)) {
+      if (match.index > cursor) {
+        fragments.push({
+          type: "text",
+          text: message.content.slice(cursor, match.index),
+        });
+      }
+      fragments.push({
+        type: "emote",
+        text: match[2],
+        emote: {
+          id: match[1],
+          formats: ["static"],
+          imageUrl: `https://files.kick.com/emotes/${match[1]}/fullsize`,
+        },
+      });
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < message.content.length) {
+      fragments.push({ type: "text", text: message.content.slice(cursor) });
+    }
+
+    const senderName =
+      message.sender?.username ?? message.sender?.slug ?? "Kick user";
+    return {
+      id: String(message.id),
+      senderId:
+        message.sender?.id === null || message.sender?.id === undefined
+          ? ""
+          : String(message.sender.id),
+      senderLogin: message.sender?.slug ?? senderName.toLowerCase(),
+      senderName,
+      pinnedByName:
+        pin.pinned_by?.username ?? pin.pinned_by?.slug ?? undefined,
+      text: message.content.replace(emotePattern, (_match, _id, name: string) => name),
+      fragments,
+      startsAt: message.created_at ?? new Date().toISOString(),
+      endsAt: pin.finish_at ?? undefined,
+    };
   }
 
   /** The channel's emote sets, plus Kick's global and emoji sets. */

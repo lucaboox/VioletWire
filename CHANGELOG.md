@@ -6,6 +6,9 @@ All notable changes to VioletWire are documented in this file.
 
 ### Fixed
 
+- Twitch chat history now performs one delayed catch-up refresh after joining,
+  preventing newly sent messages from being missed while the history provider
+  is still indexing them.
 - Repeated Twitch messages now retry once with an invisible differentiator
   instead of showing Twitch's 30-second duplicate-message error.
 - YouTube channel and `@handle` links now show trusted hover previews without
@@ -19,6 +22,9 @@ All notable changes to VioletWire are documented in this file.
 
 ### Additions
 
+- Hidden pinned messages can now be reopened from a pin button beside chat
+  settings, and Kick's current pinned message is available in regular and
+  multistream chat.
 - Chat settings now offer opt-in generic website previews using Open Graph
   metadata, with Always, Ctrl-hover, and Alt-hover activation choices.
 - Kick chat now displays reply context and can send replies through the

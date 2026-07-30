@@ -18,6 +18,7 @@ const WATCHDOG_INTERVAL = 30_000;
 const KEEPALIVE_AFTER_SILENCE = 4 * 60_000;
 const DEAD_AFTER_SILENCE = 330_000;
 const COMMUNITY_GIFT_BATCH_TTL = 20_000;
+const HISTORY_CATCH_UP_DELAY = 2_000;
 
 interface CommunityGiftBatch {
   remainingRecipients: number;
@@ -39,6 +40,7 @@ export class TwitchChatService {
   private lastActivityAt = 0;
   private keepalivePingSentAt = 0;
   private watchdogTimer: NodeJS.Timeout | null = null;
+  private historyRefreshTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly onMessage: MessageListener,
@@ -56,6 +58,11 @@ export class TwitchChatService {
     this.onRestrictions(NO_CHAT_RESTRICTIONS);
     this.open("connecting");
     void this.loadRecentMessages(this.channel);
+    this.historyRefreshTimer = setTimeout(() => {
+      this.historyRefreshTimer = null;
+      if (this.channel) void this.loadRecentMessages(this.channel);
+    }, HISTORY_CATCH_UP_DELAY);
+    this.historyRefreshTimer.unref?.();
   }
 
   disconnect(): void {
@@ -63,6 +70,8 @@ export class TwitchChatService {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.stopWatchdog();
+    if (this.historyRefreshTimer) clearTimeout(this.historyRefreshTimer);
+    this.historyRefreshTimer = null;
     this.socket?.close();
     this.socket = null;
     this.channel = null;

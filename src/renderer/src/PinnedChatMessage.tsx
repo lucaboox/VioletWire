@@ -50,7 +50,10 @@ function renderFragment(fragment: TwitchPinnedChatFragment, index: number) {
         decoding="async"
         key={`${fragment.emote.id}:${index}`}
         loading="lazy"
-        src={`https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(fragment.emote.id)}/${format}/dark/2.0`}
+        src={
+          fragment.emote.imageUrl ??
+          `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(fragment.emote.id)}/${format}/dark/2.0`
+        }
       />
     );
   }
@@ -80,7 +83,9 @@ export function PinnedChatMessage({
       <div className="pinned-chat-heading">
         <span>
           <Pin aria-hidden="true" size={13} />
-          Pinned by {message.pinnedByName}
+          {message.pinnedByName
+            ? `Pinned by ${message.pinnedByName}`
+            : "Pinned message"}
         </span>
         <button
           aria-label="Hide pinned message"

@@ -30,6 +30,7 @@ import {
   Maximize,
   Minimize,
   MoveDiagonal2,
+  Pin,
   Play,
   Pause,
   RotateCcw,
@@ -791,11 +792,13 @@ export function App() {
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
   const [pinnedChatResult, setPinnedChatResult] = useState<{
-    broadcasterId: string;
+    channel: string;
     message: TwitchPinnedChatMessage | null;
   } | null>(null);
-  const [dismissedPinnedMessageId, setDismissedPinnedMessageId] =
-    useState<string | null>(null);
+  const [dismissedPinnedMessage, setDismissedPinnedMessage] = useState<{
+    channel: string;
+    id: string;
+  } | null>(null);
   const [chatTimestamps, setChatTimestamps] = useState(
     () => window.localStorage.getItem("glint.chat.timestamps") !== "false",
   );
@@ -884,7 +887,10 @@ export function App() {
   const [multiTiles, setMultiTiles] = useState<MultiStreamTileState[]>([]);
   // Which tile's chat the tabbed Stream Chat is currently showing.
   const [multiChatChannel, setMultiChatChannel] = useState<string | null>(null);
-  const [multiChatBroadcasterId, setMultiChatBroadcasterId] = useState<string | null>(null);
+  const [multiChatBroadcasterResult, setMultiChatBroadcasterResult] = useState<{
+    channel: string;
+    id: string | null;
+  } | null>(null);
   // All tile channels stay connected at once; each keeps its own message buffer
   // so switching tabs is instant and nothing is missed in the background.
   const [multiChatBuffers, setMultiChatBuffers] = useState<Map<string, ChatMessage[]>>(new Map());
@@ -934,45 +940,51 @@ export function App() {
   // over and the other tabs stay empty rather than showing Twitch's.
   const pickerProviderEmotes = chatIsKick ? kickSevenTvEmotes : providerEmoteMaps;
   const chatBroadcasterId = multiStreamActive
-    ? multiChatBroadcasterId
+    ? multiChatBroadcasterResult?.channel === effectiveMultiChatChannel
+      ? multiChatBroadcasterResult.id
+      : null
     : (streamMetadata?.broadcasterId ?? null);
   const currentPinnedChatMessage =
-    pinnedChatResult?.broadcasterId === chatBroadcasterId
+    pinnedChatResult?.channel === chatChannel
       ? pinnedChatResult.message
       : null;
   const visiblePinnedChatMessage =
-    currentPinnedChatMessage?.id === dismissedPinnedMessageId
+    currentPinnedChatMessage?.id === dismissedPinnedMessage?.id &&
+    dismissedPinnedMessage?.channel === chatChannel
       ? null
       : currentPinnedChatMessage;
+  const pinnedChatMessageHidden =
+    currentPinnedChatMessage !== null &&
+    currentPinnedChatMessage.id === dismissedPinnedMessage?.id &&
+    dismissedPinnedMessage?.channel === chatChannel;
 
   useEffect(() => {
-    if (
-      chatIsKick ||
-      !chatBroadcasterId ||
-      authState.status !== "signed-in"
-    ) {
+    if (!chatChannel || !chatBroadcasterId) {
       return;
     }
+    const platform = parseChannelKey(chatChannel).platform;
+    if (platform === "twitch" && authState.status !== "signed-in") return;
 
     let disposed = false;
     const refresh = async () => {
       try {
-        const pin =
-          await window.desktop.twitch.getPinnedChatMessage(chatBroadcasterId);
+        const pin = await (platform === "kick"
+          ? window.desktop.kick.getPinnedChatMessage(chatBroadcasterId)
+          : window.desktop.twitch.getPinnedChatMessage(chatBroadcasterId));
         if (disposed) return;
         const expired =
           pin?.endsAt !== undefined &&
           Date.parse(pin.endsAt) <= Date.now();
         setPinnedChatResult({
-          broadcasterId: chatBroadcasterId,
+          channel: chatChannel,
           message: expired ? null : pin,
         });
       } catch {
-        // Twitch currently restricts its pin endpoint to broadcasters and
-        // moderators. A normal viewer simply gets no banner.
+        // Twitch restricts its pin endpoint to broadcasters and moderators;
+        // Kick's website endpoint is best effort. Neither should break chat.
         if (!disposed) {
           setPinnedChatResult({
-            broadcasterId: chatBroadcasterId,
+            channel: chatChannel,
             message: null,
           });
         }
@@ -985,7 +997,8 @@ export function App() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [authState.status, chatBroadcasterId, chatIsKick]);
+  }, [authState.status, chatBroadcasterId, chatChannel]);
+
   const multiDisplayMessages = useMemo(
     () =>
       effectiveMultiChatChannel ? (multiChatBuffers.get(effectiveMultiChatChannel) ?? []) : [],
@@ -1284,14 +1297,24 @@ export function App() {
   // messages themselves come from the always-connected per-channel buffers.
   useEffect(() => {
     if (!multiStreamActive || !effectiveMultiChatChannel) return;
-    // Helix has nothing for a Kick channel and its schema rejects the key; a
-    // Kick tab resolves emotes by 7TV, not this broadcaster id, so skip it.
-    if (parseChannelKey(effectiveMultiChatChannel).platform !== "twitch") return;
+    const target = parseChannelKey(effectiveMultiChatChannel);
     let cancelled = false;
-    void window.desktop.twitch
-      .getStreamMetadata(effectiveMultiChatChannel)
-      .then((meta) => {
-        if (!cancelled) setMultiChatBroadcasterId(meta?.broadcasterId ?? null);
+    const request =
+      target.platform === "kick"
+        ? window.desktop.kick
+            .getChannel(target.login)
+            .then((channel) => channel?.id ?? null)
+        : window.desktop.twitch
+            .getStreamMetadata(effectiveMultiChatChannel)
+            .then((meta) => meta?.broadcasterId ?? null);
+    void request
+      .then((broadcasterId) => {
+        if (!cancelled) {
+          setMultiChatBroadcasterResult({
+            channel: effectiveMultiChatChannel,
+            id: broadcasterId,
+          });
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -3974,9 +3997,14 @@ export function App() {
               {visiblePinnedChatMessage && (
                 <PinnedChatMessage
                   message={visiblePinnedChatMessage}
-                  onDismiss={() =>
-                    setDismissedPinnedMessageId(visiblePinnedChatMessage.id)
-                  }
+                  onDismiss={() => {
+                    if (chatChannel) {
+                      setDismissedPinnedMessage({
+                        channel: chatChannel,
+                        id: visiblePinnedChatMessage.id,
+                      });
+                    }
+                  }}
                 />
               )}
               <div
@@ -4103,6 +4131,17 @@ export function App() {
                 </div>
                 <div className="chat-composer-footer">
                   <div className="chat-header-actions multi-chat-settings">
+                    {pinnedChatMessageHidden && (
+                      <button
+                        aria-label="Show pinned message"
+                        className="toolbar-icon"
+                        onClick={() => setDismissedPinnedMessage(null)}
+                        title="Show pinned message"
+                        type="button"
+                      >
+                        <Pin size={16} />
+                      </button>
+                    )}
                     <button
                       aria-expanded={chatSettingsOpen}
                       aria-label="Chat settings"
@@ -4625,6 +4664,16 @@ export function App() {
                       >
                         <ChevronRight size={17} />
                       </button>
+                      {pinnedChatMessageHidden && (
+                        <button
+                          aria-label="Show pinned message"
+                          onClick={() => setDismissedPinnedMessage(null)}
+                          title="Show pinned message"
+                          type="button"
+                        >
+                          <Pin size={16} />
+                        </button>
+                      )}
                       <button
                         aria-expanded={chatSettingsOpen}
                         aria-label="Chat overlay settings"
@@ -4741,6 +4790,17 @@ export function App() {
                     </button>
                     <strong>Stream Chat</strong>
                     <div className="chat-header-actions">
+                      {pinnedChatMessageHidden && (
+                        <button
+                          aria-label="Show pinned message"
+                          className="toolbar-icon"
+                          onClick={() => setDismissedPinnedMessage(null)}
+                          title="Show pinned message"
+                          type="button"
+                        >
+                          <Pin size={16} />
+                        </button>
+                      )}
                       <button
                         aria-expanded={chatSettingsOpen}
                         aria-label="Chat settings"
@@ -4833,9 +4893,14 @@ export function App() {
                   {visiblePinnedChatMessage && (
                     <PinnedChatMessage
                       message={visiblePinnedChatMessage}
-                      onDismiss={() =>
-                        setDismissedPinnedMessageId(visiblePinnedChatMessage.id)
-                      }
+                      onDismiss={() => {
+                        if (chatChannel) {
+                          setDismissedPinnedMessage({
+                            channel: chatChannel,
+                            id: visiblePinnedChatMessage.id,
+                          });
+                        }
+                      }}
                     />
                   )}
                   <div className="chat-host native-chat" ref={chatHost}>

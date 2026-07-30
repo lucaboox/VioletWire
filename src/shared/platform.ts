@@ -5,6 +5,7 @@ import type {
   BrowsePage,
   ChatUserProfile,
 } from "./twitch";
+import type { TwitchPinnedChatMessage } from "./twitch";
 
 /**
  * VioletWire watches more than one service. Twitch remains the default so
@@ -165,6 +166,7 @@ export interface KickApi {
   getFollowedChannels(): Promise<KickChannelDetails[]>;
   getEmoteSets(slug: string): Promise<KickEmoteGroup[]>;
   getChatUserProfile(channel: string, login: string): Promise<ChatUserProfile>;
+  getPinnedChatMessage(channelId: string): Promise<TwitchPinnedChatMessage | null>;
   getChatColor(): Promise<KickChatColorState>;
   updateChatColor(color: string): Promise<KickChatColorState>;
   setFollowing(slug: string, follow: boolean): Promise<void>;

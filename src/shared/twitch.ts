@@ -76,6 +76,7 @@ export interface TwitchPinnedChatFragment {
   emote?: {
     id: string;
     formats: string[];
+    imageUrl?: string;
   };
 }
 
@@ -84,7 +85,8 @@ export interface TwitchPinnedChatMessage {
   senderId: string;
   senderLogin: string;
   senderName: string;
-  pinnedByName: string;
+  /** Absent when the provider does not disclose who created the pin. */
+  pinnedByName?: string;
   text: string;
   fragments: TwitchPinnedChatFragment[];
   startsAt: string;

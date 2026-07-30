@@ -235,6 +235,8 @@ const api: DesktopApi = {
       ipcRenderer.invoke("kick:get-emote-sets", slug),
     getChatUserProfile: (channel: string, login: string) =>
       ipcRenderer.invoke("kick:get-chat-user-profile", channel, login),
+    getPinnedChatMessage: (channelId: string) =>
+      ipcRenderer.invoke("kick:get-pinned-chat-message", channelId),
     getChatColor: () => ipcRenderer.invoke("kick:get-chat-color"),
     updateChatColor: (color: string) => ipcRenderer.invoke("kick:update-chat-color", color),
     setFollowing: (slug: string, follow: boolean): Promise<void> =>

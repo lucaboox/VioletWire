@@ -134,6 +134,36 @@ describe("TwitchChatService connection watchdog", () => {
   });
 });
 
+describe("TwitchChatService recent history", () => {
+  it("refreshes once after joining and deduplicates messages indexed late", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const line =
+      "@color=#9147FF;display-name=Viewer;id=history-message;tmi-sent-ts=1720000000000 :viewer!viewer@viewer.tmi.twitch.tv PRIVMSG #channel :hello";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ messages: [] }), { status: 200 }),
+      )
+      .mockResolvedValue(
+        new Response(JSON.stringify({ messages: [line] }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const onMessage = vi.fn();
+    const service = new TwitchChatService(onMessage, vi.fn(), vi.fn());
+
+    service.connect("channel");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "history-message", historical: true }),
+    );
+
+    service.disconnect();
+  });
+});
+
 describe("TwitchChatService replies", () => {
   it("keeps Twitch reply and thread metadata from IRC tags", () => {
     const service = new TwitchChatService(vi.fn(), vi.fn(), vi.fn());

@@ -636,7 +636,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-panel.overlay { grid-template-rows: minmax(0, 1fr); }
 .chat-panel.overlay:has(.pinned-chat-banner) { grid-template-rows: auto minmax(0, 1fr); }
 .chat-panel.overlay .chat-panel-header { display: none; }
-.chat-panel-header { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 1px solid #29292f; background: #151519; }
+.chat-panel-header { position: relative; display: grid; grid-template-columns: 68px minmax(0, 1fr) 68px; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 1px solid #29292f; background: #151519; }
 .chat-panel-header strong, .chat-panel-header span { display: block; }
 .chat-panel-header > strong { color: #e4e4e7; font-size: 14px; font-weight: 700; text-align: center; }
 .chat-panel-header span { margin-top: 2px; color: #81818b; font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
