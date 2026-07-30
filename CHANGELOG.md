@@ -9,11 +9,15 @@ All notable changes to VioletWire are documented in this file.
 - YouTube channel and `@handle` links now show trusted hover previews without
   requiring generic link previews, including channel pages with unusually
   large document headers.
+- Kick message deletions, timeouts, and bans now use the same revealable
+  deleted-message treatment as Twitch chat, including moderation durations.
 
 ### Additions
 
 - Chat settings now offer opt-in generic website previews using Open Graph
   metadata, with Always, Ctrl-hover, and Alt-hover activation choices.
+- Kick chat now displays reply context and can send replies through the
+  existing reply composer and conversation-thread interface.
 
 ### Improvements
 

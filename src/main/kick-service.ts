@@ -212,7 +212,13 @@ export interface KickChatHistoryEntry {
   id?: string | null;
   content?: string | null;
   created_at?: string | null;
+  type?: string | null;
+  metadata?: unknown;
+  thread_parent_id?: string | null;
+  replied_to?: unknown;
+  replies_to?: unknown;
   sender?: {
+    id?: number | null;
     slug?: string | null;
     username?: string | null;
     identity?: {
@@ -232,8 +238,14 @@ const kickChatHistorySchema = z.object({
             id: z.union([z.string(), z.number()]).nullish(),
             content: z.string().nullish(),
             created_at: z.string().nullish(),
+            type: z.string().nullish(),
+            metadata: z.unknown().optional(),
+            thread_parent_id: z.union([z.string(), z.number()]).nullish(),
+            replied_to: z.unknown().optional(),
+            replies_to: z.unknown().optional(),
             sender: z
               .object({
+                id: z.number().nullish(),
                 slug: z.string().nullish(),
                 username: z.string().nullish(),
                 identity: z
@@ -264,6 +276,10 @@ const kickChatHistorySchema = z.object({
           (messages ?? []).map((message) => ({
             ...message,
             id: message.id === null || message.id === undefined ? undefined : String(message.id),
+            thread_parent_id:
+              message.thread_parent_id === null || message.thread_parent_id === undefined
+                ? undefined
+                : String(message.thread_parent_id),
           })),
         ),
     })
@@ -317,6 +333,14 @@ export interface KickChannel {
   viewerCount: number;
   startedAt?: string;
   thumbnailUrl?: string;
+}
+
+export interface KickChatReplyTarget {
+  id: string;
+  content: string;
+  senderId: number;
+  senderUsername: string;
+  threadParentId?: string;
 }
 
 /**
@@ -911,7 +935,11 @@ export class KickService {
    * token it issued alongside the session; without it the API answers 419
    * regardless of who is signed in.
    */
-  async sendMessage(chatroomId: string, content: string): Promise<void> {
+  async sendMessage(
+    chatroomId: string,
+    content: string,
+    replyTarget?: KickChatReplyTarget,
+  ): Promise<void> {
     const token = await this.readXsrfToken();
     const bearer = await this.readSessionToken();
     if (token === null || bearer === null) throw new Error("Not signed in to Kick.");
@@ -928,7 +956,32 @@ export class KickService {
           "X-XSRF-TOKEN": token,
           Authorization: `Bearer ${bearer}`,
         },
-        body: JSON.stringify({ content, type: "message" }),
+        body: JSON.stringify(
+          replyTarget
+            ? {
+                content,
+                type: "reply",
+                metadata: {
+                  original_message: {
+                    id: replyTarget.id,
+                    content: replyTarget.content,
+                  },
+                  original_sender: {
+                    id: replyTarget.senderId,
+                    username: replyTarget.senderUsername,
+                  },
+                },
+                message_ref: String(Date.now()),
+                ...(replyTarget.threadParentId
+                  ? { thread_parent_id: replyTarget.threadParentId }
+                  : {}),
+              }
+            : {
+                content,
+                type: "message",
+                message_ref: String(Date.now()),
+              },
+        ),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       },
     );

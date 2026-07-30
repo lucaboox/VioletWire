@@ -1231,7 +1231,22 @@ handleTrusted("chat:send", async (
     // message cannot be posted to a channel that is not the one on screen.
     const chatroomId = kickChatService.getChatroomId();
     if (chatroomId === null) throw new Error("Kick chat is not connected.");
-    return kickService.sendMessage(chatroomId, outgoingChatMessageSchema.parse(rawMessage));
+    const replyParentMessageId =
+      rawReplyParentMessageId === undefined
+        ? undefined
+        : chatReplyParentIdSchema.parse(rawReplyParentMessageId);
+    const replyTarget =
+      replyParentMessageId === undefined
+        ? undefined
+        : kickChatService.getReplyTarget(replyParentMessageId);
+    if (replyParentMessageId !== undefined && replyTarget === undefined) {
+      throw new Error("The Kick message being replied to is no longer available.");
+    }
+    return kickService.sendMessage(
+      chatroomId,
+      outgoingChatMessageSchema.parse(rawMessage),
+      replyTarget,
+    );
   }
   const channel = channelNameSchema.parse(rawChannel);
   const message = outgoingChatMessageSchema.parse(rawMessage);

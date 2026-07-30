@@ -7,6 +7,7 @@ import type {
 } from "../shared/chat";
 import { KICK_GLYPH_BADGE_TYPES, NO_CHAT_RESTRICTIONS } from "../shared/chat";
 import type { KickService } from "./kick-service";
+import type { KickChatReplyTarget } from "./kick-service";
 
 type MessageListener = (message: ChatMessage) => void;
 type StateListener = (state: ChatConnectionState) => void;
@@ -28,6 +29,7 @@ const PUSHER_URL =
 const WATCHDOG_INTERVAL = 30_000;
 const DEAD_AFTER_SILENCE = 180_000;
 const MAX_RECONNECT_DELAY = 30_000;
+const MAX_REPLY_TARGETS = 500;
 
 // Kick sends emotes inline as [emote:id:name] rather than as ranges alongside
 // the text. Both parts are in the markup, so nothing else has to be fetched to
@@ -86,7 +88,162 @@ interface KickChatMessagePayload {
   id?: string;
   content?: string;
   created_at?: string;
+  type?: string;
+  metadata?: unknown;
+  thread_parent_id?: string;
+  replied_to?: unknown;
+  replies_to?: unknown;
   sender?: KickChatSender;
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function record(value: unknown): UnknownRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : null;
+}
+
+function textValue(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+/**
+ * Kick's website Pusher feed uses `metadata.original_*`, while its public
+ * event API calls the same object `replies_to`. Accept both so a server-side
+ * payload rollout does not silently remove reply context from chat.
+ */
+export function parseKickReply(payload: unknown): ChatMessage["reply"] | undefined {
+  const message = record(payload);
+  if (message === null) return undefined;
+  const metadata = record(message.metadata);
+  const originalMessage = record(metadata?.original_message);
+  const originalSender = record(metadata?.original_sender);
+  const publicReply = record(message.replied_to) ?? record(message.replies_to);
+  const publicMessage = record(publicReply?.message);
+  const publicSender = record(publicReply?.sender);
+
+  const parentMessageId =
+    textValue(originalMessage?.id) ??
+    textValue(publicReply?.message_id) ??
+    textValue(publicReply?.id) ??
+    textValue(publicMessage?.id);
+  const parentMessageBody =
+    textValue(originalMessage?.content) ??
+    textValue(publicReply?.content) ??
+    textValue(publicReply?.message) ??
+    textValue(publicMessage?.content);
+  const parentUserLogin =
+    textValue(originalSender?.slug) ??
+    textValue(originalSender?.username) ??
+    textValue(publicSender?.channel_slug) ??
+    textValue(publicSender?.slug) ??
+    textValue(publicSender?.username);
+
+  if (!parentMessageId || parentMessageBody === undefined || !parentUserLogin) {
+    return undefined;
+  }
+  const currentSender = record(message.sender);
+  const threadMessageId = textValue(message.thread_parent_id);
+  return {
+    parentMessageId,
+    parentUserLogin,
+    parentDisplayName:
+      textValue(originalSender?.username) ??
+      textValue(publicSender?.username) ??
+      parentUserLogin,
+    parentMessageBody: parseKickEmotes(parentMessageBody).text,
+    threadMessageId,
+    threadUserLogin:
+      threadMessageId === undefined
+        ? undefined
+        : textValue(currentSender?.slug) ?? textValue(currentSender?.username),
+  };
+}
+
+/**
+ * Converts Kick's live moderation events to the same tombstone messages used
+ * by Twitch. `applyChatMessage` then keeps the original text in memory and
+ * lets the user reveal it, rather than replacing it with an empty event row.
+ */
+export function parseKickModerationEvent(
+  eventName: string,
+  payload: unknown,
+  channel: string,
+  now = Date.now(),
+): ChatMessage | null {
+  const data = record(payload);
+  if (data === null) return null;
+
+  if (
+    eventName === "App\\Events\\MessageDeletedEvent" ||
+    eventName === "App\\Events\\ChatMessageDeletedEvent"
+  ) {
+    const nestedMessage = record(data.message);
+    const messageId = textValue(data.message_id) ?? textValue(nestedMessage?.id);
+    if (!messageId) return null;
+    return {
+      id: messageId,
+      channel,
+      login: "",
+      displayName: "",
+      color: "",
+      text: "",
+      badges: [],
+      sentAt: now,
+      twitchEmotes: [],
+      deleted: true,
+      moderation: { type: "message-deleted" },
+    };
+  }
+
+  if (eventName !== "App\\Events\\UserBannedEvent") return null;
+  const user = record(data.user);
+  const login =
+    textValue(user?.slug) ??
+    textValue(user?.username) ??
+    textValue(data.banned_username) ??
+    textValue(data.username);
+  if (!login) return null;
+
+  const permanent = data.permanent === true || data.expires_at === null;
+  const durationMinutes = numberValue(data.duration);
+  const expiresAt =
+    typeof data.expires_at === "string" ? Date.parse(data.expires_at) : Number.NaN;
+  const durationSeconds =
+    durationMinutes !== undefined
+      ? Math.max(1, Math.round(durationMinutes * 60))
+      : Number.isFinite(expiresAt)
+        ? Math.max(1, Math.round((expiresAt - now) / 1000))
+        : undefined;
+  const isTimeout = !permanent && durationSeconds !== undefined;
+
+  return {
+    id: `kick-moderation-${textValue(data.id) ?? `${login}-${now}`}`,
+    channel,
+    login: login.toLowerCase(),
+    displayName: textValue(user?.username) ?? login,
+    color: "",
+    text: "",
+    badges: [],
+    sentAt: now,
+    twitchEmotes: [],
+    deleted: true,
+    moderation: isTimeout
+      ? { type: "timeout", durationSeconds }
+      : { type: "ban" },
+  };
 }
 
 // Kick renders these as built-in icons with no image in the chat payload. The
@@ -174,6 +331,7 @@ export class KickChatService {
   private connectGeneration = 0;
   private historyLimit = 20;
   private subscriberBadges: { months: number; imageUrl: string }[] = [];
+  private readonly replyTargets = new Map<string, KickChatReplyTarget>();
 
   constructor(
     private readonly getKickService: () => KickService,
@@ -225,8 +383,14 @@ export class KickChatService {
           id: entry.id ?? undefined,
           content: entry.content ?? undefined,
           created_at: entry.created_at ?? undefined,
+          type: entry.type ?? undefined,
+          metadata: entry.metadata,
+          thread_parent_id: entry.thread_parent_id ?? undefined,
+          replied_to: entry.replied_to,
+          replies_to: entry.replies_to,
           sender: entry.sender
             ? {
+                id: entry.sender.id ?? undefined,
                 slug: entry.sender.slug ?? undefined,
                 username: entry.sender.username ?? undefined,
                 identity: entry.sender.identity
@@ -262,6 +426,10 @@ export class KickChatService {
     return this.chatroomId;
   }
 
+  getReplyTarget(messageId: string): KickChatReplyTarget | undefined {
+    return this.replyTargets.get(messageId);
+  }
+
   disconnect(): void {
     this.manuallyClosed = true;
     this.connectGeneration += 1;
@@ -269,6 +437,7 @@ export class KickChatService {
     this.reconnectAttempt = 0;
     this.chatroomId = null;
     this.channel = null;
+    this.replyTargets.clear();
     const socket = this.socket;
     this.socket = null;
     if (socket) {
@@ -327,47 +496,73 @@ export class KickChatService {
       return;
     }
 
-    if (frame.event !== "App\\Events\\ChatMessageEvent") return;
     // Pusher nests the payload as a JSON string inside the frame.
     const payload = this.parseNestedData(frame.data);
     if (payload === null) return;
 
-    const message = this.toChatMessage(payload);
-    if (message !== null) this.onMessage(message);
+    if (frame.event === "App\\Events\\ChatMessageEvent") {
+      const message = this.toChatMessage(payload);
+      if (message !== null) this.onMessage(message);
+      return;
+    }
+
+    if (this.channel === null || !frame.event) return;
+    const moderation = parseKickModerationEvent(frame.event, payload, this.channel);
+    if (moderation !== null) this.onMessage(moderation);
   }
 
-  private parseNestedData(data: unknown): KickChatMessagePayload | null {
-    if (typeof data === "object" && data !== null) return data as KickChatMessagePayload;
+  private parseNestedData(data: unknown): UnknownRecord | null {
+    if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+      return data as UnknownRecord;
+    }
     if (typeof data !== "string") return null;
     try {
-      return JSON.parse(data) as KickChatMessagePayload;
+      return record(JSON.parse(data));
     } catch {
       return null;
     }
   }
 
-  private toChatMessage(payload: KickChatMessagePayload): ChatMessage | null {
+  private toChatMessage(payload: KickChatMessagePayload | UnknownRecord): ChatMessage | null {
     const channel = this.channel;
-    const text = payload.content;
+    const typedPayload = payload as KickChatMessagePayload;
+    const text = typedPayload.content;
     if (channel === null || typeof text !== "string") return null;
 
-    const sender = payload.sender ?? {};
+    const sender = typedPayload.sender ?? {};
     const login = sender.slug ?? sender.username ?? "";
     if (login.length === 0) return null;
 
     const { text: rendered, emotes } = parseKickEmotes(text);
-    const sentAt = payload.created_at ? Date.parse(payload.created_at) : Number.NaN;
+    const sentAt = typedPayload.created_at
+      ? Date.parse(typedPayload.created_at)
+      : Number.NaN;
+    const id = typedPayload.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (typeof sender.id === "number" && sender.username) {
+      this.replyTargets.set(id, {
+        id,
+        content: text,
+        senderId: sender.id,
+        senderUsername: sender.username,
+        threadParentId: typedPayload.thread_parent_id,
+      });
+      if (this.replyTargets.size > MAX_REPLY_TARGETS) {
+        const oldest = this.replyTargets.keys().next().value;
+        if (oldest !== undefined) this.replyTargets.delete(oldest);
+      }
+    }
     return {
-      id: payload.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id,
       channel,
       login,
       displayName: sender.username ?? login,
       color: sender.identity?.color ?? "",
       text: rendered,
       badges: [],
-      badgeAssets: kickBadges(payload.sender?.identity, this.subscriberBadges),
+      badgeAssets: kickBadges(typedPayload.sender?.identity, this.subscriberBadges),
       sentAt: Number.isFinite(sentAt) ? sentAt : Date.now(),
       twitchEmotes: emotes,
+      reply: parseKickReply(typedPayload),
     };
   }
 
