@@ -185,6 +185,7 @@ function clampOverlayGeometry(
 interface NativeControlsProps {
   inlineContext: NativeControlsContext;
   inlineVisible?: boolean;
+  onOpenChatSettings?: () => void;
 }
 
 function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>> {
@@ -428,6 +429,7 @@ const OverlayChatMessageRow = memo(function OverlayChatMessageRow({
 export function NativeControls({
   inlineContext,
   inlineVisible = true,
+  onOpenChatSettings,
 }: NativeControlsProps) {
   const context = inlineContext;
   const [state, setState] = useState<NativePlayerState>(() => ({
@@ -1398,6 +1400,20 @@ export function NativeControls({
                   value={chatHistoryLimit}
                 />
               </label>
+              {onOpenChatSettings && (
+                <button
+                  className="chat-settings-more"
+                  onClick={() => {
+                    setChatSettingsOpen(false);
+                    onOpenChatSettings();
+                  }}
+                  type="button"
+                >
+                  <Settings size={14} />
+                  More chat settings
+                  <ChevronRight size={14} />
+                </button>
+              )}
             </div>
           )}
           <div

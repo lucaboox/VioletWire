@@ -130,6 +130,13 @@ const NATIVE_CONTROLS_HIDE_DELAY = 5_000;
 
 type AppSection = "home" | "browse" | "settings" | "search";
 type ChatLayout = "hidden" | ChatPresentation;
+type SettingsSection =
+  | "account"
+  | "playback"
+  | "chat"
+  | "emotes"
+  | "appearance"
+  | "updates";
 type ChannelNavigationIdentity = {
   login: string;
   displayName: string;
@@ -148,6 +155,18 @@ const signedOutState: TwitchAuthState = { status: "signed-out", account: null };
 const anonymousPlaybackState: PlaybackSessionState = { linked: false };
 const emptySearchResults: TwitchSearchResults = { channels: [], categories: [] };
 const emoteProviders: EmoteProvider[] = ["7tv", "ffz", "bttv"];
+const settingsSections = [
+  { id: "account", label: "Account", icon: Users },
+  { id: "playback", label: "Playback", icon: Tv },
+  { id: "chat", label: "Chat", icon: Reply },
+  { id: "emotes", label: "Emotes", icon: Smile },
+  { id: "appearance", label: "Appearance", icon: Star },
+  { id: "updates", label: "Updates", icon: RefreshCw },
+] satisfies ReadonlyArray<{
+  id: SettingsSection;
+  label: string;
+  icon: typeof Users;
+}>;
 const bundledChangelogEntries = parseChangelog(changelogSource);
 const languageNames: Record<string, string> = {
   de: "german",
@@ -484,6 +503,7 @@ const ChatMessageRow = memo(function ChatMessageRow({
 export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("account");
   const [changelogOpen, setChangelogOpen] = useState(false);
   const [changelogEntries, setChangelogEntries] = useState(
     bundledChangelogEntries,
@@ -1568,6 +1588,12 @@ export function App() {
 
   function toggleOledMode(): void {
     setOledMode((current) => !current);
+  }
+
+  function openFullChatSettings(): void {
+    setChatSettingsOpen(false);
+    setSettingsSection("chat");
+    setSettingsOpen(true);
   }
 
   function openChangelog(returnToSettings = false): void {
@@ -3940,6 +3966,11 @@ export function App() {
                             value={chatHistoryLimit}
                           />
                         </label>
+                        <button className="chat-settings-more" onClick={openFullChatSettings} type="button">
+                          <Settings size={14} />
+                          More chat settings
+                          <ChevronRight size={14} />
+                        </button>
                       </div>
                     )}
                   </div>
@@ -4296,6 +4327,7 @@ export function App() {
                           isFollowed: activeChannelFollowState ?? undefined,
                         }}
                         inlineVisible={nativeControlsVisible}
+                        onOpenChatSettings={openFullChatSettings}
                       />
                     </>
                   )}
@@ -4470,6 +4502,11 @@ export function App() {
                               value={chatHistoryLimit}
                             />
                           </label>
+                          <button className="chat-settings-more" onClick={openFullChatSettings} type="button">
+                            <Settings size={14} />
+                            More chat settings
+                            <ChevronRight size={14} />
+                          </button>
                         </div>
                       )}
                     </div>
@@ -4570,6 +4607,11 @@ export function App() {
                               value={chatHistoryLimit}
                             />
                           </label>
+                          <button className="chat-settings-more" onClick={openFullChatSettings} type="button">
+                            <Settings size={14} />
+                            More chat settings
+                            <ChevronRight size={14} />
+                          </button>
                         </div>
                       )}
                     </div>
@@ -5673,9 +5715,29 @@ export function App() {
                   <X size={19} />
                 </button>
               </header>
-              <div className="settings-modal-content">
-                <section>
-                  <h3>Account</h3>
+              <div className="settings-modal-body">
+                <nav aria-label="Settings sections" className="settings-modal-nav">
+                  {settingsSections.map(({ id, label, icon: Icon }) => (
+                    <button
+                      aria-current={settingsSection === id ? "page" : undefined}
+                      className={settingsSection === id ? "active" : ""}
+                      key={id}
+                      onClick={() => setSettingsSection(id)}
+                      type="button"
+                    >
+                      <Icon size={17} />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </nav>
+                <div className="settings-modal-content">
+                {settingsSection === "account" && (
+                  <section className="settings-section-panel">
+                    <header className="settings-section-heading">
+                      <span>ACCOUNT</span>
+                      <h3>Connections</h3>
+                      <p>Manage the accounts and website session VioletWire uses.</p>
+                    </header>
                   <div className="settings-card">
                     <div>
                       <strong>Twitch API account</strong>
@@ -5763,9 +5825,15 @@ export function App() {
                       {playbackSession.linked ? "Remove" : "Link session"}
                     </button>
                   </div>
-                </section>
-                <section>
-                  <h3>Playback</h3>
+                  </section>
+                )}
+                {settingsSection === "playback" && (
+                  <section className="settings-section-panel">
+                    <header className="settings-section-heading">
+                      <span>PLAYBACK</span>
+                      <h3>Video and controls</h3>
+                      <p>Choose how streams play and how the player behaves.</p>
+                    </header>
                   <div className="settings-preview">
                     <span>
                       <strong>Default playback engine</strong>
@@ -5847,9 +5915,73 @@ export function App() {
                       />
                     </label>
                   </div>
-                </section>
-                <section>
-                  <h3>Chat and appearance</h3>
+                  </section>
+                )}
+                {settingsSection === "chat" && (
+                  <section className="settings-section-panel">
+                    <header className="settings-section-heading">
+                      <span>CHAT</span>
+                      <h3>Chat behavior</h3>
+                      <p>These settings also apply to the quick chat menu and chat overlay.</p>
+                    </header>
+                    <div className="settings-card settings-card-stack">
+                      <TwitchChatColorControls />
+                    </div>
+                    <div className="settings-card settings-card-stack settings-chat-toggles">
+                      <ChatToggleSetting checked={chatTimestamps} label="Show timestamps" onChange={setChatTimestamps} />
+                      <ChatToggleSetting checked={mentionSoundEnabled} label="Mention sound" onChange={setMentionSoundEnabled} />
+                      <MentionSoundControls
+                        onSoundChange={setMentionSoundId}
+                        onVolumeChange={setMentionSoundVolume}
+                        soundId={mentionSoundId}
+                        volume={mentionSoundVolume}
+                      />
+                      <ChatToggleSetting
+                        checked={chatDeletedMessageStyle === "dimmed"}
+                        label="Dim deleted messages"
+                        onChange={(checked) => setChatDeletedMessageStyle(checked ? "dimmed" : "placeholder")}
+                      />
+                      <ChatToggleSetting checked={chatOnLeft} label="Chat on left" onChange={setChatOnLeft} />
+                    </div>
+                    <div className="settings-card settings-card-stack settings-range-list">
+                      <label>
+                        <span><strong>Font size</strong><small>Message text in chat</small></span>
+                        <span className="settings-range-control">
+                          <output>{chatFontSize}px</output>
+                          <input aria-label="Chat font size" max="25" min="14" onChange={(event) => setChatFontSize(Number(event.target.value))} type="range" value={chatFontSize} />
+                        </span>
+                      </label>
+                      <label>
+                        <span><strong>Emote size</strong><small>Rendered emotes in chat messages</small></span>
+                        <span className="settings-range-control">
+                          <output>{chatEmoteSize}px</output>
+                          <input aria-label="Chat emote size" max="48" min="18" onChange={(event) => setChatEmoteSize(Number(event.target.value))} type="range" value={chatEmoteSize} />
+                        </span>
+                      </label>
+                      <label>
+                        <span><strong>History</strong><small>Messages loaded when joining a channel</small></span>
+                        <span className="settings-range-control">
+                          <output>{chatHistoryLimit}</output>
+                          <input aria-label="Chat history message count" max="100" min="20" onChange={(event) => setChatHistoryLimit(Number(event.target.value))} step="10" type="range" value={chatHistoryLimit} />
+                        </span>
+                      </label>
+                      <label>
+                        <span><strong>Overlay opacity</strong><small>Background opacity while chat overlays video</small></span>
+                        <span className="settings-range-control">
+                          <output>{chatOpacity}%</output>
+                          <input aria-label="Chat overlay opacity" max="100" min="25" onChange={(event) => setChatOpacity(Number(event.target.value))} type="range" value={chatOpacity} />
+                        </span>
+                      </label>
+                    </div>
+                  </section>
+                )}
+                {settingsSection === "emotes" && (
+                  <section className="settings-section-panel">
+                    <header className="settings-section-heading">
+                      <span>EMOTES</span>
+                      <h3>Emote providers</h3>
+                      <p>Provider sets are cached and refreshed as channels change.</p>
+                    </header>
                   <div className="settings-card">
                     <div>
                       <strong>Third-party emotes</strong>
@@ -5857,6 +5989,26 @@ export function App() {
                     </div>
                     <span className="status-pill">Enabled</span>
                   </div>
+                    <div className="settings-card settings-provider-list">
+                      <ProviderLogo name="7tv" />
+                      <div><strong>7TV</strong><span>Global and channel emotes</span></div>
+                      <span className="status-pill">On</span>
+                      <ProviderLogo name="ffz" />
+                      <div><strong>FrankerFaceZ</strong><span>Global and channel emotes</span></div>
+                      <span className="status-pill">On</span>
+                      <ProviderLogo name="bttv" />
+                      <div><strong>BetterTTV</strong><span>Global and channel emotes</span></div>
+                      <span className="status-pill">On</span>
+                    </div>
+                  </section>
+                )}
+                {settingsSection === "appearance" && (
+                  <section className="settings-section-panel">
+                    <header className="settings-section-heading">
+                      <span>APPEARANCE</span>
+                      <h3>Interface</h3>
+                      <p>Adjust VioletWire&apos;s window and visual presentation.</p>
+                    </header>
                   <div className="settings-card">
                     <div>
                       <strong>OLED mode</strong>
@@ -5871,9 +6023,15 @@ export function App() {
                       <span />
                     </button>
                   </div>
-                </section>
-                <section>
-                  <h3>Updates</h3>
+                  </section>
+                )}
+                {settingsSection === "updates" && (
+                  <section className="settings-section-panel">
+                    <header className="settings-section-heading">
+                      <span>UPDATES</span>
+                      <h3>VioletWire updates</h3>
+                      <p>Check for releases and review what changed.</p>
+                    </header>
                   <div className="settings-card">
                     <div>
                       <strong>VioletWire updates</strong>
@@ -5915,7 +6073,9 @@ export function App() {
                       </button>
                     </div>
                   </div>
-                </section>
+                  </section>
+                )}
+                </div>
               </div>
             </section>
           </div>

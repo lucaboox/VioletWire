@@ -898,19 +898,47 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
    blur, which the undimmed buttons sit against far less noticeably. */
 .modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506d0; }
 .settings-modal-backdrop { position: fixed; z-index: 950; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506d0; }
-.settings-modal-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(820px, calc(100vw - 48px)); max-height: min(780px, calc(100vh - 48px)); overflow: hidden; border: 1px solid #44364f; border-radius: 16px; background: #111114f8; box-shadow: 0 34px 100px #000e; }
+.settings-modal-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(980px, calc(100vw - 48px)); height: min(720px, calc(100vh - 48px)); max-height: min(820px, calc(100vh - 48px)); overflow: hidden; border: 1px solid #44364f; border-radius: 16px; background: #111114f8; box-shadow: 0 34px 100px #000e; }
 .settings-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px 24px 18px; border-bottom: 1px solid #2e2a33; background: linear-gradient(100deg, #23152e, #131217 65%); }
 .settings-modal-header span { color: #a78bfa; font-size: 9px; font-weight: 850; letter-spacing: 1.5px; }
 .settings-modal-header h2 { margin: 3px 0 0; font-size: 26px; letter-spacing: -.7px; }
 .settings-modal-header p { margin: 5px 0 0; color: #8f8f99; font-size: 11px; }
 .settings-modal-header > button { display: grid; width: 34px; height: 34px; padding: 0; place-items: center; border: 0; border-radius: 8px; color: #a1a1aa; background: transparent; cursor: pointer; }
 .settings-modal-header > button:hover { color: white; background: #ffffff12; }
-.settings-modal-content { display: grid; gap: 22px; padding: 22px 24px 28px; overflow-y: auto; }
-.settings-modal-content > section { display: grid; gap: 8px; }
-.settings-modal-content h3 { margin: 0 0 3px; color: #c4b5fd; font-size: 11px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; }
+.settings-modal-body { display: grid; min-height: 0; grid-template-columns: 190px minmax(0, 1fr); }
+.settings-modal-nav { display: flex; min-height: 0; flex-direction: column; gap: 4px; padding: 16px 11px; overflow-y: auto; border-right: 1px solid #29272e; background: #0d0d10c7; }
+.settings-modal-nav button { display: flex; width: 100%; min-height: 40px; align-items: center; gap: 11px; padding: 0 12px; border: 1px solid transparent; border-radius: 9px; color: #9b9ba6; background: transparent; cursor: pointer; font-size: 12px; font-weight: 700; text-align: left; transition: color 120ms ease, border-color 120ms ease, background 120ms ease; }
+.settings-modal-nav button:hover { color: #ededf0; background: #ffffff0b; }
+.settings-modal-nav button.active { border-color: #6d4b913d; color: #f4eefe; background: #2a1d35; box-shadow: 0 0 0 1px #a78bfa0b inset; }
+.settings-modal-nav button.active svg { color: #b794f6; }
+.settings-modal-content { min-height: 0; padding: 24px 28px 30px; overflow-y: auto; }
+.settings-section-panel { display: grid; align-content: start; gap: 10px; }
+.settings-section-heading { margin-bottom: 8px; }
+.settings-section-heading > span { color: #a78bfa; font-size: 9px; font-weight: 850; letter-spacing: 1.35px; }
+.settings-section-heading h3 { margin: 4px 0 0; color: #f4f4f5; font-size: 22px; font-weight: 750; letter-spacing: -.45px; text-transform: none; }
+.settings-section-heading p { margin: 5px 0 0; color: #8f8f99; font-size: 11px; line-height: 1.5; }
 .settings-modal-content .settings-card, .settings-modal-content .settings-preview { width: 100%; }
-.oled-mode .settings-modal-panel, .oled-mode .settings-modal-content .settings-card, .oled-mode .settings-modal-content .settings-preview { background: #000; }
-.changelog-modal-panel { width: min(760px, calc(100vw - 48px)); }
+.settings-card-stack { display: grid; align-items: stretch; gap: 0; }
+.settings-card-stack .twitch-chat-color-controls { width: 100%; margin-top: 0; }
+.settings-chat-toggles .chat-toggle-setting { min-height: 40px; }
+.settings-chat-toggles .chat-toggle-setting + .chat-toggle-setting, .settings-chat-toggles .mention-sound-controls + .chat-toggle-setting { border-top: 1px solid #303037; }
+.settings-chat-toggles .mention-sound-controls { padding: 10px 0 14px; }
+.settings-range-list > label { display: grid; min-height: 58px; align-items: center; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(210px, 42%); }
+.settings-range-list > label + label { border-top: 1px solid #303037; }
+.settings-range-list > label > span:first-child { display: grid; gap: 4px; }
+.settings-range-list strong { color: #e8e8ec; font-size: 12px; }
+.settings-range-list small { color: #858590; font-size: 10px; }
+.settings-card .settings-range-control { display: grid; align-items: center; gap: 10px; grid-template-columns: 38px minmax(0, 1fr); }
+.settings-card .settings-range-control output { color: #c4b5fd; font-size: 11px; font-weight: 750; text-align: right; }
+.settings-card .settings-range-control input { width: 100%; accent-color: #9b5de5; }
+.settings-provider-list { display: grid; align-items: center; gap: 13px 12px; grid-template-columns: 24px minmax(0, 1fr) auto; }
+.settings-provider-list .provider-logo { width: 20px; max-width: 20px; height: 20px; max-height: 20px; color: #c4b5fd; }
+.settings-provider-list > div { display: grid; gap: 3px; }
+.settings-provider-list > div span { color: #858590; font-size: 10px; }
+.oled-mode .settings-modal-panel, .oled-mode .settings-modal-nav, .oled-mode .settings-modal-content .settings-card, .oled-mode .settings-modal-content .settings-preview { background: #000; }
+.chat-settings-more { display: grid; width: 100%; min-height: 34px; align-items: center; gap: 8px; margin-top: 10px; padding: 0 9px; grid-template-columns: auto 1fr auto; border: 1px solid #45404c; border-radius: 7px; color: #d9d4df; background: #242129; cursor: pointer; font-size: 10px; font-weight: 750; text-align: left; }
+.chat-settings-more:hover { border-color: #755696; color: white; background: #30263a; }
+.changelog-modal-panel { width: min(760px, calc(100vw - 48px)); height: auto; }
 .changelog-modal-content { display: grid; gap: 14px; padding: 20px 24px 28px; overflow-y: auto; }
 .changelog-release { padding: 18px 20px; border: 1px solid #303037; border-radius: 12px; background: #17171b; }
 .changelog-release.current { border-color: #725095; box-shadow: 0 0 0 1px #a78bfa1f inset; }
@@ -1033,6 +1061,11 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
   .browse-search { width: 100%; }
   .browse-category-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
   .stream-grid { grid-template-columns: 1fr; }
+  .settings-modal-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .settings-modal-nav { flex-direction: row; padding: 9px; overflow-x: auto; border-right: 0; border-bottom: 1px solid #29272e; }
+  .settings-modal-nav button { width: auto; min-width: max-content; padding-inline: 11px; }
+  .settings-modal-content { padding: 20px 18px 24px; }
+  .settings-range-list > label { gap: 12px; grid-template-columns: 1fr; padding-block: 11px; }
 }
 .deleted-message-toggle {
   display: inline;
