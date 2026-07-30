@@ -167,6 +167,115 @@ const settingsSections = [
   label: string;
   icon: typeof Users;
 }>;
+const settingsSearchEntries: {
+  section: SettingsSection;
+  title: string;
+  description: string;
+  keywords: string;
+}[] = [
+  {
+    section: "account",
+    title: "Twitch API account",
+    description: "Sign in, refresh OAuth permissions, or sign out.",
+    keywords: "login oauth authorization scopes",
+  },
+  {
+    section: "account",
+    title: "Kick account",
+    description: "Connect or remove the Kick account used for follows.",
+    keywords: "login sign in following",
+  },
+  {
+    section: "account",
+    title: "Twitch website session",
+    description: "Link playback access for Source and higher stream qualities.",
+    keywords: "1440p source quality authentication",
+  },
+  {
+    section: "playback",
+    title: "Default playback engine",
+    description: "Choose VioletWire Native or Twitch Standard playback.",
+    keywords: "player native standard official",
+  },
+  {
+    section: "playback",
+    title: "Native video renderer",
+    description: "Choose Efficient HLS or the libmpv texture compatibility renderer.",
+    keywords: "streamlink chromium hls mpv gpu",
+  },
+  {
+    section: "playback",
+    title: "Controls auto-hide delay",
+    description: "Change how quickly player controls disappear.",
+    keywords: "cursor timeout seconds",
+  },
+  {
+    section: "chat",
+    title: "Username color",
+    description: "Change the color of your Twitch username in chat.",
+    keywords: "prime turbo custom color",
+  },
+  {
+    section: "chat",
+    title: "Chat timestamps",
+    description: "Show the sent time beside chat messages.",
+    keywords: "time messages",
+  },
+  {
+    section: "chat",
+    title: "Mention sound",
+    description: "Configure mention alerts, sound, and volume.",
+    keywords: "ping notification audio test",
+  },
+  {
+    section: "chat",
+    title: "Deleted messages",
+    description: "Choose whether removed messages are dimmed or replaced.",
+    keywords: "moderation timeout ban placeholder",
+  },
+  {
+    section: "chat",
+    title: "Chat layout",
+    description: "Move chat to the left or adjust overlay opacity.",
+    keywords: "position side overlay transparency",
+  },
+  {
+    section: "chat",
+    title: "Chat sizing and history",
+    description: "Adjust message font, emote size, and loaded history.",
+    keywords: "text emoji messages count",
+  },
+  {
+    section: "emotes",
+    title: "Third-party emotes",
+    description: "Review 7TV, FrankerFaceZ, and BetterTTV providers.",
+    keywords: "7tv ffz bttv cache channel global",
+  },
+  {
+    section: "appearance",
+    title: "OLED mode",
+    description: "Use true-black backgrounds throughout VioletWire.",
+    keywords: "theme black dark appearance",
+  },
+  {
+    section: "about",
+    title: "Updates and version history",
+    description: "Check for updates or read the VioletWire changelog.",
+    keywords: "release version latest install",
+  },
+  {
+    section: "about",
+    title: "Project and support links",
+    description: "Open the website, GitHub, Ko-fi, sponsors, or issue tracker.",
+    keywords: "lucaboox donate bugs help source",
+  },
+  {
+    section: "about",
+    title: "Dependencies and licenses",
+    description: "Review core dependencies and third-party notices.",
+    keywords: "electron react typescript streamlink hls mpv gpl credits",
+  },
+];
 const bundledChangelogEntries = parseChangelog(changelogSource);
 const languageNames: Record<string, string> = {
   de: "german",
@@ -555,6 +664,17 @@ export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("account");
+  const [settingsSearch, setSettingsSearch] = useState("");
+  const settingsSearchResults = useMemo(() => {
+    const query = settingsSearch.trim().toLocaleLowerCase();
+    if (!query) return [];
+    return settingsSearchEntries.filter((entry) =>
+      `${entry.title} ${entry.description} ${entry.keywords} ${entry.section}`
+        .toLocaleLowerCase()
+        .includes(query),
+    );
+  }, [settingsSearch]);
+  const hasSettingsSearch = settingsSearch.trim().length > 0;
   const [changelogOpen, setChangelogOpen] = useState(false);
   const [changelogEntries, setChangelogEntries] = useState(
     bundledChangelogEntries,
@@ -1644,6 +1764,7 @@ export function App() {
   function openFullChatSettings(): void {
     setChatSettingsOpen(false);
     setSettingsSection("chat");
+    setSettingsSearch("");
     setSettingsOpen(true);
   }
 
@@ -5749,7 +5870,10 @@ export function App() {
           <div
             className="settings-modal-backdrop"
             onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setSettingsOpen(false);
+              if (event.target === event.currentTarget) {
+                setSettingsOpen(false);
+                setSettingsSearch("");
+              }
             }}
             role="presentation"
           >
@@ -5764,9 +5888,31 @@ export function App() {
                   <span>VIOLETWIRE</span>
                   <h2 id="settings-modal-title">Settings</h2>
                 </div>
+                <label className="settings-modal-search">
+                  <Search size={16} />
+                  <input
+                    aria-label="Search settings"
+                    onChange={(event) => setSettingsSearch(event.target.value)}
+                    placeholder="Search settings"
+                    type="search"
+                    value={settingsSearch}
+                  />
+                  {settingsSearch && (
+                    <button
+                      aria-label="Clear settings search"
+                      onClick={() => setSettingsSearch("")}
+                      type="button"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </label>
                 <button
                   aria-label="Close settings"
-                  onClick={() => setSettingsOpen(false)}
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    setSettingsSearch("");
+                  }}
                   title="Close settings"
                   type="button"
                 >
@@ -5777,10 +5923,13 @@ export function App() {
                 <nav aria-label="Settings sections" className="settings-modal-nav">
                   {settingsSections.map(({ id, label, icon: Icon }) => (
                     <button
-                      aria-current={settingsSection === id ? "page" : undefined}
-                      className={settingsSection === id ? "active" : ""}
+                      aria-current={!hasSettingsSearch && settingsSection === id ? "page" : undefined}
+                      className={!hasSettingsSearch && settingsSection === id ? "active" : ""}
                       key={id}
-                      onClick={() => setSettingsSection(id)}
+                      onClick={() => {
+                        setSettingsSection(id);
+                        setSettingsSearch("");
+                      }}
                       type="button"
                     >
                       <Icon size={17} />
@@ -5789,9 +5938,12 @@ export function App() {
                   ))}
                   <div className="settings-modal-nav-footer">
                     <button
-                      aria-current={settingsSection === "about" ? "page" : undefined}
-                      className={settingsSection === "about" ? "settings-nav-about active" : "settings-nav-about"}
-                      onClick={() => setSettingsSection("about")}
+                      aria-current={!hasSettingsSearch && settingsSection === "about" ? "page" : undefined}
+                      className={!hasSettingsSearch && settingsSection === "about" ? "settings-nav-about active" : "settings-nav-about"}
+                      onClick={() => {
+                        setSettingsSection("about");
+                        setSettingsSearch("");
+                      }}
                       type="button"
                     >
                       <Info size={17} />
@@ -5826,7 +5978,50 @@ export function App() {
                   </div>
                 </nav>
                 <div className="settings-modal-content">
-                {settingsSection === "account" && (
+                {hasSettingsSearch && (
+                  <section className="settings-section-panel settings-search-results">
+                    <header className="settings-section-heading">
+                      <span>SEARCH</span>
+                      <h3>Settings results</h3>
+                      <p>
+                        {settingsSearchResults.length === 1
+                          ? "1 matching setting"
+                          : `${settingsSearchResults.length} matching settings`}
+                      </p>
+                    </header>
+                    {settingsSearchResults.length > 0 ? (
+                      <div className="settings-search-result-list">
+                        {settingsSearchResults.map((entry) => (
+                          <button
+                            key={`${entry.section}:${entry.title}`}
+                            onClick={() => {
+                              setSettingsSection(entry.section);
+                              setSettingsSearch("");
+                            }}
+                            type="button"
+                          >
+                            <span>
+                              <strong>{entry.title}</strong>
+                              <small>{entry.description}</small>
+                            </span>
+                            <em>
+                              {entry.section.charAt(0).toUpperCase() +
+                                entry.section.slice(1)}
+                            </em>
+                            <ChevronRight size={16} />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="settings-search-empty">
+                        <Search size={22} />
+                        <strong>No settings found</strong>
+                        <span>Try a feature name such as OLED, emotes, or timestamps.</span>
+                      </div>
+                    )}
+                  </section>
+                )}
+                {!hasSettingsSearch && settingsSection === "account" && (
                   <section className="settings-section-panel">
                     <header className="settings-section-heading">
                       <span>ACCOUNT</span>
@@ -5922,7 +6117,7 @@ export function App() {
                   </div>
                   </section>
                 )}
-                {settingsSection === "playback" && (
+                {!hasSettingsSearch && settingsSection === "playback" && (
                   <section className="settings-section-panel">
                     <header className="settings-section-heading">
                       <span>PLAYBACK</span>
@@ -6012,7 +6207,7 @@ export function App() {
                   </div>
                   </section>
                 )}
-                {settingsSection === "chat" && (
+                {!hasSettingsSearch && settingsSection === "chat" && (
                   <section className="settings-section-panel">
                     <header className="settings-section-heading">
                       <span>CHAT</span>
@@ -6122,7 +6317,7 @@ export function App() {
                     </div>
                   </section>
                 )}
-                {settingsSection === "emotes" && (
+                {!hasSettingsSearch && settingsSection === "emotes" && (
                   <section className="settings-section-panel">
                     <header className="settings-section-heading">
                       <span>EMOTES</span>
@@ -6149,7 +6344,7 @@ export function App() {
                     </div>
                   </section>
                 )}
-                {settingsSection === "appearance" && (
+                {!hasSettingsSearch && settingsSection === "appearance" && (
                   <section className="settings-section-panel">
                     <header className="settings-section-heading">
                       <span>APPEARANCE</span>
@@ -6172,7 +6367,7 @@ export function App() {
                   </div>
                   </section>
                 )}
-                {settingsSection === "about" && (
+                {!hasSettingsSearch && settingsSection === "about" && (
                   <section className="settings-section-panel settings-about">
                     <header className="settings-section-heading">
                       <span>ABOUT</span>

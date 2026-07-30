@@ -898,13 +898,20 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
    blur, which the undimmed buttons sit against far less noticeably. */
 .modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506d0; }
 .settings-modal-backdrop { position: fixed; z-index: 950; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506d0; }
-.settings-modal-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(980px, calc(100vw - 48px)); height: min(720px, calc(100vh - 48px)); max-height: min(820px, calc(100vh - 48px)); overflow: hidden; border: 1px solid #44364f; border-radius: 16px; background: #111114f8; box-shadow: 0 34px 100px #000e; }
-.settings-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px 24px 18px; border-bottom: 1px solid #2e2a33; background: linear-gradient(100deg, #23152e, #131217 65%); }
+.settings-modal-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(980px, calc(100vw - 48px)); height: min(780px, calc(100vh - 48px)); max-height: min(860px, calc(100vh - 48px)); overflow: hidden; border: 1px solid #44364f; border-radius: 16px; background: #111114f8; box-shadow: 0 34px 100px #000e; }
+.settings-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 24px 18px; border-bottom: 1px solid #2e2a33; background: linear-gradient(100deg, #23152e, #131217 65%); }
 .settings-modal-header span { color: #a78bfa; font-size: 9px; font-weight: 850; letter-spacing: 1.5px; }
 .settings-modal-header h2 { margin: 3px 0 0; font-size: 26px; letter-spacing: -.7px; }
 .settings-modal-header p { margin: 5px 0 0; color: #8f8f99; font-size: 11px; }
 .settings-modal-header > button { display: grid; width: 34px; height: 34px; padding: 0; place-items: center; border: 0; border-radius: 8px; color: #a1a1aa; background: transparent; cursor: pointer; }
 .settings-modal-header > button:hover { color: white; background: #ffffff12; }
+.settings-modal-search { display: flex; width: min(360px, 42vw); height: 38px; align-items: center; gap: 9px; margin-left: auto; padding: 0 10px 0 12px; border: 1px solid #3c3742; border-radius: 9px; color: #858590; background: #0d0d10c7; transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease; }
+.settings-modal-search:focus-within { border-color: #8b5cf6; background: #111015; box-shadow: 0 0 0 3px #8b5cf61f; }
+.settings-modal-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: #eeeeF2; background: transparent; font: inherit; font-size: 12px; }
+.settings-modal-search input::placeholder { color: #73737d; }
+.settings-modal-search input::-webkit-search-cancel-button { display: none; }
+.settings-modal-search > button { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 6px; color: #8f8f99; background: transparent; cursor: pointer; }
+.settings-modal-search > button:hover { color: white; background: #ffffff12; }
 .settings-modal-body { display: grid; min-height: 0; grid-template-columns: 190px minmax(0, 1fr); }
 .settings-modal-nav { display: flex; min-height: 0; flex-direction: column; gap: 4px; padding: 16px 11px; overflow-y: auto; border-right: 1px solid #29272e; background: #0d0d10c7; }
 .settings-modal-nav button { display: flex; width: 100%; min-height: 40px; align-items: center; gap: 11px; padding: 0 12px; border: 1px solid transparent; border-radius: 9px; color: #9b9ba6; background: transparent; cursor: pointer; font-size: 12px; font-weight: 700; text-align: left; transition: color 120ms ease, border-color 120ms ease, background 120ms ease; }
@@ -921,6 +928,16 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .settings-section-heading > span { color: #a78bfa; font-size: 9px; font-weight: 850; letter-spacing: 1.35px; }
 .settings-section-heading h3 { margin: 4px 0 0; color: #f4f4f5; font-size: 22px; font-weight: 750; letter-spacing: -.45px; text-transform: none; }
 .settings-section-heading p { margin: 5px 0 0; color: #8f8f99; font-size: 11px; line-height: 1.5; }
+.settings-search-result-list { display: grid; gap: 8px; }
+.settings-search-result-list > button { display: grid; min-height: 66px; align-items: center; gap: 14px; padding: 12px 14px 12px 16px; grid-template-columns: minmax(0, 1fr) auto auto; border: 1px solid #303037; border-radius: 10px; color: #8f8f99; background: #151519; cursor: pointer; text-align: left; transition: color 120ms ease, border-color 120ms ease, background 120ms ease, transform 120ms ease; }
+.settings-search-result-list > button:hover { border-color: #62477f; color: #d8b4fe; background: #201824; transform: translateX(2px); }
+.settings-search-result-list > button > span { display: grid; min-width: 0; gap: 4px; }
+.settings-search-result-list strong { overflow: hidden; color: #eeeeF2; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-search-result-list small { overflow: hidden; color: #858590; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-search-result-list em { padding: 4px 7px; border-radius: 6px; color: #b9a4dc; background: #2a1d35; font-size: 9px; font-style: normal; font-weight: 750; }
+.settings-search-empty { display: grid; min-height: 250px; place-items: center; align-content: center; gap: 8px; color: #777781; text-align: center; }
+.settings-search-empty strong { color: #d5d5da; font-size: 13px; }
+.settings-search-empty span { font-size: 10.5px; }
 .settings-modal-content .settings-card, .settings-modal-content .settings-preview { width: 100%; }
 .settings-modal-content .settings-card { min-height: 76px; padding: 16px 18px; }
 .settings-modal-content .settings-card strong { font-size: 13px; }
@@ -979,7 +996,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .settings-notices-link { display: flex; min-height: 34px; align-items: center; justify-content: center; gap: 8px; margin-top: 11px; border: 1px solid #45404c; border-radius: 7px; color: #d9d4df; background: #242129; cursor: pointer; font-size: 10px; font-weight: 750; }
 .settings-notices-link:hover { border-color: #755696; color: white; background: #30263a; }
 .oled-mode .settings-modal-panel, .oled-mode .settings-modal-nav, .oled-mode .settings-modal-content .settings-card, .oled-mode .settings-modal-content .settings-preview { background: #000; }
-.oled-mode .settings-about-links > button, .oled-mode .settings-about-hero { background: #000; }
+.oled-mode .settings-about-links > button, .oled-mode .settings-about-hero, .oled-mode .settings-search-result-list > button { background: #000; }
 .chat-settings-more { display: grid; width: 100%; min-height: 34px; align-items: center; gap: 8px; margin-top: 10px; padding: 0 9px; grid-template-columns: auto 1fr auto; border: 1px solid #45404c; border-radius: 7px; color: #d9d4df; background: #242129; cursor: pointer; font-size: 10px; font-weight: 750; text-align: left; }
 .chat-settings-more:hover { border-color: #755696; color: white; background: #30263a; }
 .changelog-modal-panel { width: min(760px, calc(100vw - 48px)); height: auto; }
