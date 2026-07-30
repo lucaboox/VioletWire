@@ -700,7 +700,9 @@ async function createWindow(): Promise<void> {
     width: savedBounds?.width ?? preferences.windowWidth,
     height: savedBounds?.height ?? preferences.windowHeight,
     ...(savedBounds ? { x: savedBounds.x, y: savedBounds.y } : {}),
-    minWidth: 960,
+    // This is measured in device-independent pixels, so the usable minimum
+    // remains visually consistent across Windows display scaling levels.
+    minWidth: 1180,
     minHeight: 640,
     backgroundColor: "#09090b",
     title: "VioletWire",
