@@ -4,26 +4,7 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
-### Improvements
-
-- Twitch chat history now uses Zonian's multi-instance recent-message
-  aggregator first, with Robotty retained as an automatic fallback.
-
-### Fixed
-
-- Twitch chat history now performs one delayed catch-up refresh after joining,
-  preventing newly sent messages from being missed while the history provider
-  is still indexing them.
-- Repeated Twitch messages now retry once with an invisible differentiator
-  instead of showing Twitch's 30-second duplicate-message error.
-- YouTube channel and `@handle` links now show trusted hover previews without
-  requiring generic link previews, including channel pages with unusually
-  large document headers and their channel profile pictures.
-- Kick message deletions, timeouts, and bans now use the same revealable
-  deleted-message treatment as Twitch chat, including moderation durations,
-  normalized live-message IDs, and current and legacy deletion payloads.
-- Kick user cards now use Kick profile data, Kick profile links, and the
-  badges retained from that user's current chat messages.
+## [0.3.4-alpha.5] - 2026-07-30
 
 ### Additions
 
@@ -39,6 +20,8 @@ All notable changes to VioletWire are documented in this file.
 
 ### Improvements
 
+- Twitch chat history now uses Zonian's multi-instance recent-message
+  aggregator first, with Robotty retained as an automatic fallback.
 - Generic previews warn that the destination can observe the user's IP
   address and protect local networks with HTTPS-only fetching, DNS and redirect
   validation, strict timeouts, response-size limits, and script-free metadata
@@ -46,6 +29,22 @@ All notable changes to VioletWire are documented in this file.
 - Expected chat-send failures now appear beside the chat composer instead of
   as app-wide toasts. Slow-mode messages wait locally, and explicit rate-limit
   rejections retry once after the required delay.
+
+### Fixes
+
+- Twitch chat history now performs one delayed catch-up refresh after joining,
+  preventing newly sent messages from being missed while the history provider
+  is still indexing them.
+- Repeated Twitch messages now retry once with an invisible differentiator
+  instead of showing Twitch's 30-second duplicate-message error.
+- YouTube channel and `@handle` links now show trusted hover previews without
+  requiring generic link previews, including channel pages with unusually
+  large document headers and their channel profile pictures.
+- Kick message deletions, timeouts, and bans now use the same revealable
+  deleted-message treatment as Twitch chat, including moderation durations,
+  normalized live-message IDs, and current and legacy deletion payloads.
+- Kick user cards now use Kick profile data, Kick profile links, and the
+  badges retained from that user's current chat messages.
 
 ## [0.3.4-alpha.4] - 2026-07-30
 
