@@ -996,22 +996,16 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .sidebar-collapsed .followed-group-label.offline { display: block; width: 60%; height: 0; margin: 8px auto; padding: 0; overflow: hidden; border-top: 1px solid #242429; font-size: 0; }
 .sidebar-collapsed .channel-live-dot { display: block; }
 
-@media (max-width: 1080px) {
-  .app-shell { --sidebar-width: 72px; }
-  .brand { justify-content: center; padding-inline: 0; }
-  .chat-left .top-navigation { margin-left: 58px; }
-  .brand > span:last-child, .rail-heading span, .followed-copy, .viewer-count, .followed-group-label, .followed-empty strong, .followed-empty > span, .settings-link span, .account-copy { display: none; }
-  .rail-heading { justify-content: center; padding-inline: 0; }
-  .followed-empty { margin-inline: 2px; padding: 10px 0; border: 0; background: transparent; }
-  .followed-empty .empty-orbit { margin: 0; }
-  .followed-channel, .settings-link, .account-status { justify-content: center; padding-inline: 0; }
-  .followed-channel.offline { opacity: .5; }
-  .channel-live-dot { display: block; }
-  .topbar { grid-template-columns: auto minmax(220px, 1fr) auto; padding-inline: 15px; gap: 12px; }
+@media (max-width: 1400px) {
   /* At compact widths the screen-centered absolute search can collide with
-     navigation and account actions. Let the existing three-column grid own
-     its size here so the middle column shrinks without overlapping either. */
-  .search-box { position: relative; left: auto; width: 100%; transform: none; }
+     navigation and account actions. Let the header grid own its size here so
+     the middle column shrinks without overlapping either side. */
+  .topbar { grid-template-columns: auto minmax(220px, 1fr) auto; }
+  .search-box, .chat-left .search-box { position: relative; left: auto; width: 100%; transform: none; }
+}
+
+@media (max-width: 1080px) {
+  .topbar { padding-inline: 15px; gap: 12px; }
   .top-nav-item { padding-inline: 8px; }
   .home-page { grid-template-columns: 1fr; }
   .preview-card { display: none; }
