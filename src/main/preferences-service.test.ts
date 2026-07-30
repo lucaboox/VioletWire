@@ -95,6 +95,8 @@ describe("PreferencesService", () => {
       mentionSoundEnabled: true,
       mentionSoundVolume: 85,
       mentionSoundId: "ping",
+      genericLinkPreviewsEnabled: false,
+      genericLinkPreviewActivation: "ctrl",
       oledMode: true,
       audioCompression: true,
       showFpsOverlay: false,

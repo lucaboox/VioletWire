@@ -240,7 +240,7 @@ export interface MultiStreamTileState extends MultiStreamTile {
 export interface DesktopApi {
   system: {
     openExternal(url: string): Promise<void>;
-    getLinkPreview(url: string): Promise<LinkPreview | null>;
+    getLinkPreview(url: string, allowGeneric?: boolean): Promise<LinkPreview | null>;
   };
   twitch: TwitchApi;
   kick: KickApi;

@@ -34,6 +34,8 @@ export const appPreferencesSchema = z.object({
   mentionSoundEnabled: z.boolean(),
   mentionSoundVolume: z.number().int().min(0).max(200),
   mentionSoundId: mentionSoundIdSchema,
+  genericLinkPreviewsEnabled: z.boolean(),
+  genericLinkPreviewActivation: z.enum(["hover", "ctrl", "alt"]),
   oledMode: z.boolean(),
   audioCompression: z.boolean(),
   // Show the live frame rate in the corner of the Native player.
@@ -96,6 +98,8 @@ export const defaultAppPreferences: AppPreferences = {
   mentionSoundEnabled: false,
   mentionSoundVolume: 100,
   mentionSoundId: "ping",
+  genericLinkPreviewsEnabled: false,
+  genericLinkPreviewActivation: "ctrl",
   oledMode: false,
   audioCompression: false,
   showFpsOverlay: false,

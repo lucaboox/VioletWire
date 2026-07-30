@@ -4,6 +4,18 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Chat settings now offer opt-in generic website previews using Open Graph
+  metadata, with Always, Ctrl-hover, and Alt-hover activation choices.
+
+### Improvements
+
+- Generic previews warn that the destination can observe the user's IP
+  address and protect local networks with HTTPS-only fetching, DNS and redirect
+  validation, strict timeouts, response-size limits, and script-free metadata
+  parsing.
+
 ## [0.3.4-alpha.4] - 2026-07-30
 
 ### Additions

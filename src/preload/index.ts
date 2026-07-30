@@ -180,7 +180,8 @@ sharedTexture.setSharedTextureReceiver((received, userData: unknown) => {
 const api: DesktopApi = {
   system: {
     openExternal: (url: string) => ipcRenderer.invoke("system:open-external", url),
-    getLinkPreview: (url: string) => ipcRenderer.invoke("system:get-link-preview", url),
+    getLinkPreview: (url: string, allowGeneric = false) =>
+      ipcRenderer.invoke("system:get-link-preview", { url, allowGeneric }),
   },
   twitch: {
     getAuthState: () => ipcRenderer.invoke("twitch:get-auth-state"),

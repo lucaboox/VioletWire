@@ -38,6 +38,7 @@ import {
   Scissors,
   Search,
   Settings,
+  ShieldAlert,
   Smile,
   Star,
   StarOff,
@@ -244,6 +245,12 @@ const settingsSearchEntries: {
     title: "Chat sizing and history",
     description: "Adjust message font, emote size, and loaded history.",
     keywords: "text emoji messages count",
+  },
+  {
+    section: "chat",
+    title: "Generic link previews",
+    description: "Preview metadata from public websites on hover.",
+    keywords: "embed open graph privacy ip ctrl alt tooltip",
   },
   {
     section: "emotes",
@@ -819,6 +826,9 @@ export function App() {
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
   const [mentionSoundVolume, setMentionSoundVolume] = useState(100);
   const [mentionSoundId, setMentionSoundId] = useState<MentionSoundId>("ping");
+  const [genericLinkPreviewsEnabled, setGenericLinkPreviewsEnabled] = useState(false);
+  const [genericLinkPreviewActivation, setGenericLinkPreviewActivation] =
+    useState<AppPreferences["genericLinkPreviewActivation"]>("ctrl");
   const [oledMode, setOledMode] = useState(
     () => window.localStorage.getItem("glint.appearance.oled") === "true",
   );
@@ -1412,6 +1422,8 @@ export function App() {
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
       setMentionSoundVolume(preferences.mentionSoundVolume);
       setMentionSoundId(preferences.mentionSoundId);
+      setGenericLinkPreviewsEnabled(preferences.genericLinkPreviewsEnabled);
+      setGenericLinkPreviewActivation(preferences.genericLinkPreviewActivation);
       setOledMode(preferences.oledMode);
       setLastSeenChangelogVersion(preferences.lastSeenChangelogVersion);
       setPreferencesReady(true);
@@ -1448,6 +1460,8 @@ export function App() {
           mentionSoundEnabled,
           mentionSoundVolume,
           mentionSoundId,
+          genericLinkPreviewsEnabled,
+          genericLinkPreviewActivation,
           oledMode,
         })
         .catch(() => undefined);
@@ -1467,6 +1481,8 @@ export function App() {
     mentionSoundEnabled,
     mentionSoundVolume,
     mentionSoundId,
+    genericLinkPreviewsEnabled,
+    genericLinkPreviewActivation,
     oledMode,
     nativePlaybackBackend,
     preferredMode,
@@ -3395,7 +3411,10 @@ export function App() {
         "--chat-emote-size": `${chatEmoteSize}px`,
       } as CSSProperties}
     >
-      <ReactTooltipLayer />
+      <ReactTooltipLayer
+        genericLinkPreviewActivation={genericLinkPreviewActivation}
+        genericLinkPreviewsEnabled={genericLinkPreviewsEnabled}
+      />
       {channelMenu && (
         <div
           className="channel-context-menu"
@@ -6252,6 +6271,57 @@ export function App() {
                         soundId={mentionSoundId}
                         volume={mentionSoundVolume}
                       />
+                    </div>
+                    <div className="settings-card settings-card-stack settings-link-preview-card">
+                      <div className="settings-card-row">
+                        <div>
+                          <strong>Generic link previews</strong>
+                          <span>
+                            Show titles, descriptions, and preview images from public websites.
+                          </span>
+                        </div>
+                        <button
+                          aria-pressed={genericLinkPreviewsEnabled}
+                          className={
+                            genericLinkPreviewsEnabled
+                              ? "settings-switch active"
+                              : "settings-switch"
+                          }
+                          onClick={() =>
+                            setGenericLinkPreviewsEnabled((current) => !current)
+                          }
+                          type="button"
+                        >
+                          <span />
+                        </button>
+                      </div>
+                      <div className="settings-link-preview-options">
+                        <label>
+                          <span>Show generic previews</span>
+                          <select
+                            disabled={!genericLinkPreviewsEnabled}
+                            onChange={(event) =>
+                              setGenericLinkPreviewActivation(
+                                event.target.value as AppPreferences["genericLinkPreviewActivation"],
+                              )
+                            }
+                            value={genericLinkPreviewActivation}
+                          >
+                            <option value="ctrl">While holding Ctrl</option>
+                            <option value="alt">While holding Alt</option>
+                            <option value="hover">Whenever a link is hovered</option>
+                          </select>
+                        </label>
+                        <div className="settings-privacy-warning">
+                          <ShieldAlert size={17} />
+                          <span>
+                            Generic previews contact the linked website directly from your
+                            computer. The website can see your IP address. VioletWire limits
+                            downloads and never executes the page&apos;s scripts, but only
+                            preview links you trust.
+                          </span>
+                        </div>
+                      </div>
                     </div>
                     <div className="settings-card">
                       <div>

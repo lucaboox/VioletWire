@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { LinkPreview } from "../shared/link-preview";
+import { resolveGenericLinkPreview } from "./generic-link-preview";
 import type { KickService } from "./kick-service";
 import type { TwitchService } from "./twitch-service";
 
@@ -87,7 +88,10 @@ export class LinkPreviewService {
     private readonly kickService: Pick<KickService, "getClipPreview">,
   ) {}
 
-  async getPreview(rawUrl: string): Promise<LinkPreview | null> {
+  async getPreview(
+    rawUrl: string,
+    allowGeneric = false,
+  ): Promise<LinkPreview | null> {
     let url: URL;
     try {
       url = new URL(rawUrl);
@@ -95,7 +99,7 @@ export class LinkPreviewService {
       return null;
     }
     if (url.protocol !== "https:") return null;
-    const cacheKey = url.toString();
+    const cacheKey = `${allowGeneric ? "generic" : "known"}:${url.toString()}`;
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -112,6 +116,7 @@ export class LinkPreviewService {
           else {
             const albumId = imgurAlbumId(url);
             if (albumId) value = await this.getImgurAlbum(albumId);
+            else if (allowGeneric) value = await resolveGenericLinkPreview(url);
           }
         }
       }

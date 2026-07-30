@@ -30,6 +30,11 @@ interface TooltipState {
   trigger: "focus" | "pointer";
 }
 
+interface ReactTooltipLayerProps {
+  genericLinkPreviewsEnabled: boolean;
+  genericLinkPreviewActivation: "hover" | "ctrl" | "alt";
+}
+
 function convertNativeTitles(root: ParentNode): void {
   const elements: Element[] = [];
   if (root instanceof Element && root.hasAttribute("title")) elements.push(root);
@@ -80,11 +85,15 @@ function positionTooltip(tooltip: TooltipState): CSSProperties {
   };
 }
 
-export function ReactTooltipLayer() {
+export function ReactTooltipLayer({
+  genericLinkPreviewsEnabled,
+  genericLinkPreviewActivation,
+}: ReactTooltipLayerProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const showTimer = useRef<number | null>(null);
   const refreshFrame = useRef<number | null>(null);
   const pointerPosition = useRef({ x: 0, y: 0 });
+  const modifierState = useRef({ alt: false, ctrl: false });
 
   const cancelPending = useCallback(() => {
     if (showTimer.current !== null) {
@@ -98,17 +107,53 @@ export function ReactTooltipLayer() {
     setTooltip(null);
   }, [cancelPending]);
 
-  const loadLinkPreview = useCallback((target: HTMLElement, rawUrl: string) => {
-    void window.desktop.system.getLinkPreview(rawUrl).then((linkPreview) => {
+  const loadLinkPreview = useCallback((
+    target: HTMLElement,
+    rawUrl: string,
+    allowGeneric: boolean,
+  ) => {
+    void window.desktop.system.getLinkPreview(rawUrl, allowGeneric).then((linkPreview) => {
       if (!linkPreview || !target.isConnected) return;
+      if (
+        linkPreview.kind === "generic" &&
+        (
+          !genericLinkPreviewsEnabled ||
+          (
+            genericLinkPreviewActivation === "ctrl" &&
+            !modifierState.current.ctrl
+          ) ||
+          (
+            genericLinkPreviewActivation === "alt" &&
+            !modifierState.current.alt
+          )
+        )
+      ) {
+        return;
+      }
       setTooltip((current) =>
         current?.target === target ? { ...current, linkPreview } : current,
       );
     }).catch(() => undefined);
-  }, []);
+  }, [genericLinkPreviewActivation, genericLinkPreviewsEnabled]);
+
+  const allowsGenericPreview = useCallback(
+    (event?: Pick<MouseEvent, "altKey" | "ctrlKey">) =>
+      genericLinkPreviewsEnabled &&
+      (
+        genericLinkPreviewActivation === "hover" ||
+        (genericLinkPreviewActivation === "ctrl" && event?.ctrlKey === true) ||
+        (genericLinkPreviewActivation === "alt" && event?.altKey === true)
+      ),
+    [genericLinkPreviewActivation, genericLinkPreviewsEnabled],
+  );
 
   const schedule = useCallback(
-    (target: HTMLElement, trigger: TooltipState["trigger"], immediate = false) => {
+    (
+      target: HTMLElement,
+      trigger: TooltipState["trigger"],
+      immediate = false,
+      allowGeneric = false,
+    ) => {
       cancelPending();
       const text = target.getAttribute(TOOLTIP_ATTRIBUTE)?.trim();
       if (!text || target.matches(":disabled")) return;
@@ -122,7 +167,7 @@ export function ReactTooltipLayer() {
         showTimer.current = null;
         if (!target.isConnected) return;
         setTooltip({ target, text, imageUrl, imageHeight, large, trigger });
-        if (linkPreviewUrl) loadLinkPreview(target, linkPreviewUrl);
+        if (linkPreviewUrl) loadLinkPreview(target, linkPreviewUrl, allowGeneric);
       };
       if (immediate) reveal();
       else showTimer.current = window.setTimeout(reveal, TOOLTIP_DELAY);
@@ -177,11 +222,13 @@ export function ReactTooltipLayer() {
 
     const onPointerOver = (event: PointerEvent) => {
       pointerPosition.current = { x: event.clientX, y: event.clientY };
+      modifierState.current = { alt: event.altKey, ctrl: event.ctrlKey };
       const target = tooltipTarget(event.target);
-      if (target) schedule(target, "pointer");
+      if (target) schedule(target, "pointer", false, allowsGenericPreview(event));
     };
     const onPointerMove = (event: PointerEvent) => {
       pointerPosition.current = { x: event.clientX, y: event.clientY };
+      modifierState.current = { alt: event.altKey, ctrl: event.ctrlKey };
     };
     const onPointerOut = (event: PointerEvent) => {
       const current = tooltipTarget(event.target);
@@ -190,12 +237,49 @@ export function ReactTooltipLayer() {
     };
     const onFocusIn = (event: FocusEvent) => {
       const target = tooltipTarget(event.target);
-      if (target) schedule(target, "focus", true);
+      if (target) {
+        schedule(
+          target,
+          "focus",
+          true,
+          genericLinkPreviewsEnabled && genericLinkPreviewActivation === "hover",
+        );
+      }
     };
     const onFocusOut = (event: FocusEvent) => {
       const current = tooltipTarget(event.target);
       const next = tooltipTarget(event.relatedTarget);
       if (current && current !== next) hide();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      modifierState.current = { alt: event.altKey, ctrl: event.ctrlKey };
+      if (
+        event.repeat ||
+        !genericLinkPreviewsEnabled ||
+        (
+          (genericLinkPreviewActivation !== "ctrl" || event.key !== "Control") &&
+          (genericLinkPreviewActivation !== "alt" || event.key !== "Alt")
+        )
+      ) {
+        return;
+      }
+      const { x, y } = pointerPosition.current;
+      const target = tooltipTarget(document.elementFromPoint(x, y));
+      if (target?.hasAttribute(LINK_PREVIEW_ATTRIBUTE)) {
+        schedule(target, "pointer", true, true);
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      modifierState.current = { alt: event.altKey, ctrl: event.ctrlKey };
+      const releasedActivationKey =
+        (genericLinkPreviewActivation === "ctrl" && event.key === "Control") ||
+        (genericLinkPreviewActivation === "alt" && event.key === "Alt");
+      if (!releasedActivationKey) return;
+      setTooltip((current) =>
+        current?.linkPreview?.kind === "generic"
+          ? { ...current, linkPreview: undefined }
+          : current,
+      );
     };
 
     document.addEventListener("pointerover", onPointerOver, true);
@@ -203,6 +287,8 @@ export function ReactTooltipLayer() {
     document.addEventListener("pointerout", onPointerOut, true);
     document.addEventListener("focusin", onFocusIn, true);
     document.addEventListener("focusout", onFocusOut, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", hide);
     window.addEventListener("resize", refreshPosition);
     window.addEventListener("scroll", refreshPosition, true);
@@ -218,11 +304,21 @@ export function ReactTooltipLayer() {
       document.removeEventListener("pointerout", onPointerOut, true);
       document.removeEventListener("focusin", onFocusIn, true);
       document.removeEventListener("focusout", onFocusOut, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", hide);
       window.removeEventListener("resize", refreshPosition);
       window.removeEventListener("scroll", refreshPosition, true);
     };
-  }, [cancelPending, hide, refreshPosition, schedule]);
+  }, [
+    allowsGenericPreview,
+    cancelPending,
+    genericLinkPreviewActivation,
+    genericLinkPreviewsEnabled,
+    hide,
+    refreshPosition,
+    schedule,
+  ]);
 
   return tooltip
     ? createPortal(
@@ -237,9 +333,14 @@ export function ReactTooltipLayer() {
         >
           {tooltip.linkPreview ? (
             <div className="violetwire-link-preview-card">
-              <img alt="" className="violetwire-tooltip-image" src={tooltip.linkPreview.thumbnailUrl} />
+              {tooltip.linkPreview.thumbnailUrl && (
+                <img alt="" className="violetwire-tooltip-image" src={tooltip.linkPreview.thumbnailUrl} />
+              )}
               <strong>{tooltip.linkPreview.title}</strong>
               <span>{tooltip.linkPreview.author}</span>
+              {tooltip.linkPreview.description && (
+                <p>{tooltip.linkPreview.description}</p>
+              )}
               {(tooltip.linkPreview.kind === "twitch-clip" ||
                 tooltip.linkPreview.kind === "kick-clip") && (
                 <small>

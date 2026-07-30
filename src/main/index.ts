@@ -1275,8 +1275,18 @@ handleTrusted("updates:get-release-notes", (_event, forceRefresh: unknown) => {
 });
 
 handleTrusted("system:get-link-preview", (_event, input: unknown) => {
-  if (typeof input !== "string" || input.length > 2_048) return null;
-  return linkPreviewService.getPreview(input);
+  const result = z
+    .object({
+      url: z.string().max(2_048),
+      allowGeneric: z.boolean(),
+    })
+    .strict()
+    .safeParse(input);
+  if (!result.success) return null;
+  const allowGeneric =
+    result.data.allowGeneric &&
+    preferencesService.get().genericLinkPreviewsEnabled;
+  return linkPreviewService.getPreview(result.data.url, allowGeneric);
 });
 handleTrusted("updates:check", () => updateService.check());
 onTrusted("updates:install", () => updateService.install());
