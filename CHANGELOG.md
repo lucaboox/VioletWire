@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.4] - 2026-07-30
+
 ### Additions
 
 - Settings now use dedicated Account, Playback, Chat, Emotes, and Appearance
