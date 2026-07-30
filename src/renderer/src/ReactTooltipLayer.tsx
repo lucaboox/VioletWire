@@ -240,7 +240,8 @@ export function ReactTooltipLayer() {
               <img alt="" className="violetwire-tooltip-image" src={tooltip.linkPreview.thumbnailUrl} />
               <strong>{tooltip.linkPreview.title}</strong>
               <span>{tooltip.linkPreview.author}</span>
-              {tooltip.linkPreview.kind === "twitch-clip" && (
+              {(tooltip.linkPreview.kind === "twitch-clip" ||
+                tooltip.linkPreview.kind === "kick-clip") && (
                 <small>
                   {formatDuration(tooltip.linkPreview.durationSeconds)} · {formatCount(tooltip.linkPreview.viewCount)} views · {formatDate(tooltip.linkPreview.createdAt)}
                 </small>

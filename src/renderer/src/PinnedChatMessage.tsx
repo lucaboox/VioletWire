@@ -1,8 +1,42 @@
+import { Fragment } from "react";
 import { Pin, X } from "lucide-react";
+import { getLinkImagePreviewUrl, tokenizeChatLinks } from "../../shared/chat-content";
 import type {
   TwitchPinnedChatFragment,
   TwitchPinnedChatMessage as PinnedMessage,
 } from "../../shared/twitch";
+
+function renderText(text: string, key: string) {
+  return tokenizeChatLinks(text).map((content, index) => {
+    if (content.kind === "text") {
+      return <span key={`${key}-text-${index}`}>{content.text}</span>;
+    }
+
+    const previewUrl = getLinkImagePreviewUrl(content.url);
+    return (
+      <a
+        className="chat-link"
+        data-violetwire-link-preview={content.url}
+        href={content.url}
+        key={`${key}-link-${index}`}
+        onClick={(event) => {
+          event.preventDefault();
+          void window.desktop.system.openExternal(content.url);
+        }}
+        rel="noreferrer"
+        title={content.url}
+        {...(previewUrl
+          ? {
+              "data-violetwire-tooltip-image": previewUrl,
+              "data-violetwire-tooltip-large": "",
+            }
+          : {})}
+      >
+        {content.text}
+      </a>
+    );
+  });
+}
 
 function renderFragment(fragment: TwitchPinnedChatFragment, index: number) {
   if (fragment.type === "emote" && fragment.emote) {
@@ -27,7 +61,11 @@ function renderFragment(fragment: TwitchPinnedChatFragment, index: number) {
       </span>
     );
   }
-  return <span key={index}>{fragment.text}</span>;
+  return (
+    <Fragment key={index}>
+      {renderText(fragment.text, `fragment-${index}`)}
+    </Fragment>
+  );
 }
 
 export function PinnedChatMessage({
@@ -58,7 +96,7 @@ export function PinnedChatMessage({
         <span className="pinned-chat-separator">:</span>{" "}
         {message.fragments.length > 0
           ? message.fragments.map(renderFragment)
-          : message.text}
+          : renderText(message.text, "message")}
       </div>
     </aside>
   );

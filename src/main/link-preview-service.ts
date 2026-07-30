@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { LinkPreview } from "../shared/link-preview";
+import type { KickService } from "./kick-service";
 import type { TwitchService } from "./twitch-service";
 
 const CACHE_TTL_MS = 10 * 60 * 1_000;
@@ -22,6 +23,20 @@ function twitchClipId(url: URL): string | null {
   if (host !== "twitch.tv" && host !== "www.twitch.tv" && host !== "m.twitch.tv") return null;
   const segments = url.pathname.split("/").filter(Boolean);
   const clipIndex = segments.findIndex((segment) => segment.toLowerCase() === "clip");
+  const pathId = clipIndex >= 0 ? segments[clipIndex + 1] : undefined;
+  const queryId = url.searchParams.get("clip") ?? undefined;
+  const id = pathId ?? queryId;
+  return id && /^[A-Za-z0-9_-]{4,160}$/.test(id) ? id : null;
+}
+
+function kickClipId(url: URL): string | null {
+  const host = url.hostname.toLowerCase();
+  if (host !== "kick.com" && host !== "www.kick.com") return null;
+  const segments = url.pathname.split("/").filter(Boolean);
+  const clipIndex = segments.findIndex((segment) => {
+    const lower = segment.toLowerCase();
+    return lower === "clip" || lower === "clips";
+  });
   const pathId = clipIndex >= 0 ? segments[clipIndex + 1] : undefined;
   const queryId = url.searchParams.get("clip") ?? undefined;
   const id = pathId ?? queryId;
@@ -67,7 +82,10 @@ function htmlMetaContent(html: string, property: string): string | null {
 export class LinkPreviewService {
   private readonly cache = new Map<string, CachedPreview>();
 
-  constructor(private readonly twitchService: TwitchService) {}
+  constructor(
+    private readonly twitchService: TwitchService,
+    private readonly kickService: Pick<KickService, "getClipPreview">,
+  ) {}
 
   async getPreview(rawUrl: string): Promise<LinkPreview | null> {
     let url: URL;
@@ -86,11 +104,15 @@ export class LinkPreviewService {
       const clipId = twitchClipId(url);
       if (clipId) value = await this.getTwitchClip(clipId);
       else {
-        const videoId = youTubeVideoId(url);
-        if (videoId) value = await this.getYouTubeVideo(videoId);
+        const kickId = kickClipId(url);
+        if (kickId) value = await this.getKickClip(kickId);
         else {
-          const albumId = imgurAlbumId(url);
-          if (albumId) value = await this.getImgurAlbum(albumId);
+          const videoId = youTubeVideoId(url);
+          if (videoId) value = await this.getYouTubeVideo(videoId);
+          else {
+            const albumId = imgurAlbumId(url);
+            if (albumId) value = await this.getImgurAlbum(albumId);
+          }
         }
       }
     } catch {
@@ -117,6 +139,32 @@ export class LinkPreviewService {
           viewCount: clip.viewCount,
         }
       : null;
+  }
+
+  private async getKickClip(clipId: string): Promise<LinkPreview | null> {
+    const clip = await this.kickService.getClipPreview(clipId);
+    if (!clip) return null;
+
+    const thumbnail = new URL(clip.thumbnailUrl);
+    if (
+      thumbnail.protocol !== "https:" ||
+      thumbnail.hostname.toLowerCase() !== "clips.kick.com"
+    ) {
+      return null;
+    }
+    const channelSlug = /^[A-Za-z0-9_-]{1,100}$/.test(clip.channelSlug)
+      ? clip.channelSlug
+      : "kick";
+    return {
+      kind: "kick-clip",
+      url: `https://kick.com/${channelSlug}/clips/${encodeURIComponent(clip.id)}`,
+      title: clip.title,
+      author: channelSlug,
+      thumbnailUrl: thumbnail.toString(),
+      durationSeconds: clip.durationSeconds,
+      createdAt: clip.createdAt,
+      viewCount: clip.viewCount,
+    };
   }
 
   private async getYouTubeVideo(videoId: string): Promise<LinkPreview | null> {

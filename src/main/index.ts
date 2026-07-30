@@ -294,7 +294,7 @@ const multiChatService = new MultiChatService(
   () => kickService,
 );
 const twitchService = new TwitchService();
-const linkPreviewService = new LinkPreviewService(twitchService);
+const linkPreviewService = new LinkPreviewService(twitchService, kickService);
 const preferencesService = new PreferencesService();
 const hlsNativePlayer = new HlsNativePlayer(
   () => mainWindow,

@@ -2,10 +2,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TwitchService } from "./twitch-service";
 import { LinkPreviewService } from "./link-preview-service";
 
-function service(): LinkPreviewService {
-  return new LinkPreviewService({
-    getClipPreview: vi.fn(),
-  } as unknown as TwitchService);
+function service(
+  kickPreview: Awaited<ReturnType<import("./kick-service").KickService["getClipPreview"]>> = null,
+): LinkPreviewService {
+  return new LinkPreviewService(
+    {
+      getClipPreview: vi.fn(),
+    } as unknown as TwitchService,
+    {
+      getClipPreview: vi.fn().mockResolvedValue(kickPreview),
+    },
+  );
 }
 
 afterEach(() => {
@@ -57,5 +64,66 @@ describe("LinkPreviewService Imgur albums", () => {
     await expect(previews.getPreview("https://imgur.com/a/not/valid")).resolves.toBeNull();
     await expect(previews.getPreview("https://imgur.com/gallery/dnEym2w")).resolves.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("LinkPreviewService Kick clips", () => {
+  it("returns rich metadata for current Kick clip links", async () => {
+    const previews = service({
+      id: "clip_01JGJHB6CEVFCQRYTVPM8DW892",
+      title: "MonkaW",
+      channelSlug: "xqc",
+      thumbnailUrl:
+        "https://clips.kick.com/clips/7a/clip_01JGJHB6CEVFCQRYTVPM8DW892/thumbnail.webp",
+      durationSeconds: 50,
+      createdAt: "2025-01-02T03:37:13.559Z",
+      viewCount: 11_793,
+    });
+
+    await expect(
+      previews.getPreview(
+        "https://kick.com/xqc/clips/clip_01JGJHB6CEVFCQRYTVPM8DW892",
+      ),
+    ).resolves.toEqual({
+      kind: "kick-clip",
+      url: "https://kick.com/xqc/clips/clip_01JGJHB6CEVFCQRYTVPM8DW892",
+      title: "MonkaW",
+      author: "xqc",
+      thumbnailUrl:
+        "https://clips.kick.com/clips/7a/clip_01JGJHB6CEVFCQRYTVPM8DW892/thumbnail.webp",
+      durationSeconds: 50,
+      createdAt: "2025-01-02T03:37:13.559Z",
+      viewCount: 11_793,
+    });
+  });
+
+  it("supports legacy query-style Kick clip links", async () => {
+    const getClipPreview = vi.fn().mockResolvedValue(null);
+    const previews = new LinkPreviewService(
+      { getClipPreview: vi.fn() } as unknown as TwitchService,
+      { getClipPreview },
+    );
+
+    await previews.getPreview(
+      "https://kick.com/xqc?clip=clip_01JGJHB6CEVFCQRYTVPM8DW892",
+    );
+    expect(getClipPreview).toHaveBeenCalledWith(
+      "clip_01JGJHB6CEVFCQRYTVPM8DW892",
+    );
+  });
+
+  it("rejects a thumbnail outside Kick's clip CDN", async () => {
+    const previews = service({
+      id: "clip_01JGJHB6CEVFCQRYTVPM8DW892",
+      title: "Unsafe",
+      channelSlug: "xqc",
+      thumbnailUrl: "https://attacker.example/thumbnail.webp",
+    });
+
+    await expect(
+      previews.getPreview(
+        "https://kick.com/xqc/clips/clip_01JGJHB6CEVFCQRYTVPM8DW892",
+      ),
+    ).resolves.toBeNull();
   });
 });

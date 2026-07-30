@@ -130,6 +130,32 @@ const kickUserSchema = z.object({
   profile_pic: z.string().nullish(),
 });
 
+const kickClipSchema = z.object({
+  clip: z.object({
+    id: z.union([z.string(), z.number()]).nullish(),
+    title: z.string().nullish(),
+    thumbnail_url: z.string().nullish(),
+    duration: z.number().nullish(),
+    views: z.number().nullish(),
+    created_at: z.string().nullish(),
+    channel: z
+      .object({
+        slug: z.string().nullish(),
+      })
+      .nullish(),
+  }),
+});
+
+export interface KickClipPreview {
+  id: string;
+  title: string;
+  channelSlug: string;
+  thumbnailUrl: string;
+  durationSeconds?: number;
+  createdAt?: string;
+  viewCount?: number;
+}
+
 // The followed list is its own shape again: live state sits on the entry
 // rather than in a nested livestream.
 // Every field is nullish rather than optional: Kick returns null for anything
@@ -602,6 +628,32 @@ export class KickService {
       });
     }
     return results;
+  }
+
+  async getClipPreview(clipId: string): Promise<KickClipPreview | null> {
+    if (!/^[A-Za-z0-9_-]{4,160}$/.test(clipId)) return null;
+
+    // The current site uses /play; the older metadata route is retained as a
+    // fallback because shared links using both generations still circulate.
+    const current = await this.requestJson(
+      `/api/v2/clips/${encodeURIComponent(clipId)}/play`,
+    );
+    const payload =
+      current ?? (await this.requestJson(`/api/v2/clips/${encodeURIComponent(clipId)}`));
+    const parsed = kickClipSchema.safeParse(payload);
+    if (!parsed.success) return null;
+
+    const clip = parsed.data.clip;
+    if (!clip.thumbnail_url) return null;
+    return {
+      id: clip.id === null || clip.id === undefined ? clipId : String(clip.id),
+      title: clip.title?.trim() || "Kick clip",
+      channelSlug: clip.channel?.slug?.trim() || "Kick",
+      thumbnailUrl: clip.thumbnail_url,
+      durationSeconds: clip.duration ?? undefined,
+      createdAt: clip.created_at ?? undefined,
+      viewCount: clip.views ?? undefined,
+    };
   }
 
   /**
