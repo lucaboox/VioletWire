@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { LinkPreview } from "../shared/link-preview";
-import { TwitchService } from "./twitch-service";
+import type { TwitchService } from "./twitch-service";
 
 const CACHE_TTL_MS = 10 * 60 * 1_000;
 const MAX_CACHE_ENTRIES = 160;
@@ -39,6 +39,30 @@ function youTubeVideoId(url: URL): string | null {
   return id && /^[A-Za-z0-9_-]{6,20}$/.test(id) ? id : null;
 }
 
+function imgurAlbumId(url: URL): string | null {
+  const host = url.hostname.toLowerCase();
+  if (host !== "imgur.com" && host !== "www.imgur.com" && host !== "m.imgur.com") {
+    return null;
+  }
+  const match = /^\/a\/([A-Za-z0-9]{5,16})\/?$/.exec(url.pathname);
+  return match?.[1] ?? null;
+}
+
+function htmlAttribute(tag: string, name: string): string | null {
+  const match = new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i").exec(tag);
+  return match?.[2] ?? null;
+}
+
+function htmlMetaContent(html: string, property: string): string | null {
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const key = htmlAttribute(tag, "property") ?? htmlAttribute(tag, "name");
+    if (key?.toLowerCase() !== property) continue;
+    return htmlAttribute(tag, "content");
+  }
+  return null;
+}
+
 /** Fetches metadata only from fixed, allow-listed provider endpoints. */
 export class LinkPreviewService {
   private readonly cache = new Map<string, CachedPreview>();
@@ -64,6 +88,10 @@ export class LinkPreviewService {
       else {
         const videoId = youTubeVideoId(url);
         if (videoId) value = await this.getYouTubeVideo(videoId);
+        else {
+          const albumId = imgurAlbumId(url);
+          if (albumId) value = await this.getImgurAlbum(albumId);
+        }
       }
     } catch {
       // Chat links are untrusted and previews are optional. A signed-out
@@ -106,6 +134,37 @@ export class LinkPreviewService {
       url: canonicalUrl,
       title: payload.title,
       author: payload.author_name,
+      thumbnailUrl: thumbnail.toString(),
+    };
+  }
+
+  private async getImgurAlbum(albumId: string): Promise<LinkPreview | null> {
+    const canonicalUrl = `https://imgur.com/a/${albumId}`;
+    const response = await fetch(canonicalUrl, {
+      headers: { Accept: "text/html" },
+      redirect: "error",
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type");
+    if (contentType && !contentType.toLowerCase().startsWith("text/html")) return null;
+    const declaredLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declaredLength) && declaredLength > 512_000) return null;
+
+    const html = (await response.text()).slice(0, 512_000);
+    const rawThumbnail =
+      htmlMetaContent(html, "og:image") ?? htmlMetaContent(html, "twitter:image");
+    if (!rawThumbnail) return null;
+    const thumbnail = new URL(rawThumbnail.replaceAll("&amp;", "&"));
+    if (thumbnail.protocol !== "https:" || thumbnail.hostname.toLowerCase() !== "i.imgur.com") {
+      return null;
+    }
+    if (!/\.(png|jpe?g|gif|webp)$/i.test(thumbnail.pathname)) return null;
+    return {
+      kind: "imgur-album",
+      url: canonicalUrl,
+      title: "Imgur album",
+      author: "Imgur",
       thumbnailUrl: thumbnail.toString(),
     };
   }

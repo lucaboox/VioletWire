@@ -1,5 +1,5 @@
 export interface LinkPreview {
-  kind: "twitch-clip" | "youtube";
+  kind: "twitch-clip" | "youtube" | "imgur-album";
   title: string;
   author: string;
   thumbnailUrl: string;
