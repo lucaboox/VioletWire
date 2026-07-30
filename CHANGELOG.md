@@ -4,6 +4,35 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.3] - 2026-07-30
+
+### Additions
+
+- Kick clip links now show rich hover previews with the clip thumbnail, title,
+  channel, duration, views, and creation date. Both current and legacy Kick
+  clip URL formats are supported.
+- Direct Imgur image links and Imgur album links now show image previews when
+  hovered in chat.
+
+### Improvements
+
+- Sent Twitch messages now appear immediately in regular and multistream chat,
+  then update with Twitch's authoritative badges, colors, emotes, and reply
+  metadata without creating a duplicate.
+- Picture-in-picture now sits directly before Theater mode, while overlay-chat
+  scrollbars reserve their space without shifting messages when hovered.
+- The followed-channel sidebar is controlled consistently by its saved collapse
+  button instead of silently collapsing when the window is resized.
+- VioletWire now keeps a usable minimum window width that scales consistently
+  with Windows per-monitor display scaling.
+
+### Fixes
+
+- Links inside Twitch pinned messages are now clickable, open safely in the
+  default browser, and use the same hover previews as normal chat links.
+- The centered search bar now switches to a collision-safe responsive layout
+  before it can overlap navigation, playback, multistream, or account controls.
+
 ## [0.3.4-alpha.2] - 2026-07-29
 
 ### Additions
