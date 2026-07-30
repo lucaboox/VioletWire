@@ -918,16 +918,31 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .settings-section-heading h3 { margin: 4px 0 0; color: #f4f4f5; font-size: 22px; font-weight: 750; letter-spacing: -.45px; text-transform: none; }
 .settings-section-heading p { margin: 5px 0 0; color: #8f8f99; font-size: 11px; line-height: 1.5; }
 .settings-modal-content .settings-card, .settings-modal-content .settings-preview { width: 100%; }
+.settings-modal-content .settings-card { min-height: 76px; padding: 16px 18px; }
+.settings-modal-content .settings-card strong { font-size: 13px; }
+.settings-modal-content .settings-card > div:first-child > span { font-size: 11px; }
 .settings-card-stack { display: grid; align-items: stretch; gap: 0; }
-.settings-card-stack .twitch-chat-color-controls { width: 100%; margin-top: 0; }
-.settings-chat-toggles .chat-toggle-setting { min-height: 40px; }
-.settings-chat-toggles .chat-toggle-setting + .chat-toggle-setting, .settings-chat-toggles .mention-sound-controls + .chat-toggle-setting { border-top: 1px solid #303037; }
-.settings-chat-toggles .mention-sound-controls { padding: 10px 0 14px; }
+.settings-card-row { display: flex; align-items: center; justify-content: space-between; gap: 22px; }
+.settings-card-row > div { min-width: 0; }
+.settings-card-row > div > span { margin-top: 5px; color: #797984; font-size: 11px; line-height: 1.45; }
+.settings-chat-color-card .twitch-chat-color-controls { width: 100%; gap: 12px; margin-top: 0; padding-top: 0; border-top: 0; }
+.settings-chat-color-card .twitch-chat-color-heading { font-size: 13px; }
+.settings-chat-color-card .twitch-chat-current-color { width: 19px; height: 19px; }
+.settings-chat-color-card .twitch-chat-color-grid { width: max-content; grid-template-columns: repeat(8, 28px); gap: 10px; }
+.settings-chat-color-card .twitch-chat-color-grid button { width: 27px; height: 27px; }
+.settings-chat-color-card .twitch-chat-custom-color { width: min(360px, 100%); grid-template-columns: 38px minmax(0, 1fr); gap: 10px; }
+.settings-chat-color-card .twitch-chat-custom-color input { width: 38px; height: 34px; }
+.settings-chat-color-card .twitch-chat-custom-color button { height: 34px; font-size: 11px; }
+.settings-chat-color-card .twitch-chat-color-controls small { font-size: 10.5px; }
+.settings-mention-card .mention-sound-controls { align-items: end; gap: 18px; margin-top: 16px; padding-top: 15px; grid-template-columns: minmax(250px, 1fr) minmax(220px, 1fr); border-top: 1px solid #303037; }
+.settings-mention-card .mention-sound-picker > span, .settings-mention-card .mention-sound-volume span { font-size: 11px; }
+.settings-mention-card .mention-sound-picker select, .settings-mention-card .mention-sound-preview { height: 34px; font-size: 11px; }
+.settings-mention-card .mention-sound-volume { align-self: end; }
 .settings-range-list > label { display: grid; min-height: 58px; align-items: center; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(210px, 42%); }
 .settings-range-list > label + label { border-top: 1px solid #303037; }
 .settings-range-list > label > span:first-child { display: grid; gap: 4px; }
-.settings-range-list strong { color: #e8e8ec; font-size: 12px; }
-.settings-range-list small { color: #858590; font-size: 10px; }
+.settings-range-list strong { color: #e8e8ec; font-size: 13px; }
+.settings-range-list small { color: #858590; font-size: 11px; }
 .settings-card .settings-range-control { display: grid; align-items: center; gap: 10px; grid-template-columns: 38px minmax(0, 1fr); }
 .settings-card .settings-range-control output { color: #c4b5fd; font-size: 11px; font-weight: 750; text-align: right; }
 .settings-card .settings-range-control input { width: 100%; accent-color: #9b5de5; }

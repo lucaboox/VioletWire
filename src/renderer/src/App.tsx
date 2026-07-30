@@ -5924,24 +5924,76 @@ export function App() {
                       <h3>Chat behavior</h3>
                       <p>These settings also apply to the quick chat menu and chat overlay.</p>
                     </header>
-                    <div className="settings-card settings-card-stack">
+                    <div className="settings-card settings-card-stack settings-chat-color-card">
                       <TwitchChatColorControls />
                     </div>
-                    <div className="settings-card settings-card-stack settings-chat-toggles">
-                      <ChatToggleSetting checked={chatTimestamps} label="Show timestamps" onChange={setChatTimestamps} />
-                      <ChatToggleSetting checked={mentionSoundEnabled} label="Mention sound" onChange={setMentionSoundEnabled} />
+                    <div className="settings-card">
+                      <div>
+                        <strong>Show timestamps</strong>
+                        <span>Display the sent time before every chat message.</span>
+                      </div>
+                      <button
+                        aria-pressed={chatTimestamps}
+                        className={chatTimestamps ? "settings-switch active" : "settings-switch"}
+                        onClick={() => setChatTimestamps((current) => !current)}
+                        type="button"
+                      >
+                        <span />
+                      </button>
+                    </div>
+                    <div className="settings-card settings-card-stack settings-mention-card">
+                      <div className="settings-card-row">
+                        <div>
+                          <strong>Mention sound</strong>
+                          <span>Play a sound when somebody mentions your username.</span>
+                        </div>
+                        <button
+                          aria-pressed={mentionSoundEnabled}
+                          className={mentionSoundEnabled ? "settings-switch active" : "settings-switch"}
+                          onClick={() => setMentionSoundEnabled((current) => !current)}
+                          type="button"
+                        >
+                          <span />
+                        </button>
+                      </div>
                       <MentionSoundControls
                         onSoundChange={setMentionSoundId}
                         onVolumeChange={setMentionSoundVolume}
                         soundId={mentionSoundId}
                         volume={mentionSoundVolume}
                       />
-                      <ChatToggleSetting
-                        checked={chatDeletedMessageStyle === "dimmed"}
-                        label="Dim deleted messages"
-                        onChange={(checked) => setChatDeletedMessageStyle(checked ? "dimmed" : "placeholder")}
-                      />
-                      <ChatToggleSetting checked={chatOnLeft} label="Chat on left" onChange={setChatOnLeft} />
+                    </div>
+                    <div className="settings-card">
+                      <div>
+                        <strong>Dim deleted messages</strong>
+                        <span>Keep deleted text visible but subdued instead of replacing it.</span>
+                      </div>
+                      <button
+                        aria-pressed={chatDeletedMessageStyle === "dimmed"}
+                        className={chatDeletedMessageStyle === "dimmed" ? "settings-switch active" : "settings-switch"}
+                        onClick={() =>
+                          setChatDeletedMessageStyle((current) =>
+                            current === "dimmed" ? "placeholder" : "dimmed",
+                          )
+                        }
+                        type="button"
+                      >
+                        <span />
+                      </button>
+                    </div>
+                    <div className="settings-card">
+                      <div>
+                        <strong>Chat on left</strong>
+                        <span>Swap the chat panel and followed-channel sidebar positions.</span>
+                      </div>
+                      <button
+                        aria-pressed={chatOnLeft}
+                        className={chatOnLeft ? "settings-switch active" : "settings-switch"}
+                        onClick={() => setChatOnLeft((current) => !current)}
+                        type="button"
+                      >
+                        <span />
+                      </button>
                     </div>
                     <div className="settings-card settings-card-stack settings-range-list">
                       <label>
