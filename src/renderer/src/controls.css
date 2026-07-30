@@ -1441,7 +1441,7 @@ input {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
-  margin: 0 5px 6px;
+  margin: 0 5px 9px;
   padding: 7px 8px 7px 10px;
   border: 1px solid #5b4930;
   border-radius: 8px;
