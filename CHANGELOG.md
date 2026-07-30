@@ -11,13 +11,15 @@ All notable changes to VioletWire are documented in this file.
 - The full Settings modal now includes chat color, timestamps, mention audio,
   deleted-message style, chat placement, font and emote sizing, history, and
   overlay-opacity controls.
+- Added an About section with VioletWire version history, project and support
+  links, license information, and core dependency credits.
 
 ### Improvements
 
 - In-player chat settings menus now link directly to the full Chat settings
   section while keeping their existing quick controls.
-- Version information now appears in the Settings header, with update and
-  changelog actions kept compact at the bottom of the navigation rail.
+- Update checks now use a compact button beside About, while version details
+  and changelog access live in the About section.
 
 ## [0.3.4-alpha.3] - 2026-07-30
 

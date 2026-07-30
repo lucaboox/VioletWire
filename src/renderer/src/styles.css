@@ -912,8 +912,8 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .settings-modal-nav button.active { border-color: #6d4b913d; color: #f4eefe; background: #2a1d35; box-shadow: 0 0 0 1px #a78bfa0b inset; }
 .settings-modal-nav button.active svg { color: #b794f6; }
 .settings-modal-nav-footer { display: grid; gap: 6px; margin-top: auto; padding-top: 12px; grid-template-columns: minmax(0, 1fr) 40px; border-top: 1px solid #29272e; }
-.settings-modal-nav .settings-nav-update { padding-inline: 10px; }
-.settings-modal-nav .settings-nav-changelog { width: 40px; padding: 0; justify-content: center; }
+.settings-modal-nav .settings-nav-about { padding-inline: 12px; }
+.settings-modal-nav .settings-nav-update-icon { width: 40px; padding: 0; justify-content: center; }
 .settings-modal-nav-footer button:disabled { cursor: default; opacity: .5; }
 .settings-modal-content { min-height: 0; padding: 24px 28px 30px; overflow-y: auto; }
 .settings-section-panel { display: grid; align-content: start; gap: 10px; }
@@ -954,7 +954,29 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .settings-provider-list .provider-logo { width: 20px; max-width: 20px; height: 20px; max-height: 20px; color: #c4b5fd; }
 .settings-provider-list > div { display: grid; gap: 3px; }
 .settings-provider-list > div span { color: #858590; font-size: 10px; }
+.settings-about-hero { display: flex; align-items: center; gap: 15px; padding: 17px 18px; border: 1px solid #3b3343; border-radius: 12px; background: linear-gradient(105deg, #21152b, #151519 68%); }
+.settings-about-hero > img { width: 54px; height: 54px; border-radius: 13px; box-shadow: 0 8px 25px #0009, 0 0 18px #8b5cf63d; }
+.settings-about-hero > div { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.settings-about-hero > div strong { color: #fafafa; font-size: 18px; }
+.settings-about-hero > div span { color: #c4b5fd; font-size: 11px; font-weight: 700; }
+.settings-about-hero > div small { color: #858590; font-size: 10px; }
+.settings-about-links { display: grid; gap: 8px; margin-top: 2px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-about-links > button { display: grid; min-height: 62px; align-items: center; gap: 11px; padding: 10px 13px; grid-template-columns: 20px minmax(0, 1fr); border: 1px solid #303037; border-radius: 10px; color: #a78bfa; background: #151519; cursor: pointer; text-align: left; }
+.settings-about-links > button:hover { border-color: #62477f; color: #d8b4fe; background: #201824; }
+.settings-about-links > button > span { display: grid; min-width: 0; gap: 4px; }
+.settings-about-links strong { overflow: hidden; color: #e8e8ec; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-about-links small { overflow: hidden; color: #7f7f89; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-dependencies > header { display: grid; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid #303037; }
+.settings-dependencies > header span { color: #858590; font-size: 10px; }
+.settings-dependencies dl { display: grid; gap: 0; margin: 0; }
+.settings-dependencies dl > div { display: grid; min-height: 36px; align-items: center; gap: 20px; grid-template-columns: 130px minmax(0, 1fr); }
+.settings-dependencies dl > div + div { border-top: 1px solid #29292f; }
+.settings-dependencies dt { color: #a78bfa; font-size: 10px; font-weight: 750; }
+.settings-dependencies dd { margin: 0; color: #b4b4bd; font-size: 10.5px; }
+.settings-notices-link { display: flex; min-height: 34px; align-items: center; justify-content: center; gap: 8px; margin-top: 11px; border: 1px solid #45404c; border-radius: 7px; color: #d9d4df; background: #242129; cursor: pointer; font-size: 10px; font-weight: 750; }
+.settings-notices-link:hover { border-color: #755696; color: white; background: #30263a; }
 .oled-mode .settings-modal-panel, .oled-mode .settings-modal-nav, .oled-mode .settings-modal-content .settings-card, .oled-mode .settings-modal-content .settings-preview { background: #000; }
+.oled-mode .settings-about-links > button, .oled-mode .settings-about-hero { background: #000; }
 .chat-settings-more { display: grid; width: 100%; min-height: 34px; align-items: center; gap: 8px; margin-top: 10px; padding: 0 9px; grid-template-columns: auto 1fr auto; border: 1px solid #45404c; border-radius: 7px; color: #d9d4df; background: #242129; cursor: pointer; font-size: 10px; font-weight: 750; text-align: left; }
 .chat-settings-more:hover { border-color: #755696; color: white; background: #30263a; }
 .changelog-modal-panel { width: min(760px, calc(100vw - 48px)); height: auto; }
@@ -1087,6 +1109,10 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
   .settings-range-list > label { gap: 12px; grid-template-columns: 1fr; padding-block: 11px; }
   .settings-mention-card .mention-sound-controls { grid-template-columns: 1fr; }
   .settings-chat-color-card .twitch-chat-color-grid { grid-template-columns: repeat(8, minmax(28px, 1fr)); }
+  .settings-modal-nav-footer { margin-top: 0; padding-top: 0; padding-left: 9px; border-top: 0; border-left: 1px solid #29272e; }
+  .settings-about-links { grid-template-columns: 1fr; }
+  .settings-about-hero { align-items: flex-start; flex-wrap: wrap; }
+  .settings-about-hero > .secondary-button { width: 100%; }
 }
 .deleted-message-toggle {
   display: inline;

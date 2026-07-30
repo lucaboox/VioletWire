@@ -21,6 +21,7 @@ import {
   Copy,
   ExternalLink,
   Heart,
+  Info,
   Lock,
   History,
   Home,
@@ -135,7 +136,8 @@ type SettingsSection =
   | "playback"
   | "chat"
   | "emotes"
-  | "appearance";
+  | "appearance"
+  | "about";
 type ChannelNavigationIdentity = {
   login: string;
   displayName: string;
@@ -5702,11 +5704,6 @@ export function App() {
                 <div>
                   <span>VIOLETWIRE</span>
                   <h2 id="settings-modal-title">Settings</h2>
-                  <p>
-                    {updateStatus.currentVersion
-                      ? `Version ${updateStatus.currentVersion}`
-                      : "Version information unavailable"}
-                  </p>
                 </div>
                 <button
                   aria-label="Close settings"
@@ -5733,7 +5730,21 @@ export function App() {
                   ))}
                   <div className="settings-modal-nav-footer">
                     <button
-                      className="settings-nav-update"
+                      aria-current={settingsSection === "about" ? "page" : undefined}
+                      className={settingsSection === "about" ? "settings-nav-about active" : "settings-nav-about"}
+                      onClick={() => setSettingsSection("about")}
+                      type="button"
+                    >
+                      <Info size={17} />
+                      <span>About</span>
+                    </button>
+                    <button
+                      aria-label={
+                        updateStatus.state === "downloaded"
+                          ? "Restart to update VioletWire"
+                          : "Check for VioletWire updates"
+                      }
+                      className="settings-nav-update-icon"
                       disabled={
                         updateStatus.state === "disabled" ||
                         updateStatus.state === "checking" ||
@@ -5758,24 +5769,6 @@ export function App() {
                         }
                         size={16}
                       />
-                      <span>
-                        {updateStatus.state === "downloaded"
-                          ? "Restart to update"
-                          : updateStatus.state === "checking"
-                            ? "Checking…"
-                            : updateStatus.state === "downloading"
-                              ? "Downloading…"
-                              : "Check for updates"}
-                      </span>
-                    </button>
-                    <button
-                      aria-label="View changelog"
-                      className="settings-nav-changelog"
-                      onClick={() => openChangelog(true)}
-                      title="View changelog"
-                      type="button"
-                    >
-                      <History size={17} />
                     </button>
                   </div>
                 </nav>
@@ -6124,6 +6117,114 @@ export function App() {
                       <span />
                     </button>
                   </div>
+                  </section>
+                )}
+                {settingsSection === "about" && (
+                  <section className="settings-section-panel settings-about">
+                    <header className="settings-section-heading">
+                      <span>ABOUT</span>
+                      <h3>VioletWire</h3>
+                      <p>Project details, support links, credits, and version history.</p>
+                    </header>
+                    <div className="settings-about-hero">
+                      <img alt="" src={violetWireIcon} />
+                      <div>
+                        <strong>VioletWire</strong>
+                        <span>Created by lucaboox</span>
+                        <small>
+                          {updateStatus.currentVersion
+                            ? `Version ${updateStatus.currentVersion}`
+                            : "Version unavailable"}{" "}
+                          · GPL-3.0-or-later
+                        </small>
+                      </div>
+                      <button
+                        className="secondary-button"
+                        onClick={() => openChangelog(true)}
+                        type="button"
+                      >
+                        <History size={15} />
+                        Version history
+                      </button>
+                    </div>
+                    <div className="settings-about-links">
+                      {[
+                        {
+                          label: "VioletWire website",
+                          detail: "violetwire.lucaboox.win",
+                          url: "https://violetwire.lucaboox.win",
+                        },
+                        {
+                          label: "Source code",
+                          detail: "github.com/lucaboox/VioletWire",
+                          url: "https://github.com/lucaboox/VioletWire",
+                        },
+                        {
+                          label: "lucaboox on GitHub",
+                          detail: "Projects and profile",
+                          url: "https://github.com/lucaboox",
+                        },
+                        {
+                          label: "Help and bug reports",
+                          detail: "VioletWire Issues",
+                          url: "https://github.com/lucaboox/VioletWire/issues",
+                        },
+                        {
+                          label: "Support on Ko-fi",
+                          detail: "ko-fi.com/W7W3D7V7U",
+                          url: "https://ko-fi.com/W7W3D7V7U",
+                        },
+                        {
+                          label: "GitHub Sponsors",
+                          detail: "Sponsor lucaboox",
+                          url: "https://github.com/sponsors/lucaboox",
+                        },
+                      ].map((link) => (
+                        <button
+                          key={link.url}
+                          onClick={() => void window.desktop.system.openExternal(link.url)}
+                          type="button"
+                        >
+                          <ExternalLink size={16} />
+                          <span>
+                            <strong>{link.label}</strong>
+                            <small>{link.detail}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="settings-card settings-card-stack settings-dependencies">
+                      <header>
+                        <strong>Core dependencies</strong>
+                        <span>Software and services that make VioletWire possible.</span>
+                      </header>
+                      <dl>
+                        <div>
+                          <dt>Desktop</dt>
+                          <dd>Electron · React · TypeScript</dd>
+                        </div>
+                        <div>
+                          <dt>Playback</dt>
+                          <dd>Streamlink · hls.js · libmpv</dd>
+                        </div>
+                        <div>
+                          <dt>Chat and emotes</dt>
+                          <dd>Twitch · Kick · 7TV · FrankerFaceZ · BetterTTV</dd>
+                        </div>
+                      </dl>
+                      <button
+                        className="settings-notices-link"
+                        onClick={() =>
+                          void window.desktop.system.openExternal(
+                            "https://github.com/lucaboox/VioletWire/blob/main/THIRD_PARTY_NOTICES.md",
+                          )
+                        }
+                        type="button"
+                      >
+                        View licenses and third-party notices
+                        <ExternalLink size={14} />
+                      </button>
+                    </div>
                   </section>
                 )}
                 </div>
