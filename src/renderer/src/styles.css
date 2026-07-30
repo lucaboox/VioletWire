@@ -708,7 +708,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 }
 
 .pinned-chat-separator {
-  margin-left: -2px;
+  margin-left: 1px;
 }
 
 .pinned-chat-mention {
