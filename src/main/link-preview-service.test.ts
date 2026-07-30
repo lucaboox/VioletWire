@@ -67,6 +67,50 @@ describe("LinkPreviewService Imgur albums", () => {
   });
 });
 
+describe("LinkPreviewService YouTube channels", () => {
+  it("previews handle links automatically without generic previews enabled", async () => {
+    const resolvePreview = vi.fn().mockResolvedValue({
+      kind: "generic",
+      url: "https://www.youtube.com/@Psi",
+      title: "Psi - YouTube",
+      author: "YouTube",
+      description: "The official Psi channel.",
+      thumbnailUrl: "https://yt3.googleusercontent.com/channel-avatar",
+    });
+    const previews = new LinkPreviewService(
+      { getClipPreview: vi.fn() } as unknown as TwitchService,
+      { getClipPreview: vi.fn() },
+      resolvePreview,
+    );
+
+    await expect(previews.getPreview("https://www.youtube.com/@Psi")).resolves.toEqual({
+      kind: "youtube",
+      url: "https://www.youtube.com/@Psi",
+      title: "Psi",
+      author: "YouTube channel",
+      description: "The official Psi channel.",
+      thumbnailUrl: "https://yt3.googleusercontent.com/channel-avatar",
+    });
+    expect(resolvePreview).toHaveBeenCalledWith(
+      new URL("https://www.youtube.com/@Psi"),
+    );
+  });
+
+  it("does not treat arbitrary YouTube paths as trusted channel pages", async () => {
+    const resolvePreview = vi.fn();
+    const previews = new LinkPreviewService(
+      { getClipPreview: vi.fn() } as unknown as TwitchService,
+      { getClipPreview: vi.fn() },
+      resolvePreview,
+    );
+
+    await expect(
+      previews.getPreview("https://www.youtube.com/results?search_query=Psi"),
+    ).resolves.toBeNull();
+    expect(resolvePreview).not.toHaveBeenCalled();
+  });
+});
+
 describe("LinkPreviewService Kick clips", () => {
   it("returns rich metadata for current Kick clip links", async () => {
     const previews = service({

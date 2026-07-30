@@ -244,30 +244,40 @@ async function loadHtml(
           reject(new Error("The preview URL is not an HTML page."));
           return;
         }
-        const declaredLength = Number(response.headers["content-length"]);
-        if (Number.isFinite(declaredLength) && declaredLength > MAX_HTML_BYTES) {
-          response.resume();
-          reject(new Error("The preview page is too large."));
-          return;
-        }
-
         const chunks: Buffer[] = [];
         let receivedBytes = 0;
-        response.on("data", (chunk: Buffer) => {
-          receivedBytes += chunk.length;
-          if (receivedBytes > MAX_HTML_BYTES) {
-            response.destroy(new Error("The preview page is too large."));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        response.on("end", () => {
+        let settled = false;
+        let markupTail = "";
+        const finish = () => {
+          if (settled) return;
+          settled = true;
           resolve({
             body: Buffer.concat(chunks).toString("utf8"),
             finalUrl: url,
           });
+        };
+        response.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          receivedBytes += chunk.length;
+          if (receivedBytes > MAX_HTML_BYTES) {
+            settled = true;
+            response.destroy(new Error("The preview page is too large."));
+            return;
+          }
+          chunks.push(chunk);
+          const markup = markupTail + chunk.toString("utf8");
+          if (/<\/head\s*>/i.test(markup)) {
+            response.pause();
+            finish();
+            response.destroy();
+            return;
+          }
+          markupTail = markup.slice(-32);
         });
-        response.on("error", reject);
+        response.on("end", finish);
+        response.on("error", (error) => {
+          if (!settled) reject(error);
+        });
       },
     );
     requestHandle.setTimeout(REQUEST_TIMEOUT_MS, () => {

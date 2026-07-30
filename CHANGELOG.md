@@ -4,6 +4,10 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- YouTube channel and `@handle` links now show trusted hover previews without requiring generic link previews.
+
 ### Additions
 
 - Chat settings now offer opt-in generic website previews using Open Graph

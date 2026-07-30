@@ -14,6 +14,7 @@ const youTubeOEmbedSchema = z.object({
 });
 
 type CachedPreview = { expiresAt: number; value: LinkPreview | null };
+type GenericPreviewResolver = (url: URL) => Promise<LinkPreview>;
 
 function twitchClipId(url: URL): string | null {
   const host = url.hostname.toLowerCase();
@@ -55,6 +56,19 @@ function youTubeVideoId(url: URL): string | null {
   return id && /^[A-Za-z0-9_-]{6,20}$/.test(id) ? id : null;
 }
 
+function youTubeChannelUrl(url: URL): URL | null {
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  if (host !== "youtube.com") return null;
+
+  const pathname = url.pathname.replace(/\/+$/, "");
+  const isHandle = /^\/@[A-Za-z0-9._-]{3,30}$/.test(pathname);
+  const isChannelId = /^\/channel\/UC[A-Za-z0-9_-]{20,30}$/.test(pathname);
+  const isLegacyChannel = /^\/(?:c|user)\/[A-Za-z0-9._-]{1,100}$/.test(pathname);
+  if (!isHandle && !isChannelId && !isLegacyChannel) return null;
+
+  return new URL(pathname, "https://www.youtube.com");
+}
+
 function imgurAlbumId(url: URL): string | null {
   const host = url.hostname.toLowerCase();
   if (host !== "imgur.com" && host !== "www.imgur.com" && host !== "m.imgur.com") {
@@ -86,6 +100,8 @@ export class LinkPreviewService {
   constructor(
     private readonly twitchService: TwitchService,
     private readonly kickService: Pick<KickService, "getClipPreview">,
+    private readonly genericPreviewResolver: GenericPreviewResolver =
+      resolveGenericLinkPreview,
   ) {}
 
   async getPreview(
@@ -114,9 +130,13 @@ export class LinkPreviewService {
           const videoId = youTubeVideoId(url);
           if (videoId) value = await this.getYouTubeVideo(videoId);
           else {
-            const albumId = imgurAlbumId(url);
-            if (albumId) value = await this.getImgurAlbum(albumId);
-            else if (allowGeneric) value = await resolveGenericLinkPreview(url);
+            const channelUrl = youTubeChannelUrl(url);
+            if (channelUrl) value = await this.getYouTubeChannel(channelUrl);
+            else {
+              const albumId = imgurAlbumId(url);
+              if (albumId) value = await this.getImgurAlbum(albumId);
+              else if (allowGeneric) value = await this.genericPreviewResolver(url);
+            }
           }
         }
       }
@@ -188,6 +208,17 @@ export class LinkPreviewService {
       title: payload.title,
       author: payload.author_name,
       thumbnailUrl: thumbnail.toString(),
+    };
+  }
+
+  private async getYouTubeChannel(channelUrl: URL): Promise<LinkPreview | null> {
+    const preview = await this.genericPreviewResolver(channelUrl);
+    return {
+      ...preview,
+      kind: "youtube",
+      url: channelUrl.toString(),
+      title: preview.title.replace(/\s*-\s*YouTube\s*$/i, ""),
+      author: "YouTube channel",
     };
   }
 
