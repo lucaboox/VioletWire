@@ -65,6 +65,10 @@ export const appPreferencesSchema = z.object({
   emotePickerWidth: z.number().int().min(330).max(600),
   emotePickerHeight: z.number().int().min(360).max(700),
   emoteSearchAllProviders: z.boolean(),
+  // How a typed word is matched against emote names when autocompleting:
+  // "prefix" only completes names starting with it, "substring" also finds it
+  // anywhere in the name (so "ek" reaches "kekw").
+  emoteAutocompleteMatch: z.enum(["prefix", "substring"]),
 });
 
 export const appPreferencesPatchSchema = appPreferencesSchema.partial().strict();
@@ -117,6 +121,7 @@ export const defaultAppPreferences: AppPreferences = {
   emotePickerWidth: 390,
   emotePickerHeight: 500,
   emoteSearchAllProviders: false,
+  emoteAutocompleteMatch: "prefix",
 };
 
 export interface PreferencesApi {

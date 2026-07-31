@@ -243,6 +243,12 @@ const settingsSearchEntries: {
   },
   {
     section: "chat",
+    title: "Emote autocomplete",
+    description: "Match emote names by prefix, or anywhere in the name.",
+    keywords: "tab complete suggestion starts with contains substring",
+  },
+  {
+    section: "chat",
     title: "Chat layout",
     description: "Move chat to the left or adjust overlay opacity.",
     keywords: "position side overlay transparency",
@@ -837,6 +843,8 @@ export function App() {
   const [mentionSoundVolume, setMentionSoundVolume] = useState(100);
   const [mentionSoundId, setMentionSoundId] = useState<MentionSoundId>("ping");
   const [genericLinkPreviewsEnabled, setGenericLinkPreviewsEnabled] = useState(false);
+  const [emoteAutocompleteMatch, setEmoteAutocompleteMatch] =
+    useState<AppPreferences["emoteAutocompleteMatch"]>("prefix");
   const [genericLinkPreviewActivation, setGenericLinkPreviewActivation] =
     useState<AppPreferences["genericLinkPreviewActivation"]>("ctrl");
   const [oledMode, setOledMode] = useState(
@@ -1470,6 +1478,7 @@ export function App() {
       setMentionSoundVolume(preferences.mentionSoundVolume);
       setMentionSoundId(preferences.mentionSoundId);
       setGenericLinkPreviewsEnabled(preferences.genericLinkPreviewsEnabled);
+      setEmoteAutocompleteMatch(preferences.emoteAutocompleteMatch);
       setGenericLinkPreviewActivation(preferences.genericLinkPreviewActivation);
       setOledMode(preferences.oledMode);
       setLastSeenChangelogVersion(preferences.lastSeenChangelogVersion);
@@ -1509,6 +1518,7 @@ export function App() {
           mentionSoundId,
           genericLinkPreviewsEnabled,
           genericLinkPreviewActivation,
+          emoteAutocompleteMatch,
           oledMode,
         })
         .catch(() => undefined);
@@ -1530,6 +1540,7 @@ export function App() {
     mentionSoundId,
     genericLinkPreviewsEnabled,
     genericLinkPreviewActivation,
+    emoteAutocompleteMatch,
     oledMode,
     nativePlaybackBackend,
     preferredMode,
@@ -4114,6 +4125,7 @@ export function App() {
                 )}
                 <div className="chat-composer-box">
                   <ChatComposerInput
+                    emoteMatch={emoteAutocompleteMatch}
                     aria-label="Send a chat message"
                     disabled={authState.status !== "signed-in" || !effectiveMultiChatChannel}
                     maxLength={500}
@@ -4942,6 +4954,7 @@ export function App() {
                       )}
                       <div className="chat-composer-box">
                         <ChatComposerInput
+                          emoteMatch={emoteAutocompleteMatch}
                           aria-label="Send a chat message"
                           disabled={singleChatDisabled}
                           maxLength={500}
@@ -6425,6 +6438,38 @@ export function App() {
                       >
                         <span />
                       </button>
+                    </div>
+                    <div className="settings-card settings-card-stack settings-link-preview-card">
+                      <div className="settings-card-row">
+                        <div>
+                          <strong>Emote autocomplete</strong>
+                          <span>
+                            How a typed word is matched against emote names while
+                            completing with Tab.
+                          </span>
+                        </div>
+                      </div>
+                      <div className="settings-link-preview-options">
+                        <label>
+                          <span>Match emotes that</span>
+                          <select
+                            onChange={(event) =>
+                              setEmoteAutocompleteMatch(
+                                event.target.value as AppPreferences["emoteAutocompleteMatch"],
+                              )
+                            }
+                            value={emoteAutocompleteMatch}
+                          >
+                            <option value="prefix">Start with what you type</option>
+                            <option value="substring">Contain what you type</option>
+                          </select>
+                        </label>
+                        <p className="settings-hint">
+                          {emoteAutocompleteMatch === "substring"
+                            ? "Typing ek also finds kekw."
+                            : "Typing kek finds kekw; ek does not."}
+                        </p>
+                      </div>
                     </div>
                     <div className="settings-card">
                       <div>

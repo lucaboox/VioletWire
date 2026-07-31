@@ -11,10 +11,13 @@ import {
 import type { ProviderEmote } from "../../shared/emotes";
 import type { TwitchPickerEmote } from "../../shared/chat";
 import type { ChatMentionCandidate } from "../../shared/chat-content";
+import { matchEmoteNames, type EmoteMatchMode } from "./emote-autocomplete";
 
 interface ChatComposerInputProps {
   "aria-label": string;
   disabled?: boolean;
+  /** Whether a typed word must start the emote name or may appear anywhere. */
+  emoteMatch?: EmoteMatchMode;
   maxLength: number;
   mentionCandidates: ChatMentionCandidate[];
   onValueChange(value: string): void;
@@ -32,6 +35,7 @@ interface EmoteImage {
 interface EmoteSuggestion extends EmoteImage {
   name: string;
 }
+
 
 function readEditorText(editor: HTMLElement): string {
   const readNode = (node: Node): string => {
@@ -99,6 +103,7 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     {
       "aria-label": ariaLabel,
       disabled = false,
+      emoteMatch = "prefix",
       maxLength,
       mentionCandidates,
       onValueChange,
@@ -115,6 +120,11 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     const [activeEmote, setActiveEmote] = useState<ActiveMention | null>(null);
     const [emoteCompletion, setEmoteCompletion] = useState<ActiveMention | null>(null);
     const [selectedEmote, setSelectedEmote] = useState(0);
+    // Keeps the highlighted suggestion in view as the arrow keys move it.
+    const selectedEmoteRef = useRef<HTMLButtonElement | null>(null);
+    useLayoutEffect(() => {
+      selectedEmoteRef.current?.scrollIntoView({ block: "nearest" });
+    }, [selectedEmote]);
     const emoteImages = useMemo(() => {
       const images = new Map<string, EmoteImage>();
       for (const emote of twitchEmotes) {
@@ -173,16 +183,21 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
       renderValue(editor, value);
       setActiveMention(null);
       setActiveEmote(null);
-      if (
-        emoteCompletion &&
-        !value
+      if (emoteCompletion) {
+        // The completed word must still relate to what was typed, or the
+        // completion is stale. Substring matching completes to names that do not
+        // begin with the query, so the test follows the same rule.
+        const completed = value
           .slice(emoteCompletion.start, emoteCompletion.end)
-          .toLowerCase()
-          .startsWith(emoteCompletion.query.toLowerCase())
-      ) {
-        setEmoteCompletion(null);
+          .toLowerCase();
+        const query = emoteCompletion.query.toLowerCase();
+        const stillMatches =
+          emoteMatch === "substring"
+            ? completed.includes(query)
+            : completed.startsWith(query);
+        if (!stillMatches) setEmoteCompletion(null);
       }
-    }, [emoteCompletion, renderValue, value]);
+    }, [emoteCompletion, emoteMatch, renderValue, value]);
 
     function updateValue(convertEmotes = false): void {
       const editor = localRef.current;
@@ -224,18 +239,13 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     const emoteMatchTarget = emoteCompletion ?? activeEmote;
     const matchingEmotes = useMemo(() => {
       if (!emoteMatchTarget) return [];
-      const query = emoteMatchTarget.query.toLowerCase();
-      return [...emoteImages.entries()]
-        .filter(([name]) => name.toLowerCase().startsWith(query))
-        .map(([name, emote]): EmoteSuggestion => ({ ...emote, name }))
-        .sort((left, right) => {
-          const leftExact = left.name.toLowerCase() === query;
-          const rightExact = right.name.toLowerCase() === query;
-          if (leftExact !== rightExact) return leftExact ? -1 : 1;
-          return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
-        })
-        .slice(0, 100);
-    }, [emoteImages, emoteMatchTarget]);
+      return matchEmoteNames(emoteImages.keys(), emoteMatchTarget.query, emoteMatch)
+        .slice(0, 100)
+        .flatMap((name): EmoteSuggestion[] => {
+          const emote = emoteImages.get(name);
+          return emote ? [{ ...emote, name }] : [];
+        });
+    }, [emoteImages, emoteMatch, emoteMatchTarget]);
     const visibleEmoteStart = Math.floor(selectedEmote / 5) * 5;
     const visibleEmotes = matchingEmotes.slice(visibleEmoteStart, visibleEmoteStart + 5);
 
@@ -254,9 +264,11 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
       const target = emoteCompletion ?? activeEmote;
       if (!editor || !target || matchingEmotes.length === 0) return;
 
+      // The first Tab takes whatever the list has highlighted (arrow keys move
+      // it); afterwards Tab steps through the matches from there.
       const nextIndex = emoteCompletion
         ? (selectedEmote + 1) % matchingEmotes.length
-        : 0;
+        : Math.min(selectedEmote, matchingEmotes.length - 1);
       const candidate = matchingEmotes[nextIndex];
       const currentValue = readEditorText(editor);
       const nextValue = `${currentValue.slice(0, target.start)}${candidate.name}${currentValue.slice(target.end)}`;
@@ -363,10 +375,24 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
                 return;
               }
             }
-            if (event.key === "Tab" && activeEmote && matchingEmotes.length > 0) {
-              event.preventDefault();
-              cycleEmoteCompletion();
-              return;
+            if (activeEmote && !emoteCompletion && matchingEmotes.length > 0) {
+              // The suggestion list is open: arrows move the highlight, Tab
+              // completes it, after which Tab cycles through the matches.
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                moveEmoteSelection(event.key === "ArrowDown" ? 1 : -1);
+                return;
+              }
+              if (event.key === "Tab") {
+                event.preventDefault();
+                cycleEmoteCompletion();
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setActiveEmote(null);
+                return;
+              }
             }
             if (event.key === "Tab") {
               // Keep keyboard focus inside chat. Without a completion match,
@@ -408,6 +434,26 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
                 </span>
                 <strong>{candidate.displayName}</strong>
                 <small>@{candidate.login}</small>
+              </button>
+            ))}
+          </div>
+        )}
+        {!activeMention && !emoteCompletion && activeEmote && matchingEmotes.length > 0 && (
+          <div className="emote-suggestion-list" role="listbox" aria-label="Matching emotes">
+            {matchingEmotes.map((emote, index) => (
+              <button
+                aria-selected={index === selectedEmote}
+                className={index === selectedEmote ? "selected" : ""}
+                key={`${emote.provider}-${emote.name}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => insertEmote(emote)}
+                ref={index === selectedEmote ? selectedEmoteRef : undefined}
+                role="option"
+                type="button"
+              >
+                <img alt="" src={emote.imageUrl} />
+                <strong>{emote.name}</strong>
+                <small>{emote.provider}</small>
               </button>
             ))}
           </div>

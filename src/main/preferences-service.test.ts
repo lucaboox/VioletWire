@@ -114,6 +114,7 @@ describe("PreferencesService", () => {
       emotePickerWidth: 390,
       emotePickerHeight: 500,
       emoteSearchAllProviders: false,
+      emoteAutocompleteMatch: "prefix",
     });
   });
 

@@ -479,6 +479,8 @@ export function NativeControls({
     const stored = Number(window.localStorage.getItem("glint.chat.emoteSize"));
     return Number.isInteger(stored) && stored >= 18 && stored <= 48 ? stored : 27;
   });
+  const [emoteAutocompleteMatch, setEmoteAutocompleteMatch] =
+    useState<AppPreferences["emoteAutocompleteMatch"]>("prefix");
   const [chatDeletedMessageStyle, setChatDeletedMessageStyle] =
     useState<AppPreferences["chatDeletedMessageStyle"]>("placeholder");
   const [mentionSoundEnabled, setMentionSoundEnabled] = useState(false);
@@ -668,6 +670,7 @@ export function NativeControls({
       setChatFontSize(preferences.chatFontSize);
       setChatEmoteSize(preferences.chatEmoteSize);
       setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
+      setEmoteAutocompleteMatch(preferences.emoteAutocompleteMatch);
       setMentionSoundEnabled(preferences.mentionSoundEnabled);
       setMentionSoundVolume(preferences.mentionSoundVolume);
       setMentionSoundId(preferences.mentionSoundId);
@@ -1551,6 +1554,7 @@ export function NativeControls({
             )}
             <div className="native-chat-composer-box">
               <ChatComposerInput
+                emoteMatch={emoteAutocompleteMatch}
                 aria-label="Send a chat message"
                 maxLength={500}
                 mentionCandidates={chatMentionCandidates}
