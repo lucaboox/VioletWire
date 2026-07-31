@@ -878,10 +878,11 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-user-section h3 { display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 5px 7px; color: #96919f; font-size: 10px; font-weight: 800; letter-spacing: .45px; text-transform: uppercase; }
 /* line-height:1 keeps the uppercase label's box from sitting taller than the
    badge, which otherwise reads as the icon being a pixel high. */
-.chat-user-section-name { display: inline-flex; flex-flow: row nowrap; align-items: center; gap: 6px; line-height: 1; }
+.chat-user-section-name { display: inline-flex; flex-flow: row nowrap; align-items: center; line-height: 1; }
 /* inline-block rather than block: the badge then sits beside the label even if
-   this heading is laid out inline instead of as a flex row. */
-.chat-user-section-name svg, .chat-user-section-name img, .chat-user-section-name .kick-badge-glyph { display: inline-block; flex: 0 0 auto; vertical-align: middle; }
+   this heading is laid out inline instead of as a flex row. The margin (rather
+   than a gap) spaces it from the label in both of those layouts. */
+.chat-user-section-name svg, .chat-user-section-name img, .chat-user-section-name .kick-badge-glyph { display: inline-block; flex: 0 0 auto; margin-inline-end: 9px; vertical-align: middle; }
 .chat-user-section-name svg { opacity: .8; }
 .chat-user-section-name img, .chat-user-section-name .kick-badge-glyph { width: 14px; height: 14px; object-fit: contain; }
 .chat-user-section-count { color: #6f6b76; font-size: 9px; line-height: 1; }
