@@ -89,18 +89,6 @@ export function ChatUserList({
                 }}
                 type="button"
               >
-                <span
-                  aria-hidden="true"
-                  className="chat-user-avatar"
-                  style={{
-                    color: readableUsernameColor(
-                      message.color,
-                      oledMode ? "#000000" : "#18181b",
-                    ),
-                  }}
-                >
-                  {(message.displayName || message.login).slice(0, 1).toUpperCase()}
-                </span>
                 <strong
                   style={{
                     color: readableUsernameColor(
