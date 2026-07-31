@@ -4,11 +4,21 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.6] - 2026-07-31
+
 ### Additions
 
 - Twitch and Kick side chat now include a searchable user list grouped by
-  broadcaster, moderators, VIPs, and recently active chatters. Selecting a
-  user opens their existing VioletWire user card.
+  broadcaster, moderators, VIPs, and recently active chatters, each group
+  marked with that service's own badge. Selecting a user opens their existing
+  VioletWire user card, and the list stays open so several can be checked in a
+  row.
+- Typing an emote name now lists the matching emotes above the chat box. The
+  arrow keys move through them and Tab completes the highlighted one, after
+  which Tab keeps stepping through the matches as before.
+- Chat settings can now choose how emote autocomplete matches what you type:
+  names that start with it, or names that contain it anywhere, so "ek" reaches
+  "kekw". Names that start with the word are still offered first either way.
 
 ### Improvements
 
