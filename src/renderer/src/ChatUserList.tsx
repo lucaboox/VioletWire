@@ -83,9 +83,9 @@ export function ChatUserList({
               <button
                 key={message.login}
                 onClick={(event) => {
-                  const anchor = event.currentTarget.getBoundingClientRect();
-                  onClose();
-                  onOpenUser(message, anchor);
+                  // The list stays open so several users can be opened in a row;
+                  // the header's close button dismisses it.
+                  onOpenUser(message, event.currentTarget.getBoundingClientRect());
                 }}
                 type="button"
               >
