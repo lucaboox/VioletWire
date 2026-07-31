@@ -4725,6 +4725,7 @@ export function App() {
                         </button>
                         {chatUserListOpen && chatPresentation === "overlay" && (
                           <ChatUserList
+                            badges={twitchBadges}
                             entries={chatUserListEntries}
                             key={`overlay-${chatChannel}`}
                             oledMode={oledMode}
@@ -4779,6 +4780,7 @@ export function App() {
                         </button>
                         {chatUserListOpen && chatPresentation === "side" && (
                           <ChatUserList
+                            badges={twitchBadges}
                             entries={chatUserListEntries}
                             key={chatChannel}
                             oledMode={oledMode}

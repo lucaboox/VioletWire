@@ -1,11 +1,13 @@
 import { Gem, MessageSquare, Search, Sword, Users, Video, X } from "lucide-react";
 import type { ComponentType } from "react";
 import { useMemo, useState } from "react";
-import type { ChatMessage } from "../../shared/chat";
+import type { ChatBadgeAsset, ChatMessage } from "../../shared/chat";
 import type { ChatUserListEntry, ChatUserRole } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
+import { ChatBadge } from "./ChatBadge";
 
 interface ChatUserListProps {
+  badges: Map<string, ChatBadgeAsset>;
   entries: ChatUserListEntry[];
   oledMode: boolean;
   onClose: () => void;
@@ -20,8 +22,8 @@ const sectionLabels: Record<ChatUserRole, string> = {
   chatter: "Recently active",
 };
 
-// Echoes each service's own badge shorthand: a sword for moderators, a gem for
-// VIPs, so a section reads at a glance.
+// Drawn only when the service has no badge of its own for the role (Kick has no
+// broadcaster badge, and neither service badges an ordinary chatter).
 const sectionIcons: Record<ChatUserRole, ComponentType<{ size?: number }>> = {
   broadcaster: Video,
   moderator: Sword,
@@ -29,9 +31,23 @@ const sectionIcons: Record<ChatUserRole, ComponentType<{ size?: number }>> = {
   chatter: MessageSquare,
 };
 
+/** Twitch's own badge for a role, from the channel's loaded badge set. */
+const twitchBadgeKeys: Partial<Record<ChatUserRole, string>> = {
+  broadcaster: "broadcaster/1",
+  moderator: "moderator/1",
+  vip: "vip/1",
+};
+
+/** Kick draws these from its own artwork rather than an image URL. */
+const kickGlyphRoles: Partial<Record<ChatUserRole, string>> = {
+  moderator: "moderator",
+  vip: "vip",
+};
+
 const sectionOrder: ChatUserRole[] = ["broadcaster", "moderator", "vip", "chatter"];
 
 export function ChatUserList({
+  badges,
   entries,
   oledMode,
   onClose,
@@ -86,11 +102,27 @@ export function ChatUserList({
       <div className="chat-user-list-scroll">
         {sections.map(({ role, users }) => {
           const SectionIcon = sectionIcons[role];
+          // Prefer the service's real badge art, so a section is marked with the
+          // same badge these users wear in chat.
+          const badgeKey = twitchBadgeKeys[role];
+          const glyph = kickGlyphRoles[role];
+          const badge: ChatBadgeAsset | undefined =
+            platform === "kick"
+              ? glyph
+                ? { key: `kick-${role}`, title: sectionLabels[role], imageUrl: "", glyph }
+                : undefined
+              : badgeKey
+                ? badges.get(badgeKey)
+                : undefined;
           return (
           <section className="chat-user-section" key={role}>
             <h3>
               <span className="chat-user-section-name">
-                <SectionIcon size={12} />
+                {badge ? (
+                  <ChatBadge badge={badge} loading="eager" />
+                ) : (
+                  <SectionIcon size={12} />
+                )}
                 {sectionLabels[role]}
               </span>
               <span className="chat-user-section-count">{users.length}</span>
