@@ -69,18 +69,21 @@ export class HlsNativePlayer {
     });
 
     try {
-      const requestedLatencyMode = this.getLatencyMode();
+      const latencyMode: PlaybackLatencyMode = this.getLatencyMode();
       const target = parseChannelKey(channel);
       const sourceUrl = await this.resolvePlaybackUrl(channel, quality);
       if (generation !== this.generation) {
         return { ok: false, reason: "Native playback was cancelled." };
       }
-      const latencyMode: PlaybackLatencyMode = requestedLatencyMode;
       const relay = new FilteredHlsRelay(
         this.getRendererOrigin,
         target.platform,
         {
-          includePrefetch: latencyMode === "ultra-low",
+          // Twitch's EXT-X-TWITCH-PREFETCH responses are proprietary growing
+          // segments. hls.js can parse converted entries, but cannot play them
+          // reliably at sustained high bitrates. Completed fragments still
+          // download directly from Twitch's CDN and remain low latency.
+          includePrefetch: false,
           directMedia: target.platform === "twitch",
           mediaTransport: this.mediaTransport,
         },
@@ -92,7 +95,7 @@ export class HlsNativePlayer {
       }
       this.relay = relay;
       this.stats = {
-        "Latency mode": latencyMode === "ultra-low" ? "Ultra low" : "Balanced",
+        "Latency mode": latencyMode === "ultra-low" ? "Low latency" : "Balanced",
         "Media transport":
           relay.mediaTransportName === "direct-cdn"
             ? "Direct Twitch CDN"
@@ -106,7 +109,6 @@ export class HlsNativePlayer {
           sessionId: crypto.randomUUID(),
           playlistUrl,
           latencyMode,
-          requestedLatencyMode,
           mediaTransport: relay.mediaTransportName,
         },
       });

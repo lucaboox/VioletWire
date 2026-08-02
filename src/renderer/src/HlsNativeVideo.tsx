@@ -29,7 +29,6 @@ function playbackStats(
   latency: number,
   targetLatency: number,
   latencyMode: PlaybackLatencyMode,
-  requestedLatencyMode: PlaybackLatencyMode,
   mediaTransport: "direct-cdn" | "chromium-protocol" | "localhost-relay",
 ): Record<string, string> {
   const quality = video.getVideoPlaybackQuality?.();
@@ -52,12 +51,7 @@ function playbackStats(
     Buffer: `${buffered.toFixed(2)}s`,
     Latency: `${latency.toFixed(2)}s`,
     "Target latency": `${targetLatency.toFixed(2)}s`,
-    "Latency mode":
-      requestedLatencyMode === "ultra-low" && latencyMode === "balanced"
-        ? "Balanced (1440p safeguard)"
-        : latencyMode === "ultra-low"
-          ? "Ultra low"
-          : "Balanced",
+    "Latency mode": latencyMode === "ultra-low" ? "Low latency" : "Balanced",
     "Playback rate": `${video.playbackRate.toFixed(2)}×`,
     "Video bitrate":
       streamBitrate > 0
@@ -85,8 +79,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
   const hlsSessionId = state.hlsSource?.sessionId;
   const hlsPlaylistUrl = state.hlsSource?.playlistUrl;
   const hlsLatencyMode = state.hlsSource?.latencyMode ?? "balanced";
-  const hlsRequestedLatencyMode =
-    state.hlsSource?.requestedLatencyMode ?? hlsLatencyMode;
   const hlsMediaTransport =
     state.hlsSource?.mediaTransport ?? "localhost-relay";
 
@@ -122,10 +114,9 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       sessionId: hlsSessionId,
       playlistUrl: hlsPlaylistUrl,
       latencyMode: hlsLatencyMode,
-      requestedLatencyMode: hlsRequestedLatencyMode,
       mediaTransport: hlsMediaTransport,
     };
-    const ultraLowLatency = source.latencyMode === "ultra-low";
+    const lowLatency = source.latencyMode === "ultra-low";
 
     let disposed = false;
     let recoveryTimer: number | null = null;
@@ -237,14 +228,13 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
               displayedLatency,
               targetLatency,
               source.latencyMode,
-              source.requestedLatencyMode,
               source.mediaTransport,
               ),
               "Stall recoveries": String(stallRecoveries),
               "Buffer profile": stabilityProfile
                 ? "Adaptive stability"
-                : ultraLowLatency
-                  ? "Ultra low latency"
+                : lowLatency
+                  ? "Low latency"
                   : "Balanced",
             }
           : undefined,
@@ -348,20 +338,20 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       // segment is complete. Stream them into the transmuxer as bytes arrive;
       // the default all-at-once loader can otherwise starve startup for one
       // full segment before the steady-state buffer has formed.
-      progressive: ultraLowLatency,
+      progressive: false,
       // Twitch commonly advertises a six-second target duration even though
       // its regular media fragments are about two seconds long. Count-based
       // sync therefore put Chromium roughly nine seconds behind. Use seconds
       // so the intended one-and-a-half-fragment cushion stays near three.
       backBufferLength: 30,
-      maxBufferLength: ultraLowLatency ? 20 : 28,
-      maxMaxBufferLength: ultraLowLatency ? 30 : 40,
+      maxBufferLength: lowLatency ? 24 : 32,
+      maxMaxBufferLength: lowLatency ? 36 : 48,
       // Filtered ad boundaries and Twitch's in-progress fragments can leave
       // sub-frame timestamp gaps. Treat a short gap as continuous media rather
       // than presenting it as a visible stall.
       maxBufferHole: 0.5,
-      liveSyncDuration: ultraLowLatency ? 3 : 4,
-      liveMaxLatencyDuration: ultraLowLatency ? 7 : 10,
+      liveSyncDuration: lowLatency ? 4 : 6,
+      liveMaxLatencyDuration: lowLatency ? 10 : 14,
       // Start at the same low-latency target, then trade at most roughly two
       // seconds for stability only after hls.js observes a real playback
       // stall. This gives high-bitrate 1440p streams enough jitter headroom
@@ -551,7 +541,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     hlsLatencyMode,
     hlsMediaTransport,
     hlsPlaylistUrl,
-    hlsRequestedLatencyMode,
     hlsSessionId,
     target,
   ]);

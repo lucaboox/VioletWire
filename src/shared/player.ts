@@ -187,7 +187,6 @@ export interface NativePlayerState {
     sessionId: string;
     playlistUrl: string;
     latencyMode: PlaybackLatencyMode;
-    requestedLatencyMode: PlaybackLatencyMode;
     mediaTransport: "direct-cdn" | "chromium-protocol" | "localhost-relay";
   };
   error?: string;

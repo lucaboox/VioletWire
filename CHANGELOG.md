@@ -11,10 +11,10 @@ All notable changes to VioletWire are documented in this file.
   removing the manual upstream-to-Node-to-localhost byte-copy loop that could
   stall high-bitrate streams. Opaque per-session resource IDs prevent the
   protocol from becoming a general-purpose URL proxy.
-- Playback settings now offer an Ultra-low latency default and a reliable
-  Balanced mode. Ultra-low retains Twitch's in-progress prefetch path through
-  1080p, while Balanced waits for completed fragments with more jitter
-  headroom and is selected automatically for higher resolutions.
+- Playback settings now offer Low latency as the default and a larger-buffer
+  Balanced mode. Both use completed Twitch fragments; the proprietary
+  in-progress PREFETCH path has been removed because hls.js could not consume
+  it reliably without repeated stalls, especially at high bitrates.
 - Video Stats now identifies the selected latency profile and whether media is
   using the Chromium protocol transport or the localhost compatibility relay.
 
@@ -41,6 +41,9 @@ All notable changes to VioletWire are documented in this file.
 - Automatic, Source, 1440p, and 1080p playback now use the selected latency
   profile without a mid-playback profile switch or competing Streamlink
   quality-discovery process.
+- Low-latency playback no longer converts Twitch's proprietary growing
+  PREFETCH responses into ordinary HLS segments. Direct completed-fragment
+  playback trades a few seconds of latency for consistent frame delivery.
 
 ## [0.3.4-alpha.7] - 2026-08-02
 

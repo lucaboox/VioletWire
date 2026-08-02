@@ -6419,10 +6419,10 @@ export function App() {
                     <div>
                       <strong>Playback latency</strong>
                       <span>
-                        Balanced waits for complete fragments for steadier high-quality
-                        playback. Ultra-low uses Twitch&apos;s in-progress fragments through
-                        1080p; higher resolutions start in Balanced because Twitch&apos;s
-                        proprietary prefetch stream is unstable there.
+                        Low latency plays completed Twitch fragments close to the live
+                        edge. Balanced keeps a larger cushion for unstable connections.
+                        Twitch&apos;s proprietary in-progress fragments are not used because
+                        hls.js cannot play them reliably at high bitrates.
                       </span>
                     </div>
                     <div className="mode-switch">
@@ -6440,7 +6440,7 @@ export function App() {
                         onClick={() => setPlaybackLatencyMode("ultra-low")}
                         type="button"
                       >
-                        Ultra-low
+                        Low latency
                       </button>
                     </div>
                   </div>
