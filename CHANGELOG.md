@@ -10,6 +10,9 @@ All notable changes to VioletWire are documented in this file.
   of multiplying Twitch's oversized advertised target duration, refreshes the
   filtered playlist at the actual content-segment cadence, and adds less
   permanent latency after a brief stall.
+- Twitch's in-progress low-latency prefetch segments now pass through the
+  filtered HLS relay as playable live segments, then reconcile with their
+  completed metadata without duplication while retaining ad filtering.
 - The followed-channel sidebar now memoizes channel rows, lazily loads profile
   images, and skips layout and painting work for offscreen rows so player,
   uptime, and chat updates no longer make long lists stutter while scrolling.

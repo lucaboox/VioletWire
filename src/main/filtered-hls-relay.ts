@@ -16,6 +16,7 @@ interface ParsedSegment {
   discontinuity: boolean;
   tags: string[];
   ad: boolean;
+  prefetch: boolean;
 }
 
 interface RelaySegment {
@@ -24,6 +25,7 @@ interface RelaySegment {
   lines: string[];
   sourceUri: string;
   uri: string;
+  prefetch: boolean;
 }
 
 interface ResourceEntry {
@@ -133,6 +135,45 @@ export function parseTwitchMediaPlaylist(
   let currentMapTag: string | undefined;
   let currentKeyTag: string | undefined;
 
+  const appendPrefetchSegment = (rawUri: string): void => {
+    if (segments.length === 0) return;
+    const completedSegments = segments.filter((segment) => !segment.prefetch);
+    const durationSource = completedSegments.length > 0 ? completedSegments : segments;
+    const inferredDuration =
+      durationSource.reduce((total, segment) => total + segment.duration, 0) /
+      durationSource.length;
+    if (!Number.isFinite(inferredDuration) || inferredDuration <= 0) return;
+    const previous = segments.at(-1)!;
+    const inferredDate =
+      previous.date === undefined
+        ? undefined
+        : previous.date + previous.duration * 1_000;
+    const ad =
+      discontinuity ||
+      (inferredDate !== undefined &&
+        adRanges.some(
+          (range) => inferredDate >= range.start && inferredDate < range.end,
+        ));
+    const prefetchTags = [
+      ...(currentKeyTag ? [currentKeyTag] : []),
+      ...(currentMapTag ? [currentMapTag] : []),
+      ...(inferredDate === undefined
+        ? []
+        : [`#EXT-X-PROGRAM-DATE-TIME:${new Date(inferredDate).toISOString()}`]),
+      `#EXTINF:${inferredDuration.toFixed(3)},live`,
+    ];
+    segments.push({
+      uri: new URL(rawUri, playlistUrl).toString(),
+      duration: inferredDuration,
+      title: "live",
+      date: inferredDate,
+      discontinuity,
+      tags: prefetchTags,
+      ad,
+      prefetch: true,
+    });
+  };
+
   for (const line of lines) {
     if (line === "#EXT-X-DISCONTINUITY") {
       discontinuity = true;
@@ -163,6 +204,10 @@ export function parseTwitchMediaPlaylist(
       segmentTags.push(line);
       continue;
     }
+    if (line.startsWith("#EXT-X-TWITCH-PREFETCH:")) {
+      appendPrefetchSegment(line.slice("#EXT-X-TWITCH-PREFETCH:".length));
+      continue;
+    }
     if (line.startsWith("#")) continue;
     if (duration === undefined || !Number.isFinite(duration)) continue;
 
@@ -170,7 +215,7 @@ export function parseTwitchMediaPlaylist(
     const ad =
       title.includes("Amazon") ||
       (date !== undefined &&
-        adRanges.some((range) => date! >= range.start && date! <= range.end));
+        adRanges.some((range) => date! >= range.start && date! < range.end));
     segments.push({
       uri: absoluteUri,
       duration,
@@ -183,6 +228,7 @@ export function parseTwitchMediaPlaylist(
         ...segmentTags,
       ],
       ad,
+      prefetch: false,
     });
     segmentTags = [];
     duration = undefined;
@@ -437,11 +483,45 @@ export class FilteredHlsRelay {
       let filteredAd = false;
       for (const segment of parsed.segments) {
         if (segment.ad) {
+          const existingSequence = this.segmentSequences.get(segment.uri);
+          if (existingSequence !== undefined) {
+            const existingIndex = this.relaySegments.findIndex(
+              (candidate) => candidate.sourceUri === segment.uri,
+            );
+            if (existingIndex >= 0) this.relaySegments.splice(existingIndex, 1);
+            this.segmentSequences.delete(segment.uri);
+          }
           filteredAd = true;
           this.pendingDiscontinuity = true;
           continue;
         }
-        if (this.segmentSequences.has(segment.uri)) continue;
+        const existingSequence = this.segmentSequences.get(segment.uri);
+        if (existingSequence !== undefined) {
+          // Twitch exposes an in-progress segment as PREFETCH before the same
+          // URI appears as a completed EXTINF entry. Keep its local sequence
+          // stable, then replace the inferred metadata with the authoritative
+          // completed tags when they arrive.
+          if (!segment.prefetch) {
+            const existing = this.relaySegments.find(
+              (candidate) => candidate.sourceUri === segment.uri,
+            );
+            if (existing?.prefetch) {
+              const completedLines = segment.tags.map((line) =>
+                rewriteTagUri(line, sourceUrl, (url) => this.registerResource(url)),
+              );
+              if (
+                segment.discontinuity ||
+                existing.lines[0] === "#EXT-X-DISCONTINUITY"
+              ) {
+                completedLines.unshift("#EXT-X-DISCONTINUITY");
+              }
+              existing.duration = segment.duration;
+              existing.lines = completedLines;
+              existing.prefetch = false;
+            }
+          }
+          continue;
+        }
         const sequence = this.nextSequence++;
         this.segmentSequences.set(segment.uri, sequence);
         const discontinuity =
@@ -458,6 +538,7 @@ export class FilteredHlsRelay {
           lines,
           sourceUri: segment.uri,
           uri: this.registerResource(segment.uri),
+          prefetch: segment.prefetch,
         });
       }
       while (this.relaySegments.length > MAX_RELAY_SEGMENTS) {

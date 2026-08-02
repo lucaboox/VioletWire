@@ -44,6 +44,38 @@ segment-2.mp4
     expect(playlist.segments[1].discontinuity).toBe(true);
   });
 
+  it("converts Twitch prefetch entries into inferred live segments", () => {
+    const playlist = parseTwitchMediaPlaylist(
+      `#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:6
+#EXT-X-PROGRAM-DATE-TIME:2026-08-02T06:21:40.000Z
+#EXTINF:2.000,live
+segment-1.ts
+#EXT-X-PROGRAM-DATE-TIME:2026-08-02T06:21:42.000Z
+#EXTINF:2.000,live
+segment-2.ts
+#EXT-X-TWITCH-PREFETCH:segment-3.ts
+#EXT-X-TWITCH-PREFETCH:segment-4.ts
+`,
+      "https://video.example/live/index.m3u8",
+    );
+
+    expect(playlist.segments).toHaveLength(4);
+    expect(playlist.segments.slice(-2).map((segment) => segment.prefetch)).toEqual([
+      true,
+      true,
+    ]);
+    expect(playlist.segments[2]).toMatchObject({
+      duration: 2,
+      date: Date.parse("2026-08-02T06:21:44.000Z"),
+      uri: "https://video.example/live/segment-3.ts",
+    });
+    expect(playlist.segments[3].date).toBe(
+      Date.parse("2026-08-02T06:21:46.000Z"),
+    );
+  });
+
   it("serves an opaque local playlist with ad segments removed", async () => {
     const upstream = createServer((request, response) => {
       if (request.url === "/index.m3u8") {
@@ -59,6 +91,7 @@ content.mp4
 #EXT-X-PROGRAM-DATE-TIME:2026-07-25T12:00:02.000Z
 #EXTINF:2.000,live
 advertisement.mp4
+#EXT-X-TWITCH-PREFETCH:prefetch.mp4
 `);
         return;
       }
@@ -80,6 +113,8 @@ advertisement.mp4
       const playlist = await playlistResponse.text();
       expect(playlistResponse.status).toBe(200);
       expect(playlist).toContain("#EXT-X-TARGETDURATION:2");
+      expect(playlist).not.toContain("EXT-X-TWITCH-PREFETCH");
+      expect(playlist.match(/#EXTINF:/g)).toHaveLength(2);
       expect(playlist).not.toContain("advertisement.mp4");
       expect(playlist).not.toContain(`127.0.0.1:${address.port}`);
       expect(playlist.match(/resource\/[a-f0-9]{32}/g)?.length).toBeGreaterThan(0);
