@@ -28,6 +28,9 @@ All notable changes to VioletWire are documented in this file.
 - Media transport automatically falls back to a streaming Node fetch for an
   individual request, or to the tested localhost relay when the Electron
   protocol cannot be registered, instead of leaving Native playback unusable.
+- Video Stats now shows the session's latency profile and media transport
+  immediately, then fills in live measurements as frames arrive, instead of
+  opening with an empty panel.
 
 ## [0.3.4-alpha.7] - 2026-08-02
 

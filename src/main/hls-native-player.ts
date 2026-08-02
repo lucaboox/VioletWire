@@ -88,6 +88,14 @@ export class HlsNativePlayer {
         return { ok: false, reason: "Native playback was cancelled." };
       }
       this.relay = relay;
+      this.stats = {
+        "Latency mode": latencyMode === "ultra-low" ? "Ultra low" : "Balanced",
+        "Media transport":
+          relay.mediaTransportName === "chromium-protocol"
+            ? "Chromium protocol stream"
+            : "Localhost compatibility relay",
+        Protocol: "Filtered HLS",
+      };
       this.updateState({
         hlsSource: {
           sessionId: crypto.randomUUID(),

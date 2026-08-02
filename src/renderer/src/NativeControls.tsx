@@ -1002,7 +1002,7 @@ export function NativeControls({
     };
     return [
       { label: "Latency", value: read("Latency") },
-      { label: "Low latency mode", value: read("Low latency mode") },
+      { label: "Latency mode", value: read("Latency mode") },
       { label: "Resolution", value: read("Resolution") },
       { label: "Framerate", value: read("FPS") },
       { label: "Bitrate", value: read("Video bitrate") },
@@ -1010,6 +1010,7 @@ export function NativeControls({
       { label: "Playback rate", value: read("Playback rate") },
       { label: "Buffer size", value: read("Buffer") },
       { label: "Stall recoveries", value: read("Stall recoveries") },
+      { label: "Media transport", value: read("Media transport") },
     ].filter(
       (row): row is { label: string; value: string } => row.value !== null,
     );
