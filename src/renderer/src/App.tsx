@@ -6420,8 +6420,9 @@ export function App() {
                       <strong>Playback latency</strong>
                       <span>
                         Balanced waits for complete fragments for steadier high-quality
-                        playback. Ultra-low uses Twitch&apos;s in-progress fragments and may
-                        be less stable on some streams.
+                        playback. Ultra-low uses Twitch&apos;s in-progress fragments through
+                        1080p; higher resolutions start in Balanced because Twitch&apos;s
+                        proprietary prefetch stream is unstable there.
                       </span>
                     </div>
                     <div className="mode-switch">

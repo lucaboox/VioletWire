@@ -146,6 +146,7 @@ export class MultiStreamManager {
       this.getMainWindow,
       this.getRendererOrigin,
       (targetChannel, quality) => resolver.resolve(targetChannel, quality),
+      (targetChannel) => resolver.getQualities(targetChannel),
       this.getStoredVolume,
       this.getLatencyMode,
       (state) => this.handleTileState(id, state),

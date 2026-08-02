@@ -29,6 +29,7 @@ function playbackStats(
   latency: number,
   targetLatency: number,
   latencyMode: PlaybackLatencyMode,
+  requestedLatencyMode: PlaybackLatencyMode,
   mediaTransport: "chromium-protocol" | "localhost-relay",
 ): Record<string, string> {
   const quality = video.getVideoPlaybackQuality?.();
@@ -51,7 +52,12 @@ function playbackStats(
     Buffer: `${buffered.toFixed(2)}s`,
     Latency: `${latency.toFixed(2)}s`,
     "Target latency": `${targetLatency.toFixed(2)}s`,
-    "Latency mode": latencyMode === "ultra-low" ? "Ultra low" : "Balanced",
+    "Latency mode":
+      requestedLatencyMode === "ultra-low" && latencyMode === "balanced"
+        ? "Balanced (1440p safeguard)"
+        : latencyMode === "ultra-low"
+          ? "Ultra low"
+          : "Balanced",
     "Playback rate": `${video.playbackRate.toFixed(2)}×`,
     "Video bitrate":
       streamBitrate > 0
@@ -77,6 +83,8 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
   const hlsSessionId = state.hlsSource?.sessionId;
   const hlsPlaylistUrl = state.hlsSource?.playlistUrl;
   const hlsLatencyMode = state.hlsSource?.latencyMode ?? "balanced";
+  const hlsRequestedLatencyMode =
+    state.hlsSource?.requestedLatencyMode ?? hlsLatencyMode;
   const hlsMediaTransport =
     state.hlsSource?.mediaTransport ?? "localhost-relay";
 
@@ -112,6 +120,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       sessionId: hlsSessionId,
       playlistUrl: hlsPlaylistUrl,
       latencyMode: hlsLatencyMode,
+      requestedLatencyMode: hlsRequestedLatencyMode,
       mediaTransport: hlsMediaTransport,
     };
     const ultraLowLatency = source.latencyMode === "ultra-low";
@@ -129,7 +138,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     let displayedLatency = 0;
     let stallRecoveries = 0;
     let stabilityProfile = false;
-    let balancedFallbackRequested = false;
     const appendedFragmentBytes = new Map<
       string,
       { bytes: number; duration: number }
@@ -193,7 +201,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       status: "playing" | "stopped" | "error",
       error?: string,
       includeStats = false,
-      recommendedLatencyMode?: "balanced",
     ) => {
       if (disposed) return;
       const edge = liveEdge(video);
@@ -218,7 +225,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         behindLive:
           edge !== null &&
           latency > targetLatency + Math.max(2.5, targetLatency * 0.75),
-        recommendedLatencyMode,
         error,
         stats: includeStats
           ? {
@@ -229,6 +235,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
               displayedLatency,
               targetLatency,
               source.latencyMode,
+              source.requestedLatencyMode,
               source.mediaTransport,
               ),
               "Stall recoveries": String(stallRecoveries),
@@ -240,19 +247,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
             }
           : undefined,
       });
-    };
-
-    const requestBalancedFallbackForHighResolution = (): boolean => {
-      if (
-        !ultraLowLatency ||
-        balancedFallbackRequested ||
-        video.videoHeight <= 1_080
-      ) {
-        return false;
-      }
-      balancedFallbackRequested = true;
-      report("playing", undefined, true, "balanced");
-      return true;
     };
 
     const seekToLive = () => {
@@ -492,7 +486,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         showPausedFrame();
         return;
       }
-      if (requestBalancedFallbackForHighResolution()) return;
       report("playing");
     };
     const onPause = () => {
@@ -524,7 +517,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       if (elapsed > 0) measuredFps = ((currentFrames - lastFrameCount) * 1_000) / elapsed;
       lastFrameCount = currentFrames;
       lastFrameAt = now;
-      if (requestBalancedFallbackForHighResolution()) return;
       report("playing", undefined, true);
     }, 750);
 
@@ -557,6 +549,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     hlsLatencyMode,
     hlsMediaTransport,
     hlsPlaylistUrl,
+    hlsRequestedLatencyMode,
     hlsSessionId,
     target,
   ]);

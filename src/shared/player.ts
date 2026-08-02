@@ -93,6 +93,28 @@ export interface NativeQuality {
   label: string;
 }
 
+export function isHighResolutionQuality(
+  quality: NativeQualityValue,
+  availableQualities: NativeQuality[],
+): boolean {
+  const heightFrom = (value: NativeQualityValue): number | null => {
+    const match = /^(\d{2,4})p/.exec(value);
+    return match ? Number.parseInt(match[1], 10) : null;
+  };
+  const explicitHeight = heightFrom(quality);
+  if (explicitHeight !== null) return explicitHeight > 1_080;
+  if (quality !== "best" && quality !== "source") return false;
+  return availableQualities.some((candidate) => {
+    const height =
+      heightFrom(candidate.value) ??
+      (() => {
+        const labelMatch = /(\d{3,4})p/i.exec(candidate.label);
+        return labelMatch ? Number.parseInt(labelMatch[1], 10) : null;
+      })();
+    return height !== null && height > 1_080;
+  });
+}
+
 export interface NativeControlsContext {
   channel: string;
   fullscreen: boolean;
@@ -187,6 +209,7 @@ export interface NativePlayerState {
     sessionId: string;
     playlistUrl: string;
     latencyMode: PlaybackLatencyMode;
+    requestedLatencyMode: PlaybackLatencyMode;
     mediaTransport: "chromium-protocol" | "localhost-relay";
   };
   error?: string;
@@ -204,9 +227,6 @@ export const nativeHlsStateReportSchema = z.object({
   muted: z.boolean(),
   volume: z.number().min(0).max(100),
   behindLive: z.boolean(),
-  // Chromium has decoded a stream above 1080p, where Twitch's proprietary
-  // in-progress PREFETCH path is not reliable enough to keep enabled.
-  recommendedLatencyMode: z.literal("balanced").optional(),
   error: z.string().max(500).optional(),
   stats: z.record(z.string(), z.string()).optional(),
 });

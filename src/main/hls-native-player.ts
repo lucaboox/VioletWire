@@ -4,8 +4,10 @@ import type {
   NativePlayerCommand,
   NativePlayerState,
   NativePlayerTransition,
+  NativeQuality,
   NativeQualityValue,
 } from "../shared/player";
+import { isHighResolutionQuality } from "../shared/player";
 import type { PlaybackLatencyMode } from "../shared/preferences";
 import { parseChannelKey } from "../shared/platform";
 import { FilteredHlsRelay } from "./filtered-hls-relay";
@@ -35,6 +37,9 @@ export class HlsNativePlayer {
       channel: string,
       quality: NativeQualityValue,
     ) => Promise<string>,
+    private readonly getAvailableQualities: (
+      channel: string,
+    ) => Promise<NativeQuality[]>,
     private readonly getStoredVolume: () => number,
     private readonly getLatencyMode: () => PlaybackLatencyMode,
     private readonly onState: (state: NativePlayerState) => void,
@@ -69,14 +74,29 @@ export class HlsNativePlayer {
     });
 
     try {
-      const sourceUrl = await this.resolvePlaybackUrl(channel, quality);
+      const requestedLatencyMode = this.getLatencyMode();
+      const target = parseChannelKey(channel);
+      const qualitiesPromise =
+        requestedLatencyMode === "ultra-low" && target.platform === "twitch"
+          ? this.getAvailableQualities(channel).catch(() => [])
+          : Promise.resolve([]);
+      const [sourceUrl, availableQualities] = await Promise.all([
+        this.resolvePlaybackUrl(channel, quality),
+        qualitiesPromise,
+      ]);
       if (generation !== this.generation) {
         return { ok: false, reason: "Native playback was cancelled." };
       }
-      const latencyMode = this.getLatencyMode();
+      const highResolutionSafeguard =
+        requestedLatencyMode === "ultra-low" &&
+        target.platform === "twitch" &&
+        isHighResolutionQuality(quality, availableQualities);
+      const latencyMode: PlaybackLatencyMode = highResolutionSafeguard
+        ? "balanced"
+        : requestedLatencyMode;
       const relay = new FilteredHlsRelay(
         this.getRendererOrigin,
-        parseChannelKey(channel).platform,
+        target.platform,
         {
           includePrefetch: latencyMode === "ultra-low",
           mediaTransport: this.mediaTransport,
@@ -89,7 +109,11 @@ export class HlsNativePlayer {
       }
       this.relay = relay;
       this.stats = {
-        "Latency mode": latencyMode === "ultra-low" ? "Ultra low" : "Balanced",
+        "Latency mode": highResolutionSafeguard
+          ? "Balanced (1440p safeguard)"
+          : latencyMode === "ultra-low"
+            ? "Ultra low"
+            : "Balanced",
         "Media transport":
           relay.mediaTransportName === "chromium-protocol"
             ? "Chromium protocol stream"
@@ -101,6 +125,7 @@ export class HlsNativePlayer {
           sessionId: crypto.randomUUID(),
           playlistUrl,
           latencyMode,
+          requestedLatencyMode,
           mediaTransport: relay.mediaTransportName,
         },
       });
@@ -161,22 +186,6 @@ export class HlsNativePlayer {
       return;
     }
     if (report.stats) this.stats = { ...report.stats };
-    if (
-      report.recommendedLatencyMode === "balanced" &&
-      this.state.hlsSource?.latencyMode === "ultra-low"
-    ) {
-      this.relay?.setIncludePrefetch(false);
-      this.stats = {
-        ...(this.stats ?? {}),
-        "Latency mode": "Balanced (1440p safeguard)",
-      };
-      this.updateState({
-        hlsSource: {
-          ...this.state.hlsSource,
-          latencyMode: "balanced",
-        },
-      });
-    }
     const nextVolume = Math.round(report.volume);
     if (!report.muted && nextVolume > 0) {
       this.lastAudibleVolume = nextVolume;

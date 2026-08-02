@@ -287,7 +287,6 @@ export class FilteredHlsRelay {
   private readonly abortControllers = new Set<AbortController>();
   private unregisterMediaSession: (() => void) | null = null;
   private useMediaTransport = false;
-  private includePrefetch: boolean;
 
   constructor(
     private readonly getAllowedOrigin: () => string | null,
@@ -296,25 +295,10 @@ export class FilteredHlsRelay {
       includePrefetch?: boolean;
       mediaTransport?: HlsMediaTransport;
     } = {},
-  ) {
-    this.includePrefetch = options.includePrefetch ?? true;
-  }
+  ) {}
 
   get mediaTransportName(): "chromium-protocol" | "localhost-relay" {
     return this.useMediaTransport ? "chromium-protocol" : "localhost-relay";
-  }
-
-  setIncludePrefetch(includePrefetch: boolean): void {
-    if (this.includePrefetch === includePrefetch) return;
-    this.includePrefetch = includePrefetch;
-    this.playlistCache = null;
-    if (includePrefetch) return;
-    for (let index = this.relaySegments.length - 1; index >= 0; index -= 1) {
-      const segment = this.relaySegments[index];
-      if (!segment.prefetch) continue;
-      this.relaySegments.splice(index, 1);
-      this.segmentSequences.delete(segment.sourceUri);
-    }
   }
 
   async start(sourceUrl: string): Promise<string> {
@@ -566,7 +550,7 @@ export class FilteredHlsRelay {
       const parsed = parseTwitchMediaPlaylist(
         await upstream.text(),
         sourceUrl,
-        this.includePrefetch,
+        this.options.includePrefetch ?? true,
       );
       let filteredAd = false;
       for (const segment of parsed.segments) {

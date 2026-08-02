@@ -31,9 +31,10 @@ All notable changes to VioletWire are documented in this file.
 - Video Stats now shows the session's latency profile and media transport
   immediately, then fills in live measurements as frames arrive, instead of
   opening with an empty panel.
-- Ultra-low latency now automatically switches the current stream to Balanced
-  once Chromium detects a resolution above 1080p, avoiding Twitch PREFETCH's
-  repeatable 1440p stutter while retaining Ultra-low for lower resolutions.
+- When Ultra-low is selected, VioletWire now checks the available qualities
+  before creating the player and starts streams above 1080p directly in
+  Balanced mode. This avoids both Twitch PREFETCH's repeatable 1440p stutter
+  and the frozen frame caused by changing HLS profiles after playback began.
 
 ## [0.3.4-alpha.7] - 2026-08-02
 
