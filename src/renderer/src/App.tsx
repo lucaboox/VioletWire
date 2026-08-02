@@ -4374,8 +4374,8 @@ export function App() {
             className={[
               "player-page",
               chatResizing ? "chat-resizing" : "",
-              // In theater the toolbar floats over the video, so it fades with
-              // the player controls rather than sitting on top permanently.
+              // In theater/fullscreen the toolbar floats over the video, so it
+              // fades with the player controls rather than staying permanent.
               activeMode === "native" && !nativeControlsVisible ? "controls-hidden" : "",
             ]
               .filter(Boolean)
@@ -4389,7 +4389,8 @@ export function App() {
               const overVideo =
                 event.target instanceof Element &&
                 (event.target.closest(".video-column") ||
-                  (theaterMode && event.target.closest(".player-toolbar")));
+                  ((theaterMode || fullscreen) &&
+                    event.target.closest(".player-toolbar")));
               if (overVideo) {
                 revealNativeControls();
               } else {

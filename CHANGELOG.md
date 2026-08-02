@@ -13,6 +13,8 @@ All notable changes to VioletWire are documented in this file.
 - Twitch's in-progress low-latency prefetch segments now pass through the
   filtered HLS relay as playable live segments, then reconcile with their
   completed metadata without duplication while retaining ad filtering.
+- Moving the pointer in fullscreen now reveals the same floating stream-info
+  toolbar used by theater mode, and it fades away with the player controls.
 - The followed-channel sidebar now memoizes channel rows, lazily loads profile
   images, and skips layout and painting work for offscreen rows so player,
   uptime, and chat updates no longer make long lists stutter while scrolling.

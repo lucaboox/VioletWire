@@ -1085,30 +1085,31 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 @keyframes auth-pulse { 50% { opacity: .35; } }
 .app-shell.theater-mode, .app-shell.fullscreen-mode { grid-template-columns: 1fr; }
 .theater-mode .sidebar, .fullscreen-mode .sidebar, .theater-mode .topbar, .fullscreen-mode .topbar, .theater-mode .brand, .fullscreen-mode .brand { display: none; }
-/* Theater drops the bar's own background so the stream info fades into the
-   picture, and lets the video run under it for the full height. */
-.theater-mode .player-toolbar { height: auto; border-bottom: 0; background: transparent; pointer-events: none; transition: opacity 160ms ease; }
-.theater-mode .player-toolbar-main { pointer-events: auto; }
-.theater-mode .video-column { padding-top: 0; }
+/* Theater and fullscreen drop the bar's own background so stream information
+   fades into the picture and the video can use the full height beneath it. */
+.theater-mode .player-toolbar, .fullscreen-mode .player-toolbar { height: auto; border-bottom: 0; background: transparent; pointer-events: none; transition: opacity 160ms ease; }
+.theater-mode .player-toolbar-main, .fullscreen-mode .player-toolbar-main { pointer-events: auto; }
+.theater-mode .video-column, .fullscreen-mode .video-column { padding-top: 0; }
 /* .player-host isolates, so everything inside it paints as one layer below the
    floating bar however high its own z-index is, leaving the restore-chat button
    and the controls unclickable underneath. Dropping the isolation in theater
    lets them order against the bar directly: video, then bar, then controls. */
-.theater-mode .player-host { isolation: auto; }
+.theater-mode .player-host, .fullscreen-mode .player-host { isolation: auto; }
 /* Only the stream-info half sits over the picture, so only it needs to fade
    out into the video. */
-.theater-mode .player-toolbar-main { padding-top: 12px; padding-bottom: 6px; background: linear-gradient(180deg, rgb(5 5 6 / 82%) 0%, rgb(5 5 6 / 62%) 55%, rgb(5 5 6 / 0%) 100%); }
+.theater-mode .player-toolbar-main, .fullscreen-mode .player-toolbar-main { padding-top: 12px; padding-bottom: 6px; background: linear-gradient(180deg, rgb(5 5 6 / 82%) 0%, rgb(5 5 6 / 62%) 55%, rgb(5 5 6 / 0%) 100%); }
 /* Fades with the player controls rather than covering the video permanently. */
-.theater-mode .player-page.controls-hidden .player-toolbar { opacity: 0; pointer-events: none; }
+.theater-mode .player-page.controls-hidden .player-toolbar,
+.fullscreen-mode .player-page.controls-hidden .player-toolbar { opacity: 0; pointer-events: none; }
 /* With chat hidden the toolbar spans the full width, putting its actions in the
    same corner as the button that brings chat back. Reserve room for it, and
    only while it is actually on screen. */
 .theater-mode .player-page:has(.native-chat-edge-restore) .player-toolbar-main,
-.theater-mode .player-page:has(.chat-edge-restore) .player-toolbar-main { padding-right: 54px; }
+.theater-mode .player-page:has(.chat-edge-restore) .player-toolbar-main,
+.fullscreen-mode .player-page:has(.native-chat-edge-restore) .player-toolbar-main,
+.fullscreen-mode .player-page:has(.chat-edge-restore) .player-toolbar-main { padding-right: 54px; }
 .theater-mode .player-page, .fullscreen-mode .player-page { height: 100%; }
 .fullscreen-mode .player-page { grid-template-rows: 1fr; }
-.fullscreen-mode .player-toolbar { display: none; }
-.fullscreen-mode .video-column { padding-top: 0; }
 /* Chat-on-left pins main to grid-row 2 to sit below the title bar. Fullscreen
    drops the title bar and collapses the shell to a single row, so that pin
    would push main into a phantom second row and the video would vanish. */
