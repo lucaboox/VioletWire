@@ -3,7 +3,6 @@ import {
   channelActionSchema,
   chatPresentationSchema,
   channelNameSchema,
-  isHighResolutionQuality,
   nativeQualitySchema,
   nativePlayerCommandSchema,
   parseStreamlinkQualityOutput,
@@ -117,42 +116,6 @@ describe("parseStreamlinkQualityOutput", () => {
     expect(parseStreamlinkQualityOutput("No playable streams found")).toEqual([
       { value: "best", label: "Auto" },
     ]);
-  });
-});
-
-describe("isHighResolutionQuality", () => {
-  const available = [
-    { value: "best" as const, label: "Auto (1440p)" },
-    { value: "1440p60" as const, label: "1440p · 60 FPS" },
-    { value: "1080p60" as const, label: "1080p · 60 FPS" },
-  ];
-
-  it("recognizes an explicitly selected quality above 1080p", () => {
-    expect(isHighResolutionQuality("1440p60", [])).toBe(true);
-  });
-
-  it("recognizes when automatic or source playback resolves above 1080p", () => {
-    expect(isHighResolutionQuality("best", available)).toBe(true);
-    expect(isHighResolutionQuality("source", available)).toBe(true);
-    expect(
-      isHighResolutionQuality("best", [
-        { value: "best", label: "Auto (1440p)" },
-      ]),
-    ).toBe(true);
-  });
-
-  it("treats an explicit Source selection as high resolution without discovery", () => {
-    expect(isHighResolutionQuality("source", [])).toBe(true);
-  });
-
-  it("keeps 1080p and lower qualities eligible for ultra-low latency", () => {
-    expect(isHighResolutionQuality("1080p60", available)).toBe(false);
-    expect(
-      isHighResolutionQuality("best", [
-        { value: "best", label: "Auto (1080p)" },
-        { value: "1080p60", label: "1080p · 60 FPS" },
-      ]),
-    ).toBe(false);
   });
 });
 

@@ -2,8 +2,27 @@ import { describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import {
   FilteredHlsRelay,
+  isDirectTwitchMediaUrl,
   parseTwitchMediaPlaylist,
 } from "./filtered-hls-relay";
+
+describe("isDirectTwitchMediaUrl", () => {
+  it.each([
+    "https://video-weaver.example.hls.ttvnw.net/segment.ts",
+    "https://assets.twitchcdn.net/init.mp4",
+  ])("accepts an HTTPS Twitch CDN resource: %s", (url) => {
+    expect(isDirectTwitchMediaUrl(url)).toBe(true);
+  });
+
+  it.each([
+    "http://video-weaver.example.hls.ttvnw.net/segment.ts",
+    "https://ttvnw.net.attacker.example/segment.ts",
+    "https://example.com/segment.ts",
+    "not a url",
+  ])("rejects a non-Twitch media resource: %s", (url) => {
+    expect(isDirectTwitchMediaUrl(url)).toBe(false);
+  });
+});
 
 describe("parseTwitchMediaPlaylist", () => {
   it("marks Twitch stitched-ad date ranges and Amazon-titled segments as ads", () => {

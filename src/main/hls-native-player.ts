@@ -6,7 +6,6 @@ import type {
   NativePlayerTransition,
   NativeQualityValue,
 } from "../shared/player";
-import { isHighResolutionQuality } from "../shared/player";
 import type { PlaybackLatencyMode } from "../shared/preferences";
 import { parseChannelKey } from "../shared/platform";
 import { FilteredHlsRelay } from "./filtered-hls-relay";
@@ -76,24 +75,14 @@ export class HlsNativePlayer {
       if (generation !== this.generation) {
         return { ok: false, reason: "Native playback was cancelled." };
       }
-      const highResolutionSafeguard =
-        requestedLatencyMode === "ultra-low" &&
-        target.platform === "twitch" &&
-        isHighResolutionQuality(quality, []);
-      const latencyMode: PlaybackLatencyMode = highResolutionSafeguard
-        ? "balanced"
-        : requestedLatencyMode;
+      const latencyMode: PlaybackLatencyMode = requestedLatencyMode;
       const relay = new FilteredHlsRelay(
         this.getRendererOrigin,
         target.platform,
         {
           includePrefetch: latencyMode === "ultra-low",
-          // Electron custom-protocol responses are excellent for completed
-          // fragments, but do not preserve Twitch's still-growing PREFETCH
-          // timing reliably. The localhost relay streams those responses in
-          // the same form used by VioletWire's previously stable 1080p path.
-          mediaTransport:
-            latencyMode === "ultra-low" ? undefined : this.mediaTransport,
+          directMedia: target.platform === "twitch",
+          mediaTransport: this.mediaTransport,
         },
       );
       const playlistUrl = await relay.start(sourceUrl);
@@ -103,15 +92,13 @@ export class HlsNativePlayer {
       }
       this.relay = relay;
       this.stats = {
-        "Latency mode": highResolutionSafeguard
-          ? "Balanced (1440p safeguard)"
-          : latencyMode === "ultra-low"
-            ? "Ultra low"
-            : "Balanced",
+        "Latency mode": latencyMode === "ultra-low" ? "Ultra low" : "Balanced",
         "Media transport":
-          relay.mediaTransportName === "chromium-protocol"
-            ? "Chromium protocol stream"
-            : "Localhost compatibility relay",
+          relay.mediaTransportName === "direct-cdn"
+            ? "Direct Twitch CDN"
+            : relay.mediaTransportName === "chromium-protocol"
+              ? "Chromium protocol stream"
+              : "Localhost compatibility relay",
         Protocol: "Filtered HLS",
       };
       this.updateState({

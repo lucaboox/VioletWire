@@ -31,14 +31,13 @@ All notable changes to VioletWire are documented in this file.
 - Video Stats now shows the session's latency profile and media transport
   immediately, then fills in live measurements as frames arrive, instead of
   opening with an empty panel.
-- Explicit 1440p and Source selections now start directly in Balanced mode
-  instead of changing HLS profiles after playback begins. Automatic and 1080p
-  Ultra-low startup no longer launches a competing quality-discovery process,
-  restoring the original fast playback path without frozen first frames.
-- Ultra-low playback now uses VioletWire's proven streaming relay for Twitch's
-  still-growing PREFETCH fragments, while Balanced playback keeps the
-  lower-copy Chromium protocol for completed fragments. This prevents custom
-  protocol buffering from stuttering otherwise healthy 1080p streams.
+- Twitch video fragments now download directly from allowlisted Twitch CDN
+  hosts using Chromium's native network stack. VioletWire still filters the
+  playlist locally, but no longer copies high-bitrate media through Node or an
+  Electron custom protocol, removing the main 1440p buffering bottleneck.
+- Automatic, Source, 1440p, and 1080p playback now use the selected latency
+  profile without a mid-playback profile switch or competing Streamlink
+  quality-discovery process.
 
 ## [0.3.4-alpha.7] - 2026-08-02
 

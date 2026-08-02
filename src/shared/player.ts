@@ -93,31 +93,6 @@ export interface NativeQuality {
   label: string;
 }
 
-export function isHighResolutionQuality(
-  quality: NativeQualityValue,
-  availableQualities: NativeQuality[],
-): boolean {
-  const heightFrom = (value: NativeQualityValue): number | null => {
-    const match = /^(\d{2,4})p/.exec(value);
-    return match ? Number.parseInt(match[1], 10) : null;
-  };
-  const explicitHeight = heightFrom(quality);
-  if (explicitHeight !== null) return explicitHeight > 1_080;
-  // Source can be above 1080p without advertising a numeric selector. Prefer
-  // the completed-fragment path for an explicit Source selection.
-  if (quality === "source") return true;
-  if (quality !== "best" && quality !== "source") return false;
-  return availableQualities.some((candidate) => {
-    const height =
-      heightFrom(candidate.value) ??
-      (() => {
-        const labelMatch = /(\d{3,4})p/i.exec(candidate.label);
-        return labelMatch ? Number.parseInt(labelMatch[1], 10) : null;
-      })();
-    return height !== null && height > 1_080;
-  });
-}
-
 export interface NativeControlsContext {
   channel: string;
   fullscreen: boolean;
@@ -213,7 +188,7 @@ export interface NativePlayerState {
     playlistUrl: string;
     latencyMode: PlaybackLatencyMode;
     requestedLatencyMode: PlaybackLatencyMode;
-    mediaTransport: "chromium-protocol" | "localhost-relay";
+    mediaTransport: "direct-cdn" | "chromium-protocol" | "localhost-relay";
   };
   error?: string;
   transition?: NativePlayerTransition;

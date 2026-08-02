@@ -46,6 +46,18 @@ interface ParsedPlaylist {
 const PLAYLIST_CACHE_MS = 300;
 const RESOURCE_TTL_MS = 2 * 60_000;
 const MAX_RELAY_SEGMENTS = 18;
+
+export function isDirectTwitchMediaUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "https:") return false;
+    return ["ttvnw.net", "twitchcdn.net"].some(
+      (domain) => url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+    );
+  } catch {
+    return false;
+  }
+}
 function getPlaybackHeaders(platform: Platform): Record<string, string> {
   if (platform === "kick") {
     return {
@@ -287,24 +299,32 @@ export class FilteredHlsRelay {
   private readonly abortControllers = new Set<AbortController>();
   private unregisterMediaSession: (() => void) | null = null;
   private useMediaTransport = false;
+  private useDirectMedia = false;
 
   constructor(
     private readonly getAllowedOrigin: () => string | null,
     private readonly platform: Platform = "twitch",
     private readonly options: {
       includePrefetch?: boolean;
+      directMedia?: boolean;
       mediaTransport?: HlsMediaTransport;
     } = {},
   ) {}
 
-  get mediaTransportName(): "chromium-protocol" | "localhost-relay" {
+  get mediaTransportName():
+    | "direct-cdn"
+    | "chromium-protocol"
+    | "localhost-relay" {
+    if (this.useDirectMedia) return "direct-cdn";
     return this.useMediaTransport ? "chromium-protocol" : "localhost-relay";
   }
 
   async start(sourceUrl: string): Promise<string> {
     this.sourceUrl = sourceUrl;
+    this.useDirectMedia =
+      this.platform === "twitch" && this.options.directMedia === true;
     const transport = this.options.mediaTransport;
-    if (transport?.ready) {
+    if (!this.useDirectMedia && transport?.ready) {
       try {
         this.unregisterMediaSession = transport.registerSession(
           this.sessionToken,
@@ -659,6 +679,10 @@ export class FilteredHlsRelay {
   }
 
   private registerResource(url: string): string {
+    // Twitch's media CDN already grants cross-origin access to browser media
+    // requests. Keep the playlist filtering local, but let Chromium download
+    // allowlisted media directly instead of copying every byte through Node.
+    if (this.useDirectMedia && isDirectTwitchMediaUrl(url)) return url;
     const existingId = this.resourceIds.get(url);
     if (existingId) {
       const existing = this.resources.get(existingId);

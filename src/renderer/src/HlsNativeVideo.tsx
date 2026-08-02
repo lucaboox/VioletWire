@@ -30,7 +30,7 @@ function playbackStats(
   targetLatency: number,
   latencyMode: PlaybackLatencyMode,
   requestedLatencyMode: PlaybackLatencyMode,
-  mediaTransport: "chromium-protocol" | "localhost-relay",
+  mediaTransport: "direct-cdn" | "chromium-protocol" | "localhost-relay",
 ): Record<string, string> {
   const quality = video.getVideoPlaybackQuality?.();
   const dropped = quality?.droppedVideoFrames ?? 0;
@@ -64,9 +64,11 @@ function playbackStats(
         ? `${Math.round(streamBitrate / 1_000)} kbps`
         : "Measuring",
     "Media transport":
-      mediaTransport === "chromium-protocol"
-        ? "Chromium protocol stream"
-        : "Localhost compatibility relay",
+      mediaTransport === "direct-cdn"
+        ? "Direct Twitch CDN"
+        : mediaTransport === "chromium-protocol"
+          ? "Chromium protocol stream"
+          : "Localhost compatibility relay",
     Protocol: "Filtered HLS",
     "vw-presentation": "Chromium video",
     "vw-fps": fps.toFixed(0),
