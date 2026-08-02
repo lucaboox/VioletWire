@@ -1,7 +1,7 @@
 # Third-party notices
 
 VioletWire is an independent application and is not affiliated with Twitch,
-7TV, FrankerFaceZ, BetterTTV, or Streamlink.
+Kick, 7TV, FrankerFaceZ, BetterTTV, or Streamlink.
 
 The GNU General Public License v3.0 or later in the repository root applies
 only to VioletWire-authored source code. The software and assets listed below

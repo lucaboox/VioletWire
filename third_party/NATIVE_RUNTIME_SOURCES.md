@@ -1,4 +1,4 @@
-# Native runtime source and license information
+# Bundled Streamlink source and license information
 
 VioletWire redistributes an unmodified Streamlink portable Windows runtime for
 authenticated Twitch and Kick stream discovery. Chromium and hls.js handle the

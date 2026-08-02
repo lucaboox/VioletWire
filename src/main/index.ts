@@ -1001,8 +1001,7 @@ handleTrusted("system:open-external", async (_event, input: unknown) => {
   }
   // Opening a browser is a one-way action. Do not keep the renderer's IPC
   // request pending while Windows waits for the default-browser shell command
-  // to finish, particularly while texture playback is keeping the main process
-  // busy with frame transfers.
+  // to finish.
   void shell.openExternal(url.toString()).catch((reason: unknown) => {
     console.error(
       "[external-link] Unable to open URL:",

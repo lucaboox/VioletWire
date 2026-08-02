@@ -2584,7 +2584,7 @@ export function App() {
     if (!(await savePreferredMode(mode))) return;
     if (mode === "native" && nativeAvailability && !nativeAvailability.available) {
       setNotice(
-        `Native is now the default, but it will fall back to Standard until ${nativeAvailability.reason ?? "its dependencies are available"}`,
+        `Native is now the default, but it will fall back to Standard until ${nativeAvailability.reason ?? "Streamlink is available"}`,
       );
     } else {
       setNotice(
@@ -6688,8 +6688,12 @@ export function App() {
                           <dd>Electron · React · TypeScript</dd>
                         </div>
                         <div>
-                          <dt>Playback</dt>
-                          <dd>Streamlink · hls.js · Chromium Media Source Extensions</dd>
+                          <dt>Bundled resolver</dt>
+                          <dd>Streamlink portable runtime</dd>
+                        </div>
+                        <div>
+                          <dt>Video playback</dt>
+                          <dd>hls.js · Chromium Media Source Extensions</dd>
                         </div>
                         <div>
                           <dt>Chat and emotes</dt>

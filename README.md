@@ -37,7 +37,7 @@ subscription status, and other authenticated data — through Twitch's OAuth and
 separately, a Kick sign-in.
 
 VioletWire is an independent project and is not affiliated with, endorsed by, or
-sponsored by Twitch, Kick, 7TV, or Streamlink.
+sponsored by Twitch, Kick, 7TV, FrankerFaceZ, BetterTTV, or Streamlink.
 
 ## Screenshots
 
@@ -262,7 +262,7 @@ the Native player is selected. Chromium and hls.js render the resolved stream.
 - Streamlink is licensed under the
   [BSD 2-Clause License](https://github.com/streamlink/streamlink/blob/master/LICENSE).
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
-[native runtime source information](third_party/NATIVE_RUNTIME_SOURCES.md) for
+[bundled Streamlink source information](third_party/NATIVE_RUNTIME_SOURCES.md) for
 the licenses, exact versions, checksums, build definitions, and corresponding
 source locations.
 
@@ -278,4 +278,4 @@ corresponding source code under the same license.
 Bundled third-party software, provider marks, and adapted assets are not
 relicensed under the GPL. They remain subject to their respective licenses and
 notices described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
-[native runtime source information](third_party/NATIVE_RUNTIME_SOURCES.md).
+[bundled Streamlink source information](third_party/NATIVE_RUNTIME_SOURCES.md).

@@ -564,10 +564,8 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .video-column { display: grid; grid-template-rows: minmax(300px, 1fr); min-width: 400px; min-height: 0; overflow: hidden; }
 .video-column.native { grid-template-rows: minmax(300px, 1fr); }
 /* Once the native controls auto-hide, hide the cursor over the whole video
-   area (canvas included) in windowed mode too — not just fullscreen. This sits
-   on the video column so it cascades over the sibling <canvas>, which is the
-   element actually under the pointer. Any pointer move re-reveals the controls,
-   dropping this class and restoring the cursor. */
+   area in windowed mode too — not just fullscreen. Any pointer move
+   re-reveals the controls, dropping this class and restoring the cursor. */
 .video-column.native.controls-hidden { cursor: none; }
 .player-host { position: relative; min-width: 400px; min-height: 300px; overflow: hidden; isolation: isolate; background: #0e0e10; }
 .persistent-hls-surface { position: fixed; z-index: 1; overflow: hidden; visibility: hidden; background: #000; pointer-events: none; }
