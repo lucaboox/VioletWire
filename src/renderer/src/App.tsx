@@ -1026,7 +1026,7 @@ export function App() {
     window.localStorage.getItem("glint.playback.default") === "official" ? "official" : "native",
   );
   const [playbackLatencyMode, setPlaybackLatencyMode] =
-    useState<AppPreferences["playbackLatencyMode"]>("balanced");
+    useState<AppPreferences["playbackLatencyMode"]>("ultra-low");
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = useState("");
   const changelogAutoShown = useRef(false);
