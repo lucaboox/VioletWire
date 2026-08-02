@@ -4,46 +4,35 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.8] - 2026-08-02
+
 ### Improvements
 
-- Filtered stream fragments, initialization data, and encryption keys now use
-  a session-scoped Electron media protocol backed by Chromium's network stack,
-  removing the manual upstream-to-Node-to-localhost byte-copy loop that could
-  stall high-bitrate streams. Opaque per-session resource IDs prevent the
-  protocol from becoming a general-purpose URL proxy.
+- Twitch video fragments now download directly from allowlisted Twitch CDN
+  hosts through Chromium's native network stack. VioletWire continues to
+  filter playlists locally without copying high-bitrate media through Node or
+  an Electron protocol.
 - Playback settings now offer Low latency as the default and a larger-buffer
   Balanced mode. Both use completed Twitch fragments; the proprietary
   in-progress PREFETCH path has been removed because hls.js could not consume
   it reliably without repeated stalls, especially at high bitrates.
 - Video Stats now identifies the selected latency profile and whether media is
-  using the Chromium protocol transport or the localhost compatibility relay.
+  using direct Twitch CDN, Chromium protocol, or localhost compatibility
+  transport, and shows these details immediately while live measurements load.
 
 ### Fixes
 
-- Repeated stalls on high-bitrate 1440p streams now activate an adaptive
-  stability buffer instead of remaining capped at an insufficient two-second
-  recovery margin, while healthy streams retain the normal low-latency target.
-- Cancelled HLS media requests now stop their corresponding upstream download,
-  preventing abandoned prefetch transfers from competing with active playback.
-- Media transport automatically falls back to a streaming Node fetch for an
-  individual request, or to the tested localhost relay when the Electron
-  protocol cannot be registered, instead of leaving Native playback unusable.
-- Video Stats now shows the session's latency profile and media transport
-  immediately, then fills in live measurements as frames arrive, instead of
-  opening with an empty panel.
-- Twitch video fragments now download directly from allowlisted Twitch CDN
-  hosts using Chromium's native network stack. VioletWire still filters the
-  playlist locally, but no longer copies high-bitrate media through Node or an
-  Electron custom protocol, removing the main 1440p buffering bottleneck.
-- The renderer Content Security Policy now permits connections only to
-  Twitch's `ttvnw.net` and `twitchcdn.net` media domains, allowing direct CDN
-  playback without broadening access to arbitrary network origins.
-- Automatic, Source, 1440p, and 1080p playback now use the selected latency
-  profile without a mid-playback profile switch or competing Streamlink
-  quality-discovery process.
-- Low-latency playback no longer converts Twitch's proprietary growing
-  PREFETCH responses into ordinary HLS segments. Direct completed-fragment
-  playback trades a few seconds of latency for consistent frame delivery.
+- Removed the proprietary growing-fragment path that caused recurring stalls,
+  frozen starts, and catch-up lag, most visibly on 1440p streams. Low latency
+  now uses completed fragments with a stable four-second live cushion.
+- Stream startup no longer changes latency profiles after decoding begins or
+  launches a competing Streamlink quality-discovery process, preventing frozen
+  first frames and regressions on otherwise healthy 1080p streams.
+- Cancelled media requests now terminate their corresponding upstream download,
+  preventing abandoned transfers from competing with active playback.
+- Direct Twitch media requests are restricted to Twitch's `ttvnw.net` and
+  `twitchcdn.net` CDN domains by both URL validation and the renderer security
+  policy.
 
 ## [0.3.4-alpha.7] - 2026-08-02
 
