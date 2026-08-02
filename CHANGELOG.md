@@ -35,6 +35,9 @@ All notable changes to VioletWire are documented in this file.
   hosts using Chromium's native network stack. VioletWire still filters the
   playlist locally, but no longer copies high-bitrate media through Node or an
   Electron custom protocol, removing the main 1440p buffering bottleneck.
+- The renderer Content Security Policy now permits connections only to
+  Twitch's `ttvnw.net` and `twitchcdn.net` media domains, allowing direct CDN
+  playback without broadening access to arbitrary network origins.
 - Automatic, Source, 1440p, and 1080p playback now use the selected latency
   profile without a mid-playback profile switch or competing Streamlink
   quality-discovery process.
