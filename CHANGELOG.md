@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.7] - 2026-08-02
+
 ### Improvements
 
 - Native playback now uses the proven Chromium HLS pipeline exclusively. The
@@ -34,6 +36,17 @@ All notable changes to VioletWire are documented in this file.
 - Long followed-channel lists now use true row virtualization instead of
   activating every offscreen entry during scrolling, keeping only the visible
   offline channels and a small buffer mounted for much smoother navigation.
+- Video statistics now measure Chromium HLS throughput progressively and
+  report playback stalls, making bitrate and buffering behavior easier to
+  diagnose without the removed native runtime.
+
+### Fixes
+
+- Switching between Kick and Twitch now fully resets the persistent Chromium
+  media pipeline between sessions, preventing a newly opened stream from
+  becoming a silent, extremely slow slideshow.
+- Large emotes wrapping onto another line no longer overlap adjacent chat text
+  or each other in regular and overlay chat composers.
 
 ## [0.3.4-alpha.6] - 2026-07-31
 
