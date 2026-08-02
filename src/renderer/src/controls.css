@@ -336,7 +336,7 @@ input {
   width: auto;
   height: var(--chat-emote-size, 27px);
   max-width: 192px;
-  margin: -5px 1px;
+  margin: 1px;
   object-fit: contain;
   vertical-align: middle;
 }
@@ -726,7 +726,7 @@ input {
   width: auto;
   height: var(--chat-emote-size, 27px);
   max-width: calc(var(--chat-emote-size, 27px) * 6);
-  margin: -5px 1px;
+  margin: 1px;
   vertical-align: middle;
   object-fit: contain;
 }

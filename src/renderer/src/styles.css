@@ -781,7 +781,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-notice-facts span { padding: 3px 6px; border-radius: 999px; color: #d8b4fe; background: #ffffff0c; font-size: 9px; font-weight: 700; }
 .chat-notice-text { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ffffff16; line-height: 1.45; }
 .chat-notice-text time { margin-right: 6px; color: #8b8492; font-size: 9px; }
-.chat-emote { display: inline-block; width: auto; height: var(--chat-emote-size, 27px); max-width: 192px; margin: -5px 1px; object-fit: contain; vertical-align: middle; }
+.chat-emote { display: inline-block; width: auto; height: var(--chat-emote-size, 27px); max-width: 192px; margin: 1px; object-fit: contain; vertical-align: middle; }
 .chat-emote-hover { position: relative; display: inline-block; outline: 0; vertical-align: middle; }
 /* width: max-content + overflow: hidden: banner-wide GIF emotes otherwise
    blow the grid track past max-width and paint outside the rounded box. */
@@ -831,7 +831,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-composer-editor:focus { border-color: #8b5cf6; }
 .chat-composer-editor[data-empty="true"]::before { color: #92929d; content: attr(data-placeholder); pointer-events: none; }
 .chat-composer-editor[aria-disabled="true"] { cursor: default; opacity: .65; }
-.chat-composer-editor .composer-emote { display: inline-block; width: auto; height: var(--chat-emote-size, 27px); max-width: calc(var(--chat-emote-size, 27px) * 6); margin: -5px 1px; vertical-align: middle; object-fit: contain; }
+.chat-composer-editor .composer-emote { display: inline-block; width: auto; height: var(--chat-emote-size, 27px); max-width: calc(var(--chat-emote-size, 27px) * 6); margin: 1px; vertical-align: middle; object-fit: contain; }
 .native-chat-input textarea { display: block; width: 100%; min-width: 0; min-height: 43px; max-height: 130px; padding: 10px 53px 9px 11px; border: 2px solid #45454d; border-radius: 8px; outline: 0; resize: none; color: #f4f4f5; background: #0e0e10; font: inherit; font-size: 13px; line-height: 19px; overflow-wrap: anywhere; transition: border-color 120ms ease; }
 .native-chat-input .emote-aware-input textarea { background: transparent; }
 .native-chat-input textarea:focus { border-color: #8b5cf6; }
