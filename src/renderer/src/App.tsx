@@ -949,6 +949,7 @@ export function App() {
   const [miniPlayerWidth, setMiniPlayerWidth] = useState(320);
   const miniPlayerDragOffset = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const miniPlayerRef = useRef<HTMLDivElement>(null);
+  const persistentHlsSurfaceRef = useRef<HTMLDivElement>(null);
   const [nativeAvailability, setNativeAvailability] =
     useState<NativePlayerAvailability | null>(null);
   const [nativeState, setNativeState] = useState<NativePlayerState>({
@@ -1881,6 +1882,61 @@ export function App() {
     syncMiniBounds();
     return () => observer.disconnect();
   }, [miniPlayerActive]);
+
+  // hls.js and its media element must survive switching between the full
+  // player and the floating mini-player. Move one fixed DOM surface between
+  // the two host rectangles instead of mounting a second HlsNativeVideo,
+  // which previously discarded the buffer and briefly restarted at live.
+  useLayoutEffect(() => {
+    const surface = persistentHlsSurfaceRef.current;
+    if (
+      !surface ||
+      !activeChannel ||
+      activeMode !== "native" ||
+      nativeState.backend !== "hls"
+    ) {
+      return;
+    }
+    const host = miniPlayerActive ? miniPlayerRef.current : playerHost.current;
+    if (!host) {
+      surface.style.visibility = "hidden";
+      return;
+    }
+
+    const syncSurface = () => {
+      const rect = host.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) {
+        surface.style.visibility = "hidden";
+        return;
+      }
+      surface.style.left = `${rect.left}px`;
+      surface.style.top = `${rect.top}px`;
+      surface.style.width = `${rect.width}px`;
+      surface.style.height = `${rect.height}px`;
+      surface.style.visibility = "visible";
+    };
+
+    const observer = new ResizeObserver(syncSurface);
+    observer.observe(host);
+    window.addEventListener("resize", syncSurface);
+    syncSurface();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", syncSurface);
+    };
+  }, [
+    activeChannel,
+    activeMode,
+    chatPresentation,
+    chatSidebarWidth,
+    chatVisible,
+    fullscreen,
+    miniPlayerActive,
+    miniPlayerPosition,
+    miniPlayerWidth,
+    nativeState.backend,
+    theaterMode,
+  ]);
 
   // Hover-intent stream pre-resolution: after 150ms on a channel card, ask
   // the main process to resolve its stream URL so a click skips the
@@ -3557,6 +3613,20 @@ export function App() {
         <span className="titlebar-title">{locationLabel}</span>
       </div>
 
+      {activeChannel && activeMode === "native" && nativeState.backend === "hls" && (
+        <div
+          aria-hidden="true"
+          className={
+            miniPlayerActive
+              ? "persistent-hls-surface mini-surface"
+              : "persistent-hls-surface"
+          }
+          ref={persistentHlsSurfaceRef}
+        >
+          <HlsNativeVideo state={nativeState} />
+        </div>
+      )}
+
       <div className="brand">
         <span className="brand-mark"><img alt="" src={violetWireIcon} /></span>
         <span>VioletWire</span>
@@ -4618,7 +4688,11 @@ export function App() {
                   .join(" ")}
               >
                 <div
-                  className="player-host"
+                  className={
+                    activeMode === "native" && nativeState.backend === "hls"
+                      ? "player-host hls-surface-host"
+                      : "player-host"
+                  }
                   ref={playerHost}
                   aria-label={`${activeMode === "native" ? "Native" : "Official Twitch"} player for ${activeChannel}`}
                   onAuxClick={(event) => {
@@ -4663,9 +4737,7 @@ export function App() {
                   )}
                   {activeMode === "native" && (
                     <>
-                      {nativeState.backend === "hls" ? (
-                        <HlsNativeVideo state={nativeState} />
-                      ) : (
+                      {nativeState.backend !== "hls" && (
                         <canvas
                           className="native-texture-canvas"
                           data-native-texture-canvas="main"
@@ -6871,7 +6943,11 @@ export function App() {
         {activeChannel && miniPlayerActive && (
           <div
             aria-label={`Mini player: ${streamMetadata?.displayName ?? activeChannel}`}
-            className="mini-player"
+            className={
+              nativeState.backend === "hls"
+                ? "mini-player hls-surface-host"
+                : "mini-player"
+            }
             ref={miniPlayerRef}
             role="region"
             style={{ ...(miniPlayerPosition ?? {}), width: miniPlayerWidth }}
@@ -6941,9 +7017,7 @@ export function App() {
               if (offset && !offset.moved) restoreMiniPlayer();
             }}
           >
-            {nativeState.backend === "hls" ? (
-              <HlsNativeVideo state={nativeState} />
-            ) : (
+            {nativeState.backend !== "hls" && (
               <canvas
                 className="native-texture-canvas mini-player-canvas"
                 data-native-texture-canvas="main"

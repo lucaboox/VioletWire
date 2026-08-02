@@ -15,6 +15,9 @@ All notable changes to VioletWire are documented in this file.
   completed metadata without duplication while retaining ad filtering.
 - Moving the pointer in fullscreen now reveals the same floating stream-info
   toolbar used by theater mode, and it fades away with the player controls.
+- HLS playback now keeps one persistent media element when moving between the
+  full player and the floating mini-player, eliminating the black restart and
+  brief live-edge catch-up when returning to the home page.
 - The followed-channel sidebar now memoizes channel rows, lazily loads profile
   images, and skips layout and painting work for offscreen rows so player,
   uptime, and chat updates no longer make long lists stutter while scrolling.

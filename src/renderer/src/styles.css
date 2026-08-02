@@ -570,6 +570,9 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
    dropping this class and restoring the cursor. */
 .video-column.native.controls-hidden { cursor: none; }
 .player-host { position: relative; min-width: 400px; min-height: 300px; overflow: hidden; isolation: isolate; background: #0e0e10; }
+.persistent-hls-surface { position: fixed; z-index: 1; overflow: hidden; visibility: hidden; background: #000; pointer-events: none; }
+.persistent-hls-surface.mini-surface { z-index: 119; }
+.player-host.hls-surface-host { z-index: 2; background: transparent; }
 .standard-player-frame { display: block; width: 100%; height: 100%; border: 0; background: #050506; }
 .native-texture-canvas { position: absolute; z-index: 0; display: block; width: 100%; height: 100%; inset: 0; object-fit: contain; background: #000; }
 .native-hls-video { position: absolute; z-index: 0; display: block; width: 100%; height: 100%; inset: 0; object-fit: contain; background: #000; }
@@ -580,6 +583,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
    inline style sets left/top (drag/resize), they win over the right/bottom
    anchor; until then the box sits in the bottom-right corner. */
 .mini-player { position: fixed; z-index: 120; right: 18px; bottom: 18px; width: 320px; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #3a3a42; border-radius: 0; background: #000; box-shadow: 0 16px 48px rgb(0 0 0 / 70%); cursor: pointer; touch-action: none; user-select: none; }
+.mini-player.hls-surface-host { background: transparent; }
 /* cover, not contain: frames arriving before the addon finishes resizing
    still carry the page-sized buffer with letterbox bars baked in. mpv always
    centers the video, so cover crops those bars exactly and the box is
