@@ -115,6 +115,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     let hls: Hls | null = null;
     let displayedLatency = 0;
     let stallRecoveries = 0;
+    let stabilityProfile = false;
     const appendedFragmentBytes = new Map<
       string,
       { bytes: number; duration: number }
@@ -213,6 +214,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
               targetLatency,
               ),
               "Stall recoveries": String(stallRecoveries),
+              "Buffer profile": stabilityProfile ? "Adaptive stability" : "Low latency",
             }
           : undefined,
       });
@@ -347,6 +349,19 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       fragLoadingMaxRetryTimeout: 4_000,
     });
     const player = hls;
+    const enableStabilityProfile = () => {
+      if (stabilityProfile) return;
+      stabilityProfile = true;
+      // hls.js normally limits stall-driven target growth to one target
+      // duration (about two seconds on Twitch). That is not enough when a
+      // high-bitrate source repeatedly exhausts the three-second live cushion.
+      // Give unstable playback room to settle while leaving healthy streams
+      // at VioletWire's normal low-latency target.
+      player.config.liveMaxLatencyDuration = 12;
+      player.config.maxBufferLength = 30;
+      player.config.maxMaxBufferLength = 45;
+      player.targetLatency = 6;
+    };
     player.attachMedia(video);
     player.on(Events.MEDIA_ATTACHED, () => {
       player.loadSource(source.playlistUrl);
@@ -407,6 +422,9 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       if (disposed) return;
       if (data.details === ErrorDetails.BUFFER_STALLED_ERROR) {
         stallRecoveries += 1;
+        if (video.videoHeight >= 1_400 || stallRecoveries >= 2) {
+          enableStabilityProfile();
+        }
       }
       if (!data.fatal) return;
       if (data.type === ErrorTypes.NETWORK_ERROR) {

@@ -113,6 +113,7 @@ advertisement.mp4
       const playlist = await playlistResponse.text();
       expect(playlistResponse.status).toBe(200);
       expect(playlist).toContain("#EXT-X-TARGETDURATION:2");
+      expect(playlist.match(/#EXT-X-MEDIA-SEQUENCE:/g)).toHaveLength(1);
       expect(playlist).not.toContain("EXT-X-TWITCH-PREFETCH");
       expect(playlist.match(/#EXTINF:/g)).toHaveLength(2);
       expect(playlist).not.toContain("advertisement.mp4");

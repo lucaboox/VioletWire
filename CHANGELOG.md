@@ -4,6 +4,14 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Repeated stalls on high-bitrate 1440p streams now activate an adaptive
+  stability buffer instead of remaining capped at an insufficient two-second
+  recovery margin, while healthy streams retain the normal low-latency target.
+- Cancelled HLS media requests now stop their corresponding upstream download,
+  preventing abandoned prefetch transfers from competing with active playback.
+
 ## [0.3.4-alpha.7] - 2026-08-02
 
 ### Improvements

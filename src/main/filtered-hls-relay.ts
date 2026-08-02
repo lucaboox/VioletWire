@@ -421,15 +421,47 @@ export class FilteredHlsRelay {
         response.end();
         return;
       }
+      const abortOnDownstreamClose = () => {
+        if (!response.writableEnded) controller.abort();
+      };
+      request.once("aborted", abortOnDownstreamClose);
+      response.once("close", abortOnDownstreamClose);
       const reader = upstream.body.getReader();
-      while (!this.closed) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!response.write(value)) {
-          await new Promise<void>((resolve) => response.once("drain", resolve));
+      try {
+        while (!this.closed && !response.destroyed) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!response.write(value)) {
+            await new Promise<void>((resolve, reject) => {
+              const cleanup = () => {
+                response.off("drain", onDrain);
+                response.off("close", onClose);
+                response.off("error", onError);
+              };
+              const onDrain = () => {
+                cleanup();
+                resolve();
+              };
+              const onClose = () => {
+                cleanup();
+                reject(new Error("Media consumer disconnected."));
+              };
+              const onError = (error: Error) => {
+                cleanup();
+                reject(error);
+              };
+              response.once("drain", onDrain);
+              response.once("close", onClose);
+              response.once("error", onError);
+            });
+          }
         }
+        if (!response.destroyed) response.end();
+      } finally {
+        request.off("aborted", abortOnDownstreamClose);
+        response.off("close", abortOnDownstreamClose);
+        controller.abort();
       }
-      response.end();
     } catch (error) {
       if (!response.headersSent) {
         writeText(
