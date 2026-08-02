@@ -1009,6 +1009,7 @@ export function NativeControls({
       { label: "Dropped frames", value: read("Dropped frames") },
       { label: "Playback rate", value: read("Playback rate") },
       { label: "Buffer size", value: read("Buffer") },
+      { label: "Stall recoveries", value: read("Stall recoveries") },
     ].filter(
       (row): row is { label: string; value: string } => row.value !== null,
     );

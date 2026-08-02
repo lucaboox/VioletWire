@@ -115,6 +115,10 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     let hls: Hls | null = null;
     let displayedLatency = 0;
     let stallRecoveries = 0;
+    const appendedFragmentBytes = new Map<
+      string,
+      { bytes: number; duration: number }
+    >();
     let pendingVideoFrame: number | null = null;
     // Keep the user's intent separate from HTMLMediaElement.paused. Source
     // attachment, manifest reparses, and hls.js recovery can all transiently
@@ -356,6 +360,30 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     });
     player.on(Events.LEVEL_SWITCHED, (_event, data) => {
       streamBitrate = player.levels[data.level]?.bitrate ?? streamBitrate;
+    });
+    player.on(Events.BUFFER_APPENDING, (_event, data) => {
+      const key = `${data.frag.level}:${String(data.frag.sn)}`;
+      const current = appendedFragmentBytes.get(key) ?? {
+        bytes: 0,
+        duration: data.frag.duration,
+      };
+      current.bytes += data.data.byteLength;
+      current.duration = data.frag.duration;
+      appendedFragmentBytes.set(key, current);
+      // Bound diagnostics independently of hls.js's own media buffer.
+      if (appendedFragmentBytes.size > 12) {
+        appendedFragmentBytes.delete(appendedFragmentBytes.keys().next().value!);
+      }
+    });
+    player.on(Events.FRAG_CHANGED, (_event, data) => {
+      const key = `${data.frag.level}:${String(data.frag.sn)}`;
+      const appended = appendedFragmentBytes.get(key);
+      if (!appended || appended.bytes <= 0 || appended.duration <= 0) return;
+      const measuredBitrate = (appended.bytes * 8) / appended.duration;
+      streamBitrate =
+        streamBitrate > 0
+          ? streamBitrate * 0.7 + measuredBitrate * 0.3
+          : measuredBitrate;
     });
     player.on(Events.FRAG_LOADED, (_event, data) => {
       const level = data.frag.level;
