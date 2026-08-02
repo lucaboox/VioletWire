@@ -4,7 +4,9 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  protocol,
   screen,
+  session,
   shell,
   WebContentsView,
   type IpcMainEvent,
@@ -54,6 +56,7 @@ import {
   APP_UI_PARTITION,
   TWITCH_WEBSITE_PARTITION,
 } from "./session-partitions";
+import { HLS_MEDIA_SCHEME, hlsMediaProtocol } from "./hls-media-protocol";
 
 // Electron's development console can outlive the shell that launched it. A
 // later Chromium diagnostic would otherwise turn a harmless closed stdout or
@@ -74,6 +77,18 @@ app.setPath("userData", path.join(app.getPath("appData"), "twitch-windows-viewer
 // Twitch's official embedded player is created inside a dedicated local page.
 // Allow that trusted player to honor its autoplay option when a channel opens.
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: HLS_MEDIA_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+]);
 const applicationIcon = app.isPackaged
   ? path.join(process.resourcesPath, "icon.png")
   : path.join(currentDirectory, "../../build/icon.png");
@@ -272,10 +287,12 @@ const multiStreamManager = new MultiStreamManager(
   () => mainWindow,
   () => playbackSessionService.getToken(),
   () => preferencesService.get().playerVolume,
+  () => preferencesService.get().playbackLatencyMode,
   () => kickService.getStreamlinkCookie(),
   () => trustedRendererOrigin,
   (tile) => sendToWindow(mainWindow, "native-multi:tile-state", tile),
   (id) => sendToWindow(mainWindow, "native-multi:tile-removed", id),
+  hlsMediaProtocol,
 );
 const multiChatService = new MultiChatService(
   (channel, message) =>
@@ -291,8 +308,11 @@ const hlsNativePlayer = new HlsNativePlayer(
   () => trustedRendererOrigin,
   (channel, quality) => streamPlaybackResolver.resolve(channel, quality),
   () => preferencesService.get().playerVolume,
+  () => preferencesService.get().playbackLatencyMode,
   publishNativePlayerState,
   () => streamPlaybackResolver.cancelActiveResolution(),
+  "main",
+  hlsMediaProtocol,
 );
 function isAllowedTwitchNavigation(rawUrl: string): boolean {
   try {
@@ -1293,6 +1313,12 @@ app.whenReady().then(async () => {
   // for emote-picker shortcuts.
   Menu.setApplicationMenu(null);
   await preferencesService.initialize();
+  try {
+    await hlsMediaProtocol.initialize(session.fromPartition(APP_UI_PARTITION));
+  } catch {
+    // Playback remains functional through FilteredHlsRelay's localhost media
+    // endpoint if a platform-specific Electron build cannot host the scheme.
+  }
   await playbackSessionService.initialize();
   await twitchService.initialize();
   await createWindow();
@@ -1307,6 +1333,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  void hlsMediaProtocol.close();
   if (rendererServer) void rendererServer.close();
   rendererServer = null;
 });

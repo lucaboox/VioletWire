@@ -384,6 +384,12 @@ const settingsSearchEntries: {
     keywords: "cursor timeout seconds",
   },
   {
+    section: "playback",
+    title: "Playback latency",
+    description: "Choose reliable Balanced playback or experimental Ultra-low latency.",
+    keywords: "buffer hls prefetch reliable fast latency",
+  },
+  {
     section: "chat",
     title: "Username color",
     description: "Change the color of your Twitch username in chat.",
@@ -1019,6 +1025,8 @@ export function App() {
   const [preferredMode, setPreferredMode] = useState<PlayerMode>(() =>
     window.localStorage.getItem("glint.playback.default") === "official" ? "official" : "native",
   );
+  const [playbackLatencyMode, setPlaybackLatencyMode] =
+    useState<AppPreferences["playbackLatencyMode"]>("balanced");
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = useState("");
   const changelogAutoShown = useRef(false);
@@ -1582,6 +1590,7 @@ export function App() {
     const applyPreferences = (preferences: AppPreferences) => {
       if (disposed) return;
       setPreferredMode(preferences.preferredPlayerMode);
+      setPlaybackLatencyMode(preferences.playbackLatencyMode);
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
       setChatFontSize(preferences.chatFontSize);
@@ -1631,6 +1640,7 @@ export function App() {
       void window.desktop.preferences
         .update({
           preferredPlayerMode: preferredMode,
+          playbackLatencyMode,
           chatTimestamps,
           chatHistoryLimit,
           chatFontSize,
@@ -1670,6 +1680,7 @@ export function App() {
     genericLinkPreviewActivation,
     emoteAutocompleteMatch,
     oledMode,
+    playbackLatencyMode,
     preferredMode,
     preferencesReady,
   ]);
@@ -6401,6 +6412,34 @@ export function App() {
                         type="button"
                       >
                         Standard
+                      </button>
+                    </div>
+                  </div>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Playback latency</strong>
+                      <span>
+                        Balanced waits for complete fragments for steadier high-quality
+                        playback. Ultra-low uses Twitch&apos;s in-progress fragments and may
+                        be less stable on some streams.
+                      </span>
+                    </div>
+                    <div className="mode-switch">
+                      <button
+                        aria-pressed={playbackLatencyMode === "balanced"}
+                        className={playbackLatencyMode === "balanced" ? "active" : ""}
+                        onClick={() => setPlaybackLatencyMode("balanced")}
+                        type="button"
+                      >
+                        Balanced
+                      </button>
+                      <button
+                        aria-pressed={playbackLatencyMode === "ultra-low"}
+                        className={playbackLatencyMode === "ultra-low" ? "active" : ""}
+                        onClick={() => setPlaybackLatencyMode("ultra-low")}
+                        type="button"
+                      >
+                        Ultra-low
                       </button>
                     </div>
                   </div>

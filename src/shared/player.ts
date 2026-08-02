@@ -4,6 +4,7 @@ import type { ChatApi, ChatConnectionState, ChatMessage } from "./chat";
 import type { TwitchApi } from "./twitch";
 import type { UpdateApi } from "./updates";
 import type { PreferencesApi } from "./preferences";
+import type { PlaybackLatencyMode } from "./preferences";
 import type { LinkPreview } from "./link-preview";
 import type { KickApi } from "./platform";
 
@@ -185,6 +186,8 @@ export interface NativePlayerState {
   hlsSource?: {
     sessionId: string;
     playlistUrl: string;
+    latencyMode: PlaybackLatencyMode;
+    mediaTransport: "chromium-protocol" | "localhost-relay";
   };
   error?: string;
   transition?: NativePlayerTransition;

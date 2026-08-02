@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
 
 import type { Platform } from "../shared/platform";
+import type { HlsMediaTransport } from "./hls-media-transport";
 
 interface AdRange {
   start: number;
@@ -113,6 +114,7 @@ function parseAdRanges(lines: string[]): AdRange[] {
 export function parseTwitchMediaPlaylist(
   text: string,
   playlistUrl: string,
+  includePrefetch = true,
 ): ParsedPlaylist {
   const lines = text
     .split(/\r?\n/)
@@ -205,7 +207,9 @@ export function parseTwitchMediaPlaylist(
       continue;
     }
     if (line.startsWith("#EXT-X-TWITCH-PREFETCH:")) {
-      appendPrefetchSegment(line.slice("#EXT-X-TWITCH-PREFETCH:".length));
+      if (includePrefetch) {
+        appendPrefetchSegment(line.slice("#EXT-X-TWITCH-PREFETCH:".length));
+      }
       continue;
     }
     if (line.startsWith("#")) continue;
@@ -281,20 +285,52 @@ export class FilteredHlsRelay {
   private pendingDiscontinuity = false;
   private closed = false;
   private readonly abortControllers = new Set<AbortController>();
+  private unregisterMediaSession: (() => void) | null = null;
+  private useMediaTransport = false;
 
   constructor(
     private readonly getAllowedOrigin: () => string | null,
     private readonly platform: Platform = "twitch",
+    private readonly options: {
+      includePrefetch?: boolean;
+      mediaTransport?: HlsMediaTransport;
+    } = {},
   ) {}
+
+  get mediaTransportName(): "chromium-protocol" | "localhost-relay" {
+    return this.useMediaTransport ? "chromium-protocol" : "localhost-relay";
+  }
 
   async start(sourceUrl: string): Promise<string> {
     this.sourceUrl = sourceUrl;
+    const transport = this.options.mediaTransport;
+    if (transport?.ready) {
+      try {
+        this.unregisterMediaSession = transport.registerSession(
+          this.sessionToken,
+          (resourceId) => {
+            const entry = this.resources.get(resourceId);
+            if (!entry || Date.now() - entry.lastUsedAt > RESOURCE_TTL_MS) return null;
+            entry.lastUsedAt = Date.now();
+            return { platform: this.platform, url: entry.url };
+          },
+        );
+        this.useMediaTransport = true;
+      } catch {
+        // The existing localhost resource endpoint remains a tested fallback
+        // if Electron cannot register or service the custom protocol.
+        this.unregisterMediaSession = null;
+        this.useMediaTransport = false;
+      }
+    }
     if (!this.server) await this.listen();
     return `http://127.0.0.1:${this.port}/${this.sessionToken}/index.m3u8`;
   }
 
   async close(): Promise<void> {
     this.closed = true;
+    this.unregisterMediaSession?.();
+    this.unregisterMediaSession = null;
     for (const controller of this.abortControllers) controller.abort();
     this.abortControllers.clear();
     const server = this.server;
@@ -511,7 +547,11 @@ export class FilteredHlsRelay {
         clearTimeout(timeout);
       }
       if (!upstream.ok) throw new Error(`Upstream playlist returned ${upstream.status}.`);
-      const parsed = parseTwitchMediaPlaylist(await upstream.text(), sourceUrl);
+      const parsed = parseTwitchMediaPlaylist(
+        await upstream.text(),
+        sourceUrl,
+        this.options.includePrefetch ?? true,
+      );
       let filteredAd = false;
       for (const segment of parsed.segments) {
         if (segment.ad) {
@@ -623,12 +663,18 @@ export class FilteredHlsRelay {
     if (existingId) {
       const existing = this.resources.get(existingId);
       if (existing) existing.lastUsedAt = Date.now();
-      return `resource/${existingId}`;
+      return this.resourceLocation(existingId);
     }
     const id = randomUUID().replaceAll("-", "");
     this.resourceIds.set(url, id);
     this.resources.set(id, { url, lastUsedAt: Date.now() });
-    return `resource/${id}`;
+    return this.resourceLocation(id);
+  }
+
+  private resourceLocation(resourceId: string): string {
+    return this.useMediaTransport
+      ? this.options.mediaTransport!.resourceUrl(this.sessionToken, resourceId)
+      : `resource/${resourceId}`;
   }
 
   private pruneResources(): void {

@@ -4,6 +4,20 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Improvements
+
+- Filtered stream fragments, initialization data, and encryption keys now use
+  a session-scoped Electron media protocol backed by Chromium's network stack,
+  removing the manual upstream-to-Node-to-localhost byte-copy loop that could
+  stall high-bitrate streams. Opaque per-session resource IDs prevent the
+  protocol from becoming a general-purpose URL proxy.
+- Playback settings now offer a reliable Balanced mode and an optional
+  Ultra-low latency mode. Balanced is the default and waits for completed
+  Twitch fragments with more jitter headroom; Ultra-low retains Twitch's
+  in-progress prefetch path for viewers who prioritize minimum latency.
+- Video Stats now identifies the selected latency profile and whether media is
+  using the Chromium protocol transport or the localhost compatibility relay.
+
 ### Fixes
 
 - Repeated stalls on high-bitrate 1440p streams now activate an adaptive
@@ -11,6 +25,9 @@ All notable changes to VioletWire are documented in this file.
   recovery margin, while healthy streams retain the normal low-latency target.
 - Cancelled HLS media requests now stop their corresponding upstream download,
   preventing abandoned prefetch transfers from competing with active playback.
+- Media transport automatically falls back to a streaming Node fetch for an
+  individual request, or to the tested localhost relay when the Electron
+  protocol cannot be registered, instead of leaving Native playback unusable.
 
 ## [0.3.4-alpha.7] - 2026-08-02
 

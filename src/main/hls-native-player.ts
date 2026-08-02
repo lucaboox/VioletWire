@@ -6,8 +6,10 @@ import type {
   NativePlayerTransition,
   NativeQualityValue,
 } from "../shared/player";
+import type { PlaybackLatencyMode } from "../shared/preferences";
 import { parseChannelKey } from "../shared/platform";
 import { FilteredHlsRelay } from "./filtered-hls-relay";
+import type { HlsMediaTransport } from "./hls-media-transport";
 
 type StartResult = { ok: true } | { ok: false; reason: string };
 
@@ -34,9 +36,11 @@ export class HlsNativePlayer {
       quality: NativeQualityValue,
     ) => Promise<string>,
     private readonly getStoredVolume: () => number,
+    private readonly getLatencyMode: () => PlaybackLatencyMode,
     private readonly onState: (state: NativePlayerState) => void,
     private readonly cancelPlaybackResolution: () => void = () => undefined,
     private readonly renderTarget = "main",
+    private readonly mediaTransport?: HlsMediaTransport,
   ) {}
 
   async start(
@@ -69,9 +73,14 @@ export class HlsNativePlayer {
       if (generation !== this.generation) {
         return { ok: false, reason: "Native playback was cancelled." };
       }
+      const latencyMode = this.getLatencyMode();
       const relay = new FilteredHlsRelay(
         this.getRendererOrigin,
         parseChannelKey(channel).platform,
+        {
+          includePrefetch: latencyMode === "ultra-low",
+          mediaTransport: this.mediaTransport,
+        },
       );
       const playlistUrl = await relay.start(sourceUrl);
       if (generation !== this.generation) {
@@ -83,6 +92,8 @@ export class HlsNativePlayer {
         hlsSource: {
           sessionId: crypto.randomUUID(),
           playlistUrl,
+          latencyMode,
+          mediaTransport: relay.mediaTransportName,
         },
       });
       return { ok: true };

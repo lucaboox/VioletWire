@@ -9,6 +9,8 @@ import {
 } from "../shared/player";
 import { HlsNativePlayer } from "./hls-native-player";
 import { StreamPlaybackResolver } from "./stream-playback-resolver";
+import type { PlaybackLatencyMode } from "../shared/preferences";
+import type { HlsMediaTransport } from "./hls-media-transport";
 
 interface Tile {
   id: number;
@@ -34,10 +36,12 @@ export class MultiStreamManager {
     private readonly getMainWindow: () => BrowserWindow | null,
     private readonly getTwitchPlaybackToken: () => string | null,
     private readonly getStoredVolume: () => number,
+    private readonly getLatencyMode: () => PlaybackLatencyMode,
     private readonly getKickCookie: () => Promise<string | null>,
     private readonly getRendererOrigin: () => string | null,
     private readonly onTileState: TileStateListener,
     private readonly onTileRemoved: TileRemovedListener,
+    private readonly mediaTransport?: HlsMediaTransport,
   ) {}
 
   isActive(): boolean {
@@ -143,9 +147,11 @@ export class MultiStreamManager {
       this.getRendererOrigin,
       (targetChannel, quality) => resolver.resolve(targetChannel, quality),
       this.getStoredVolume,
+      this.getLatencyMode,
       (state) => this.handleTileState(id, state),
       () => resolver.cancelActiveResolution(),
       `multi-${id}`,
+      this.mediaTransport,
     );
     const tile: Tile = { id, channel, player, resolver, state: player.getState() };
     this.tiles.set(id, tile);
