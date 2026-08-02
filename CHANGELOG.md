@@ -31,6 +31,9 @@ All notable changes to VioletWire are documented in this file.
 - The followed-channel sidebar now memoizes channel rows, lazily loads profile
   images, and skips layout and painting work for offscreen rows so player,
   uptime, and chat updates no longer make long lists stutter while scrolling.
+- Long followed-channel lists now use true row virtualization instead of
+  activating every offscreen entry during scrolling, keeping only the visible
+  offline channels and a small buffer mounted for much smoother navigation.
 
 ## [0.3.4-alpha.6] - 2026-07-31
 

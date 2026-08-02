@@ -55,7 +55,10 @@ button { color: inherit; }
 .channel-context-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; color: #e4e4e7; background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; text-align: left; }
 .channel-context-menu button:hover { background: #2a2a31; }
 .oled-mode .channel-context-menu { background: rgb(0 0 0 / 98%); }
-.followed-channel { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 6px 8px; border: 0; border-radius: 8px; color: #d4d4d8; background: transparent; contain: layout paint style; content-visibility: auto; contain-intrinsic-block-size: 56px; cursor: pointer; text-align: left; }
+.followed-channel { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 6px 8px; border: 0; border-radius: 8px; color: #d4d4d8; background: transparent; contain: layout paint style; cursor: pointer; text-align: left; }
+.virtual-followed-window { position: relative; width: 100%; contain: strict; }
+.virtual-followed-row { position: absolute; inset: 0 0 auto; height: 56px; }
+.virtual-followed-row > .followed-channel { height: 100%; }
 .followed-channel:hover { background: #1c1c21; }
 /* Fade an offline channel's avatar and its service ring so live ones stand out.
    Scoped to the expanded sidebar; collapsed already fades the whole tile. */

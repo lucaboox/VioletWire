@@ -225,6 +225,113 @@ const FollowedChannelRow = memo(function FollowedChannelRow({
   );
 });
 
+const followedChannelRowHeight = 56;
+const followedChannelOverscan = 8;
+
+type VirtualizedOfflineChannelRowsProps = {
+  channels: FollowedChannel[];
+  collapsed: boolean;
+  favoriteChannels: ReadonlySet<string>;
+  showServiceRing: boolean;
+  onActivate: (channel: FollowedChannel) => void;
+  onCancelPreresolve: () => void;
+  onOpenMenu: (login: string, x: number, y: number) => void;
+  onPreresolve: (login: string) => void;
+};
+
+// Offline follows can contain hundreds of channels. content-visibility still
+// makes Chromium activate, lay out, and decode those rows during the scroll;
+// this window keeps only the visible rows and a small buffer in the DOM.
+const VirtualizedOfflineChannelRows = memo(function VirtualizedOfflineChannelRows({
+  channels,
+  collapsed,
+  favoriteChannels,
+  showServiceRing,
+  onActivate,
+  onCancelPreresolve,
+  onOpenMenu,
+  onPreresolve,
+}: VirtualizedOfflineChannelRowsProps) {
+  const windowRef = useRef<HTMLDivElement>(null);
+  const [range, setRange] = useState(() => ({
+    start: 0,
+    end: Math.min(channels.length, followedChannelOverscan * 2),
+  }));
+
+  useLayoutEffect(() => {
+    const windowElement = windowRef.current;
+    const scroller = windowElement?.parentElement;
+    if (!windowElement || !scroller) return;
+
+    let frame: number | null = null;
+    const measure = () => {
+      frame = null;
+      const sectionTop = windowElement.offsetTop;
+      const visibleTop = Math.max(0, scroller.scrollTop - sectionTop);
+      const visibleBottom = Math.max(
+        visibleTop,
+        scroller.scrollTop + scroller.clientHeight - sectionTop,
+      );
+      const start = Math.max(
+        0,
+        Math.floor(visibleTop / followedChannelRowHeight) - followedChannelOverscan,
+      );
+      const end = Math.min(
+        channels.length,
+        Math.ceil(visibleBottom / followedChannelRowHeight) + followedChannelOverscan,
+      );
+      setRange((current) =>
+        current.start === start && current.end === end ? current : { start, end },
+      );
+    };
+    const scheduleMeasure = () => {
+      if (frame === null) frame = window.requestAnimationFrame(measure);
+    };
+    const resizeObserver = new ResizeObserver(scheduleMeasure);
+
+    scroller.addEventListener("scroll", scheduleMeasure, { passive: true });
+    resizeObserver.observe(scroller);
+    resizeObserver.observe(windowElement);
+    measure();
+
+    return () => {
+      scroller.removeEventListener("scroll", scheduleMeasure);
+      resizeObserver.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [channels]);
+
+  return (
+    <div
+      className="virtual-followed-window"
+      ref={windowRef}
+      style={{ height: channels.length * followedChannelRowHeight }}
+    >
+      {channels.slice(range.start, range.end).map((channel, offset) => {
+        const index = range.start + offset;
+        return (
+          <div
+            className="virtual-followed-row"
+            key={channel.id}
+            style={{ transform: `translateY(${index * followedChannelRowHeight}px)` }}
+          >
+            <FollowedChannelRow
+              channel={channel}
+              collapsed={collapsed}
+              favorite={favoriteChannels.has(channel.login)}
+              onActivate={onActivate}
+              onCancelPreresolve={onCancelPreresolve}
+              onOpenMenu={onOpenMenu}
+              onPreresolve={onPreresolve}
+              showServiceRing={showServiceRing}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
 const signedOutState: TwitchAuthState = { status: "signed-out", account: null };
 const anonymousPlaybackState: PlaybackSessionState = { linked: false };
 const emptySearchResults: TwitchSearchResults = { channels: [], categories: [] };
@@ -3619,19 +3726,16 @@ export function App() {
                   <span>Offline</span>
                   <b>{sidebarOfflineChannels.length}</b>
                 </div>
-                {sidebarOfflineChannels.map((channel) => (
-                  <FollowedChannelRow
-                    channel={channel}
-                    collapsed={sidebarCollapsed}
-                    favorite={favoriteChannels.has(channel.login)}
-                    key={channel.id}
-                    onActivate={activateFollowedChannel}
-                    onCancelPreresolve={cancelPreresolve}
-                    onOpenMenu={openFollowedChannelMenu}
-                    onPreresolve={schedulePreresolve}
-                    showServiceRing={platformFilter === "both"}
-                  />
-                ))}
+                <VirtualizedOfflineChannelRows
+                  channels={sidebarOfflineChannels}
+                  collapsed={sidebarCollapsed}
+                  favoriteChannels={favoriteChannels}
+                  onActivate={activateFollowedChannel}
+                  onCancelPreresolve={cancelPreresolve}
+                  onOpenMenu={openFollowedChannelMenu}
+                  onPreresolve={schedulePreresolve}
+                  showServiceRing={platformFilter === "both"}
+                />
               </>
             )}
             {followedChannels.length === 0 && (
