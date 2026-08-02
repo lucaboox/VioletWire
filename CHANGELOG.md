@@ -35,6 +35,10 @@ All notable changes to VioletWire are documented in this file.
   instead of changing HLS profiles after playback begins. Automatic and 1080p
   Ultra-low startup no longer launches a competing quality-discovery process,
   restoring the original fast playback path without frozen first frames.
+- Ultra-low playback now uses VioletWire's proven streaming relay for Twitch's
+  still-growing PREFETCH fragments, while Balanced playback keeps the
+  lower-copy Chromium protocol for completed fragments. This prevents custom
+  protocol buffering from stuttering otherwise healthy 1080p streams.
 
 ## [0.3.4-alpha.7] - 2026-08-02
 

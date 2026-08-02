@@ -88,7 +88,12 @@ export class HlsNativePlayer {
         target.platform,
         {
           includePrefetch: latencyMode === "ultra-low",
-          mediaTransport: this.mediaTransport,
+          // Electron custom-protocol responses are excellent for completed
+          // fragments, but do not preserve Twitch's still-growing PREFETCH
+          // timing reliably. The localhost relay streams those responses in
+          // the same form used by VioletWire's previously stable 1080p path.
+          mediaTransport:
+            latencyMode === "ultra-low" ? undefined : this.mediaTransport,
         },
       );
       const playlistUrl = await relay.start(sourceUrl);
