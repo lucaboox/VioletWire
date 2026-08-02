@@ -307,7 +307,6 @@ const hlsNativePlayer = new HlsNativePlayer(
   () => mainWindow,
   () => trustedRendererOrigin,
   (channel, quality) => streamPlaybackResolver.resolve(channel, quality),
-  (channel) => streamPlaybackResolver.getQualities(channel),
   () => preferencesService.get().playerVolume,
   () => preferencesService.get().playbackLatencyMode,
   publishNativePlayerState,

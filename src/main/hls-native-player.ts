@@ -4,7 +4,6 @@ import type {
   NativePlayerCommand,
   NativePlayerState,
   NativePlayerTransition,
-  NativeQuality,
   NativeQualityValue,
 } from "../shared/player";
 import { isHighResolutionQuality } from "../shared/player";
@@ -37,9 +36,6 @@ export class HlsNativePlayer {
       channel: string,
       quality: NativeQualityValue,
     ) => Promise<string>,
-    private readonly getAvailableQualities: (
-      channel: string,
-    ) => Promise<NativeQuality[]>,
     private readonly getStoredVolume: () => number,
     private readonly getLatencyMode: () => PlaybackLatencyMode,
     private readonly onState: (state: NativePlayerState) => void,
@@ -76,21 +72,14 @@ export class HlsNativePlayer {
     try {
       const requestedLatencyMode = this.getLatencyMode();
       const target = parseChannelKey(channel);
-      const qualitiesPromise =
-        requestedLatencyMode === "ultra-low" && target.platform === "twitch"
-          ? this.getAvailableQualities(channel).catch(() => [])
-          : Promise.resolve([]);
-      const [sourceUrl, availableQualities] = await Promise.all([
-        this.resolvePlaybackUrl(channel, quality),
-        qualitiesPromise,
-      ]);
+      const sourceUrl = await this.resolvePlaybackUrl(channel, quality);
       if (generation !== this.generation) {
         return { ok: false, reason: "Native playback was cancelled." };
       }
       const highResolutionSafeguard =
         requestedLatencyMode === "ultra-low" &&
         target.platform === "twitch" &&
-        isHighResolutionQuality(quality, availableQualities);
+        isHighResolutionQuality(quality, []);
       const latencyMode: PlaybackLatencyMode = highResolutionSafeguard
         ? "balanced"
         : requestedLatencyMode;

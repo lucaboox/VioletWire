@@ -141,6 +141,10 @@ describe("isHighResolutionQuality", () => {
     ).toBe(true);
   });
 
+  it("treats an explicit Source selection as high resolution without discovery", () => {
+    expect(isHighResolutionQuality("source", [])).toBe(true);
+  });
+
   it("keeps 1080p and lower qualities eligible for ultra-low latency", () => {
     expect(isHighResolutionQuality("1080p60", available)).toBe(false);
     expect(

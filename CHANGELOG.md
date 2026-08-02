@@ -31,10 +31,10 @@ All notable changes to VioletWire are documented in this file.
 - Video Stats now shows the session's latency profile and media transport
   immediately, then fills in live measurements as frames arrive, instead of
   opening with an empty panel.
-- When Ultra-low is selected, VioletWire now checks the available qualities
-  before creating the player and starts streams above 1080p directly in
-  Balanced mode. This avoids both Twitch PREFETCH's repeatable 1440p stutter
-  and the frozen frame caused by changing HLS profiles after playback began.
+- Explicit 1440p and Source selections now start directly in Balanced mode
+  instead of changing HLS profiles after playback begins. Automatic and 1080p
+  Ultra-low startup no longer launches a competing quality-discovery process,
+  restoring the original fast playback path without frozen first frames.
 
 ## [0.3.4-alpha.7] - 2026-08-02
 

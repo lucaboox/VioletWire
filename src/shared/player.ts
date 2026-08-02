@@ -103,6 +103,9 @@ export function isHighResolutionQuality(
   };
   const explicitHeight = heightFrom(quality);
   if (explicitHeight !== null) return explicitHeight > 1_080;
+  // Source can be above 1080p without advertising a numeric selector. Prefer
+  // the completed-fragment path for an explicit Source selection.
+  if (quality === "source") return true;
   if (quality !== "best" && quality !== "source") return false;
   return availableQualities.some((candidate) => {
     const height =
