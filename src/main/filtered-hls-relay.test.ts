@@ -50,7 +50,7 @@ segment-2.mp4
         response.writeHead(200, { "Content-Type": "application/vnd.apple.mpegurl" });
         response.end(`#EXTM3U
 #EXT-X-VERSION:6
-#EXT-X-TARGETDURATION:2
+#EXT-X-TARGETDURATION:6
 #EXT-X-DATERANGE:ID="stitched-ad-2",CLASS="twitch-stitched-ad",START-DATE="2026-07-25T12:00:02.000Z",DURATION=2
 #EXT-X-MAP:URI="init.mp4"
 #EXT-X-PROGRAM-DATE-TIME:2026-07-25T12:00:00.000Z
@@ -79,6 +79,7 @@ advertisement.mp4
       });
       const playlist = await playlistResponse.text();
       expect(playlistResponse.status).toBe(200);
+      expect(playlist).toContain("#EXT-X-TARGETDURATION:2");
       expect(playlist).not.toContain("advertisement.mp4");
       expect(playlist).not.toContain(`127.0.0.1:${address.port}`);
       expect(playlist.match(/resource\/[a-f0-9]{32}/g)?.length).toBeGreaterThan(0);

@@ -304,14 +304,15 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     hls = new Hls({
       enableWorker: true,
       lowLatencyMode: true,
-      // One complete Twitch segment previously starved Chromium on some
-      // channels. One-and-a-half segments keeps a half-segment jitter cushion
-      // while trimming another quarter segment from the normal live delay.
+      // Twitch commonly advertises a six-second target duration even though
+      // its regular media fragments are about two seconds long. Count-based
+      // sync therefore put Chromium roughly nine seconds behind. Use seconds
+      // so the intended one-and-a-half-fragment cushion stays near three.
       backBufferLength: 30,
       maxBufferLength: 20,
       maxMaxBufferLength: 30,
-      liveSyncDurationCount: 1.5,
-      liveMaxLatencyDurationCount: 3.25,
+      liveSyncDuration: 3,
+      liveMaxLatencyDuration: 7,
       // A short stall should not permanently push the target a full second
       // farther from live. Keep a smaller safety increase and let the existing
       // max-latency resync handle larger drift.

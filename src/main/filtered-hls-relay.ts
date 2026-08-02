@@ -37,7 +37,10 @@ interface ParsedPlaylist {
   segments: ParsedSegment[];
 }
 
-const PLAYLIST_CACHE_MS = 650;
+// The renderer polls this localhost playlist at the media cadence. A short
+// cache still coalesces simultaneous requests without keeping a newly arrived
+// Twitch segment hidden for most of another second.
+const PLAYLIST_CACHE_MS = 300;
 const RESOURCE_TTL_MS = 2 * 60_000;
 const MAX_RELAY_SEGMENTS = 18;
 function getPlaybackHeaders(platform: Platform): Record<string, string> {
@@ -467,10 +470,23 @@ export class FilteredHlsRelay {
       }
 
       const firstSequence = this.relaySegments[0].sequence;
+      // Twitch's upstream TARGETDURATION also covers occasional long ad
+      // fragments. Those fragments are removed above, so forwarding the old
+      // value makes hls.js refresh too slowly. Advertise the longest fragment
+      // that is actually present in the playlist we serve.
+      const relayTargetDuration = Math.max(
+        1,
+        Math.ceil(
+          this.relaySegments.reduce(
+            (maximum, segment) => Math.max(maximum, segment.duration),
+            0,
+          ),
+        ),
+      );
       const body = [
         "#EXTM3U",
         `#EXT-X-VERSION:${parsed.version}`,
-        `#EXT-X-TARGETDURATION:${Math.ceil(parsed.targetDuration)}`,
+        `#EXT-X-TARGETDURATION:${relayTargetDuration}`,
         `#EXT-X-MEDIA-SEQUENCE:${firstSequence}`,
         "#EXT-X-INDEPENDENT-SEGMENTS",
         ...this.relaySegments.flatMap((segment) => [
