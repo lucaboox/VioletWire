@@ -442,6 +442,13 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("ended", onEnded);
+      // A new playback session gets a new media element (the component is
+      // keyed by sessionId). Fully retire this decoder first so switching
+      // between Kick and Twitch cannot carry a stale Chromium media pipeline
+      // into the next stream.
+      video.pause();
+      player.stopLoad();
+      player.detachMedia();
       player.destroy();
       hidePausedFrame();
       video.removeAttribute("src");

@@ -3528,7 +3528,10 @@ export function App() {
           }
           ref={persistentHlsSurfaceRef}
         >
-          <HlsNativeVideo state={nativeState} />
+          <HlsNativeVideo
+            key={nativeState.hlsSource?.sessionId ?? "pending"}
+            state={nativeState}
+          />
         </div>
       )}
 

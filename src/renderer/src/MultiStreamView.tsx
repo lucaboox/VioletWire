@@ -282,7 +282,11 @@ const MultiTile = memo(function MultiTile({
       onMouseMove={revealControls}
       onMouseLeave={hideControls}
     >
-      <HlsNativeVideo state={tile.state} target={`multi-${tile.id}`} />
+      <HlsNativeVideo
+        key={tile.state.hlsSource?.sessionId ?? `pending-${tile.id}`}
+        state={tile.state}
+        target={`multi-${tile.id}`}
+      />
       {showOverlay && (
         <div className="multi-tile-overlay">
           <span className={`native-status-orb ${offline ? "offline" : status}`} />
