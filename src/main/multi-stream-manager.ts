@@ -3,21 +3,18 @@ import {
   MAX_MULTISTREAM_TILES,
   type MultiStreamTileState,
   type NativeHlsStateReport,
-  type NativePlaybackBackend,
   type NativePlayerCommand,
   type NativePlayerState,
   type NativeQualityValue,
-  type PlayerBounds,
 } from "../shared/player";
 import { HlsNativePlayer } from "./hls-native-player";
-import { TextureNativePlayer } from "./texture-native-player";
-
-type MultiTilePlayer = TextureNativePlayer | HlsNativePlayer;
+import { StreamPlaybackResolver } from "./stream-playback-resolver";
 
 interface Tile {
   id: number;
   channel: string;
-  player: MultiTilePlayer;
+  player: HlsNativePlayer;
+  resolver: StreamPlaybackResolver;
   state: NativePlayerState;
 }
 
@@ -26,8 +23,7 @@ type TileRemovedListener = (id: number) => void;
 
 /**
  * Runs up to {@link MAX_MULTISTREAM_TILES} Native players at once, one per
- * grid tile. Efficient HLS is preferred when selected, with libmpv texture
- * playback retained as the per-tile fallback. Only the active tile plays
+ * grid tile. Every tile uses Chromium HLS playback. Only the active tile plays
  * audio; the rest are muted.
  */
 export class MultiStreamManager {
@@ -40,7 +36,6 @@ export class MultiStreamManager {
     private readonly getStoredVolume: () => number,
     private readonly getKickCookie: () => Promise<string | null>,
     private readonly getRendererOrigin: () => string | null,
-    private readonly getPreferredBackend: () => NativePlaybackBackend,
     private readonly onTileState: TileStateListener,
     private readonly onTileRemoved: TileRemovedListener,
   ) {}
@@ -92,6 +87,7 @@ export class MultiStreamManager {
     const tile = this.tiles.get(id);
     if (!tile) return;
     tile.player.destroy();
+    tile.resolver.destroy();
     this.tiles.delete(id);
     this.onTileRemoved(id);
     if (this.activeId === id) {
@@ -111,10 +107,6 @@ export class MultiStreamManager {
     for (const tile of this.tiles.values()) this.onTileState(this.toTileState(tile));
   }
 
-  setBounds(id: number, bounds: PlayerBounds): void {
-    this.tiles.get(id)?.player.setBounds(bounds);
-  }
-
   control(id: number, command: NativePlayerCommand): void {
     this.tiles.get(id)?.player.control(command);
   }
@@ -126,66 +118,42 @@ export class MultiStreamManager {
   }
 
   stop(): void {
-    for (const tile of this.tiles.values()) tile.player.destroy();
+    for (const tile of this.tiles.values()) {
+      tile.player.destroy();
+      tile.resolver.destroy();
+    }
     this.tiles.clear();
     this.activeId = null;
-  }
-
-  recoverGraphics(): void {
-    for (const tile of this.tiles.values()) tile.player.recoverGraphics();
   }
 
   reportHlsState(report: NativeHlsStateReport): void {
     const match = /^multi-([0-3])$/.exec(report.target);
     if (!match) return;
     const tile = this.tiles.get(Number(match[1]));
-    if (tile?.player instanceof HlsNativePlayer) {
-      tile.player.report(report);
-    }
+    tile?.player.report(report);
   }
 
   private async createTile(id: number, channel: string): Promise<void> {
-    const texturePlayer = new TextureNativePlayer(
-      this.getMainWindow,
-      (state) => this.handleTileState(id, state),
+    const resolver = new StreamPlaybackResolver(
       this.getTwitchPlaybackToken,
-      String(id),
-      this.getStoredVolume,
       this.getKickCookie,
     );
-    const useHls = this.getPreferredBackend() === "hls";
-    const player: MultiTilePlayer = useHls
-      ? new HlsNativePlayer(
-          this.getMainWindow,
-          this.getRendererOrigin,
-          (targetChannel, quality) =>
-            texturePlayer.resolvePlaybackUrl(targetChannel, quality),
-          this.getStoredVolume,
-          (state) => this.handleTileState(id, state),
-          () => texturePlayer.cancelPlaybackResolution(),
-          `multi-${id}`,
-        )
-      : texturePlayer;
-    const tile: Tile = { id, channel, player, state: player.getState() };
+    const player = new HlsNativePlayer(
+      this.getMainWindow,
+      this.getRendererOrigin,
+      (targetChannel, quality) => resolver.resolve(targetChannel, quality),
+      this.getStoredVolume,
+      (state) => this.handleTileState(id, state),
+      () => resolver.cancelActiveResolution(),
+      `multi-${id}`,
+    );
+    const tile: Tile = { id, channel, player, resolver, state: player.getState() };
     this.tiles.set(id, tile);
     this.onTileState(this.toTileState(tile));
-    const result = await player.start(channel, "best", {
+    await player.start(channel, "best", {
       kind: "channel",
       detail: channel,
     });
-    if (!result.ok && player instanceof HlsNativePlayer && this.tiles.get(id) === tile) {
-      // A tile should remain watchable if Chromium rejects a stream that mpv
-      // supports. Keep this per-tile so one failure does not downgrade the
-      // other HLS streams.
-      player.destroy();
-      tile.player = texturePlayer;
-      tile.state = texturePlayer.getState();
-      this.onTileState(this.toTileState(tile));
-      await texturePlayer.start(channel, "best", {
-        kind: "channel",
-        detail: channel,
-      });
-    }
     if (this.tiles.get(id) === tile) {
       tile.player.setMuted(this.activeId !== id);
     }
@@ -196,8 +164,7 @@ export class MultiStreamManager {
     if (!tile) return;
     const wasPlaying = tile.state.status === "playing";
     tile.state = state;
-    // Enforce audio focus once a tile actually starts playing (mpv ignores mute
-    // commands before it has an audio track).
+    // Enforce audio focus once a tile actually starts playing.
     if (!wasPlaying && state.status === "playing") {
       tile.player.setMuted(this.activeId !== id);
     }

@@ -75,7 +75,6 @@ describe("PreferencesService", () => {
 
     expect(await second.getOrMigrate()).toEqual({
       preferredPlayerMode: "native",
-      nativePlaybackBackend: "hls",
       chatTimestamps: false,
       chatHistoryLimit: 100,
       chatFontSize: 21,
@@ -140,6 +139,7 @@ describe("PreferencesService", () => {
       preferencesPath,
       JSON.stringify({
         preferredPlayerMode: "native",
+        nativePlaybackBackend: "texture",
         experimentalTexturePlayer: false,
         texturePresentationMode: "bitmap",
         oledMode: true,
@@ -156,6 +156,7 @@ describe("PreferencesService", () => {
     expect(preferences.chatFontSize).toBe(19);
     expect(preferences).not.toHaveProperty("experimentalTexturePlayer");
     expect(preferences).not.toHaveProperty("texturePresentationMode");
+    expect(preferences).not.toHaveProperty("nativePlaybackBackend");
   });
 
   it("rejects invalid preference updates without changing the saved file", async () => {

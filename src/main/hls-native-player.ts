@@ -5,7 +5,6 @@ import type {
   NativePlayerState,
   NativePlayerTransition,
   NativeQualityValue,
-  PlayerBounds,
 } from "../shared/player";
 import { parseChannelKey } from "../shared/platform";
 import { FilteredHlsRelay } from "./filtered-hls-relay";
@@ -25,7 +24,6 @@ export class HlsNativePlayer {
     compressorEnabled: false,
     behindLive: false,
     quality: "best",
-    backend: "hls",
   };
 
   constructor(
@@ -61,7 +59,6 @@ export class HlsNativePlayer {
       compressorEnabled: this.state.compressorEnabled,
       behindLive: false,
       quality,
-      backend: "hls",
       hlsSource: undefined,
       error: undefined,
       transition,
@@ -183,15 +180,6 @@ export class HlsNativePlayer {
     this.applyMuted(muted);
   }
 
-  setBounds(bounds: PlayerBounds): void {
-    void bounds;
-    // Chromium lays the <video> out with CSS; no native surface resize exists.
-  }
-
-  recoverGraphics(): void {
-    // Chromium owns decoder/device recovery for the HTML video backend.
-  }
-
   destroy(): void {
     const wasActive = this.relay !== null || this.state.status !== "idle";
     this.generation += 1;
@@ -206,7 +194,6 @@ export class HlsNativePlayer {
       volume: Math.min(100, Math.max(0, Math.round(this.getStoredVolume()))),
       behindLive: false,
       quality: "best",
-      backend: "hls",
       hlsSource: undefined,
       error: undefined,
       transition: undefined,

@@ -94,8 +94,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     if (
       !video ||
       !hlsSessionId ||
-      !hlsPlaylistUrl ||
-      state.backend !== "hls"
+      !hlsPlaylistUrl
     ) {
       return;
     }
@@ -451,7 +450,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       audioGraph.current = null;
       if (graph) void graph.context.close();
     };
-  }, [hlsPlaylistUrl, hlsSessionId, state.backend, target]);
+  }, [hlsPlaylistUrl, hlsSessionId, target]);
 
   return (
     <>

@@ -6,6 +6,12 @@ All notable changes to VioletWire are documented in this file.
 
 ### Improvements
 
+- Native playback now uses the proven Chromium HLS pipeline exclusively. The
+  legacy libmpv texture/window backends, native addon, GPU texture bridge,
+  renderer preference, bundled DLLs, and native build dependencies were
+  removed, substantially reducing package complexity and size while keeping
+  Streamlink authentication, quality selection, low latency, multistream, and
+  player controls.
 - Chromium HLS playback now uses an explicit three-second live target instead
   of multiplying Twitch's oversized advertised target duration, refreshes the
   filtered playlist at the actual content-segment cadence, and adds less

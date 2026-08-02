@@ -574,7 +574,6 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .persistent-hls-surface.mini-surface { z-index: 119; }
 .player-host.hls-surface-host { z-index: 2; background: transparent; }
 .standard-player-frame { display: block; width: 100%; height: 100%; border: 0; background: #050506; }
-.native-texture-canvas { position: absolute; z-index: 0; display: block; width: 100%; height: 100%; inset: 0; object-fit: contain; background: #000; }
 .native-hls-video { position: absolute; z-index: 0; display: block; width: 100%; height: 100%; inset: 0; object-fit: contain; background: #000; }
 .native-hls-paused-frame { position: absolute; z-index: 1; display: block; width: 100%; height: 100%; inset: 0; object-fit: contain; background: #000; pointer-events: none; }
 .native-hls-paused-frame[hidden] { display: none; }
@@ -584,12 +583,11 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
    anchor; until then the box sits in the bottom-right corner. */
 .mini-player { position: fixed; z-index: 120; right: 18px; bottom: 18px; width: 320px; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #3a3a42; border-radius: 0; background: #000; box-shadow: 0 16px 48px rgb(0 0 0 / 70%); cursor: pointer; touch-action: none; user-select: none; }
 .mini-player.hls-surface-host { background: transparent; }
-/* cover, not contain: frames arriving before the addon finishes resizing
-   still carry the page-sized buffer with letterbox bars baked in. mpv always
+/* Cover, not contain: frames remain full-bleed while the compact player is
+   resized. The video always
    centers the video, so cover crops those bars exactly and the box is
    full-bleed from the very first frame — no visible fill-in jump. Once the
    buffer matches the box's 16:9, cover and contain are identical. */
-.mini-player .mini-player-canvas { position: absolute; inset: 0; object-fit: cover; }
 .mini-player .native-hls-video, .mini-player .native-hls-paused-frame { object-fit: cover; }
 .mini-player-close { position: absolute; z-index: 2; top: 6px; right: 6px; display: grid; width: 28px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 6px; color: #e4e4e7; background: rgb(10 10 12 / 72%); cursor: pointer; opacity: 0; transition: opacity 120ms ease; }
 .mini-player-resize { position: absolute; z-index: 2; top: 6px; left: 6px; display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 6px; color: #d4d4d8; background: rgb(10 10 12 / 72%); cursor: nwse-resize; opacity: 0; transition: opacity 120ms ease; }

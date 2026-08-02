@@ -4,7 +4,6 @@ import {
   ipcMain,
   Menu,
   nativeImage,
-  powerMonitor,
   screen,
   shell,
   WebContentsView,
@@ -21,18 +20,16 @@ import {
   nativeHlsStateReportSchema,
   nativeQualitySchema,
   nativePlayerCommandSchema,
-  playerBoundsSchema,
   playerModeSchema,
   MAX_MULTISTREAM_TILES,
-  type NativePlaybackBackend,
   type NativePlayerState,
   type PlayerMode,
 } from "../shared/player";
 import { z } from "zod";
 import { twitchChatColorInputSchema } from "../shared/twitch";
 import { channelKeySchema, parseChannelKey, type Platform } from "../shared/platform";
-import { TextureNativePlayer } from "./texture-native-player";
 import { HlsNativePlayer } from "./hls-native-player";
+import { StreamPlaybackResolver } from "./stream-playback-resolver";
 import { MultiStreamManager } from "./multi-stream-manager";
 import { MultiChatService } from "./multi-chat-service";
 import { TwitchService } from "./twitch-service";
@@ -84,7 +81,6 @@ let mainWindow: BrowserWindow | null = null;
 let channelActionWindow: BrowserWindow | null = null;
 let subscriptionWindow: BrowserWindow | null = null;
 let activePlayerMode: PlayerMode | null = null;
-let activeNativeBackend: NativePlaybackBackend | null = null;
 let activeChannelName: string | null = null;
 let playerOpenGeneration = 0;
 let rendererServer: RendererServer | null = null;
@@ -133,8 +129,7 @@ const thumbarIcons =
 
 function controlActiveNativePlayer(command: Parameters<HlsNativePlayer["control"]>[0]): void {
   if (activePlayerMode !== "native") return;
-  if (activeNativeBackend === "hls") hlsNativePlayer.control(command);
-  else textureNativePlayer.control(command);
+  hlsNativePlayer.control(command);
 }
 
 function updateThumbnailToolbar(state = latestNativePlayerState): void {
@@ -269,12 +264,8 @@ const kickChatService = new KickChatService(
     sendToWindow(mainWindow, "chat:restrictions", restrictions);
   },
 );
-const textureNativePlayer = new TextureNativePlayer(
-  () => mainWindow,
-  publishNativePlayerState,
+const streamPlaybackResolver = new StreamPlaybackResolver(
   () => playbackSessionService.getToken(),
-  "main",
-  () => preferencesService.get().playerVolume,
   () => kickService.getStreamlinkCookie(),
 );
 const multiStreamManager = new MultiStreamManager(
@@ -283,7 +274,6 @@ const multiStreamManager = new MultiStreamManager(
   () => preferencesService.get().playerVolume,
   () => kickService.getStreamlinkCookie(),
   () => trustedRendererOrigin,
-  () => preferencesService.get().nativePlaybackBackend,
   (tile) => sendToWindow(mainWindow, "native-multi:tile-state", tile),
   (id) => sendToWindow(mainWindow, "native-multi:tile-removed", id),
 );
@@ -299,10 +289,10 @@ const preferencesService = new PreferencesService();
 const hlsNativePlayer = new HlsNativePlayer(
   () => mainWindow,
   () => trustedRendererOrigin,
-  (channel, quality) => textureNativePlayer.resolvePlaybackUrl(channel, quality),
+  (channel, quality) => streamPlaybackResolver.resolve(channel, quality),
   () => preferencesService.get().playerVolume,
   publishNativePlayerState,
-  () => textureNativePlayer.cancelPlaybackResolution(),
+  () => streamPlaybackResolver.cancelActiveResolution(),
 );
 function isAllowedTwitchNavigation(rawUrl: string): boolean {
   try {
@@ -604,19 +594,15 @@ async function openSubscriptionModal(
   win.focus();
 }
 
-function destroyPlayer(invalidatePendingOpen = true, keepTextureSession = false): void {
+function destroyPlayer(invalidatePendingOpen = true): void {
   if (invalidatePendingOpen) playerOpenGeneration += 1;
   if (channelActionWindow && !channelActionWindow.isDestroyed()) channelActionWindow.close();
   channelActionWindow = null;
   if (subscriptionWindow && !subscriptionWindow.isDestroyed()) subscriptionWindow.close();
   subscriptionWindow = null;
-  // A native→native channel switch keeps the texture session so mpv can swap
-  // streams in place instead of rebuilding the whole graphics pipeline.
-  if (!keepTextureSession) textureNativePlayer.destroy();
   hlsNativePlayer.destroy();
   twitchChatService.disconnect();
   activePlayerMode = null;
-  activeNativeBackend = null;
   activeChannelName = null;
   latestNativePlayerState = null;
   updateThumbnailToolbar();
@@ -830,24 +816,12 @@ handleTrusted(
   // Opening a single stream leaves multistream mode; free those tiles first.
   if (multiStreamManager.isActive()) multiStreamManager.stop();
   const openGeneration = ++playerOpenGeneration;
-  const requestedBackend: NativePlaybackBackend =
-    requestedMode === "native" &&
-    preferencesService.get().nativePlaybackBackend === "hls"
-      ? "hls"
-      : "texture";
-  const keepTextureSession =
-    requestedMode === "native" &&
-    activePlayerMode === "native" &&
-    activeNativeBackend === "texture" &&
-    requestedBackend === "texture";
-  destroyPlayer(false, keepTextureSession);
+  destroyPlayer(false);
   activeChannelName = channel;
 
   let fallbackReason: string | undefined;
   if (requestedMode === "native") {
-    const nativeResult = await (
-      requestedBackend === "hls" ? hlsNativePlayer : textureNativePlayer
-    ).start(channel, requestedQuality, {
+    const nativeResult = await hlsNativePlayer.start(channel, requestedQuality, {
       kind: "channel",
       detail: channel,
     });
@@ -856,16 +830,11 @@ handleTrusted(
       return { channel, mode: requestedMode };
     }
     if (!nativeResult.ok) fallbackReason = nativeResult.reason;
-    activeNativeBackend = requestedBackend;
   }
 
   activePlayerMode = requestedMode;
   latestNativePlayerState =
-    requestedMode === "native"
-      ? requestedBackend === "hls"
-        ? hlsNativePlayer.getState()
-        : textureNativePlayer.getState()
-      : null;
+    requestedMode === "native" ? hlsNativePlayer.getState() : null;
   updateThumbnailToolbar();
 
   // Each service has its own chat transport, and only one is ever live.
@@ -884,19 +853,11 @@ handleTrusted(
 
 handleTrusted("player:close", () => destroyPlayer());
 
-onTrusted("player:set-bounds", (_event, input: unknown) => {
-  const result = playerBoundsSchema.safeParse(input);
-  if (!result.success) return;
-  // The optimistic renderer mounts before Streamlink resolves. Retain those
-  // initial measurements so the texture addon starts at the real player size.
-  textureNativePlayer.setBounds(result.data);
-});
-
-handleTrusted("native-player:get-availability", () => textureNativePlayer.getAvailability());
+handleTrusted("native-player:get-availability", () => streamPlaybackResolver.getAvailability());
 
 handleTrusted("native-player:get-qualities", (_event, input: unknown) => {
   const channel = channelKeySchema.parse(input);
-  return textureNativePlayer.getQualities(channel);
+  return streamPlaybackResolver.getQualities(channel);
 });
 
 handleTrusted(
@@ -905,9 +866,7 @@ handleTrusted(
     if (activePlayerMode !== "native") return;
     const channel = channelKeySchema.parse(channelInput);
     const quality = nativeQualitySchema.parse(qualityInput);
-    const player =
-      activeNativeBackend === "hls" ? hlsNativePlayer : textureNativePlayer;
-    const result = await player.start(channel, quality, {
+    const result = await hlsNativePlayer.start(channel, quality, {
       kind: "quality",
       detail: quality,
     });
@@ -928,40 +887,20 @@ function persistPlayerVolume(volume: number): void {
 }
 
 handleTrusted("native-player:stats", () =>
-  activePlayerMode === "native"
-    ? activeNativeBackend === "hls"
-      ? hlsNativePlayer.getStats()
-      : textureNativePlayer.getStats()
-    : null,
+  activePlayerMode === "native" ? hlsNativePlayer.getStats() : null,
 );
-onTrusted("native-player:presented-fps", (_event, input: unknown) => {
-  if (
-    activePlayerMode !== "native" ||
-    typeof input !== "number" ||
-    !Number.isFinite(input) ||
-    input < 0 ||
-    input > 240
-  ) {
-    return;
-  }
-  if (activeNativeBackend === "texture") {
-    textureNativePlayer.reportPresentedFps(input);
-  }
-});
 onTrusted("native-player:control", (_event, input: unknown) => {
   const result = nativePlayerCommandSchema.safeParse(input);
   if (!result.success || activePlayerMode !== "native") return;
   if (result.data.command === "set-volume") persistPlayerVolume(result.data.value);
-  if (activeNativeBackend === "hls") hlsNativePlayer.control(result.data);
-  else textureNativePlayer.control(result.data);
+  hlsNativePlayer.control(result.data);
 });
 onTrusted("native-hls:state", (_event, input: unknown) => {
   const result = nativeHlsStateReportSchema.safeParse(input);
   if (!result.success) return;
   if (
     result.data.target === "main" &&
-    activePlayerMode === "native" &&
-    activeNativeBackend === "hls"
+    activePlayerMode === "native"
   ) {
     hlsNativePlayer.report(result.data);
   } else if (result.data.target.startsWith("multi-") && multiStreamManager.isActive()) {
@@ -985,8 +924,8 @@ handleTrusted("native-multi:start", async (_event, input: unknown) => {
     const result = channelKeySchema.safeParse(entry);
     if (result.success) channels.push(result.data);
   }
-  // Multistream replaces the single full-window player; tear it down so its
-  // mpv/GPU resources are free before the tiles start.
+  // Multistream replaces the single full-window player; tear it down before
+  // the tile sessions start.
   destroyPlayer();
   const tiles = await multiStreamManager.start(channels);
   // Connect every tile's chat up front so switching tabs is instant.
@@ -1018,12 +957,6 @@ onTrusted("native-multi:set-active", (_event, input: unknown) => {
   if (isMultiTileId(input)) multiStreamManager.setActive(input);
 });
 
-onTrusted("native-multi:set-bounds", (_event, idInput: unknown, boundsInput: unknown) => {
-  if (!isMultiTileId(idInput)) return;
-  const result = playerBoundsSchema.safeParse(boundsInput);
-  if (result.success) multiStreamManager.setBounds(idInput, result.data);
-});
-
 onTrusted("native-multi:control", (_event, idInput: unknown, commandInput: unknown) => {
   if (!isMultiTileId(idInput)) return;
   const result = nativePlayerCommandSchema.safeParse(commandInput);
@@ -1043,7 +976,7 @@ onTrusted("player:preresolve", (_event, input: unknown) => {
   // skips the Streamlink round trip.
   const preferences = preferencesService.get();
   if (preferences.preferredPlayerMode !== "native") return;
-  textureNativePlayer.preresolve(result.data);
+  streamPlaybackResolver.preresolve(result.data);
 });
 
 onTrusted("native-controls:action", (_event, input: unknown) => {
@@ -1360,14 +1293,6 @@ app.whenReady().then(async () => {
   // menu also prevents Windows from revealing File/Edit/View when Alt is used
   // for emote-picker shortcuts.
   Menu.setApplicationMenu(null);
-  powerMonitor.on("resume", () => {
-    textureNativePlayer.recoverGraphics();
-    multiStreamManager.recoverGraphics();
-  });
-  powerMonitor.on("unlock-screen", () => {
-    textureNativePlayer.recoverGraphics();
-    multiStreamManager.recoverGraphics();
-  });
   await preferencesService.initialize();
   await playbackSessionService.initialize();
   await twitchService.initialize();

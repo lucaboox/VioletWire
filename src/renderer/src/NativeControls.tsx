@@ -17,7 +17,6 @@ import {
   ChevronRight,
   Check,
   Gauge,
-  Info,
   Lock,
   MessageSquareOff,
   MessageSquareText,
@@ -614,7 +613,6 @@ export function NativeControls({
   );
 
   useEffect(() => {
-    if (state.backend !== "hls") return;
     const video = document.querySelector<HTMLVideoElement>(
       ".player-host > .native-hls-video",
     );
@@ -630,7 +628,7 @@ export function NativeControls({
       video.removeEventListener("enterpictureinpicture", updatePictureInPictureState);
       video.removeEventListener("leavepictureinpicture", updatePictureInPictureState);
     };
-  }, [channel, state.backend]);
+  }, [channel]);
 
   useEffect(() => {
     if (currentChannel.current !== channel) {
@@ -994,127 +992,32 @@ export function NativeControls({
     reportActivity();
   }
 
-  // mpv reports everything as strings in its own units. Turn the handful worth
-  // showing into labelled rows, dropping any the player has not resolved yet.
+  // Turn hls.js/Chromium diagnostics into labelled rows, dropping values that
+  // have not been measured yet.
   const statsRows = useMemo(() => {
     if (!stats) return [];
     const read = (key: string) => {
       const value = stats[key];
       return value && value.length > 0 ? value : null;
     };
-    // Number(null) is 0, not NaN, so an absent property has to be rejected
-    // before the conversion or every missing figure reads as a real zero.
-    const number = (key: string) => {
-      const raw = read(key);
-      if (raw === null) return null;
-      const value = Number(raw);
-      return Number.isFinite(value) ? value : null;
-    };
-    const round = (key: string, digits = 0) => number(key)?.toFixed(digits) ?? null;
-    const megabits = (key: string) => {
-      const value = number(key);
-      return value === null ? null : `${(value / 1_000_000).toFixed(2)} Mbps`;
-    };
-    const kilobits = (key: string) => {
-      const value = number(key);
-      return value === null ? null : `${Math.round(value / 1000)} kbps`;
-    };
-    const pair = (first: string, second: string, separator = " x ") => {
-      const a = read(first);
-      const b = read(second);
-      return a && b ? `${a}${separator}${b}` : null;
-    };
-
-    if (read("Protocol") === "Filtered local HLS") {
-      return [
-        { label: "Latency", value: read("Latency") },
-        { label: "Low latency mode", value: read("Low latency mode") },
-        { label: "Resolution", value: read("Resolution") },
-        { label: "Framerate", value: read("FPS") },
-        { label: "Bitrate", value: read("Video bitrate") },
-        { label: "Dropped frames", value: read("Dropped frames") },
-        { label: "Playback rate", value: read("Playback rate") },
-        { label: "Buffer size", value: read("Buffer") },
-      ].filter(
-        (row): row is { label: string; value: string } =>
-          row.value !== null,
-      );
-    }
-
-    const source = pair("width", "height");
-    const display = pair("dwidth", "dheight");
-    const dropped = (() => {
-      const decoder = read("decoder-frame-drop-count") ?? "0";
-      const output = read("frame-drop-count") ?? "0";
-      return `${decoder} decoder, ${output} output`;
-    })();
-    const cache = (() => {
-      const seconds = round("demuxer-cache-duration", 1);
-      return seconds ? `${seconds} sec` : null;
-    })();
-    const sync = (() => {
-      const value = number("avsync");
-      return value === null ? null : `${value >= 0 ? "+" : ""}${value.toFixed(3)} sec`;
-    })();
-    // vw-fps is the real presented rate the main process measures from frame
-    // delivery; mpv's estimated-vf-fps stays 0 with the render API. Fall back to
-    // the estimate and then the container's declared rate.
-    const fps = (() => {
-      const measured = number("vw-fps");
-      if (measured !== null && measured > 0) return measured.toFixed(0);
-      const estimated = number("estimated-vf-fps");
-      if (estimated !== null && estimated > 0) return estimated.toFixed(1);
-      return round("container-fps", 1);
-    })();
-    const audio = (() => {
-      const channels = read("audio-params/channel-count");
-      const rate = read("audio-params/samplerate");
-      if (!channels || !rate) return null;
-      return `${channels} ch, ${Math.round(Number(rate) / 1000)} kHz`;
-    })();
-
-    const rows: { label: string; value: string }[] = [];
-    const push = (label: string, value: string | null) => {
-      if (value) rows.push({ label, value });
-    };
-    push("Resolution", source);
-    push("Display", display);
-    push("FPS", fps);
-    push("Frame delivery", round("vw-delivery-fps", 1));
-    push("Presentation", read("vw-presentation"));
-    push("Display refresh", round("display-fps", 2));
-    push("Estimated display", round("estimated-display-fps", 2));
-    push("Video", read("video-codec"));
-    push("Pixel format", read("video-format"));
-    push("Hardware decode", read("hwdec-current"));
-    push("Decoder preference", read("vw-decoder-preference"));
-    push("Render path", read("vw-render-path"));
-    push("Texture bridge", read("vw-texture-bridge"));
-    push("Chromium GPU", read("vw-chromium-gpu"));
-    push("D3D11 texture GPU", read("vw-d3d11-adapter"));
-    push("OpenGL GPU", read("vw-opengl-adapter"));
-    push("Video bitrate", megabits("video-bitrate"));
-    push("Audio", read("audio-codec-name"));
-    push("Audio bitrate", kilobits("audio-bitrate"));
-    push("Audio format", audio);
-    push("Output", read("current-ao"));
-    push("Video output", read("current-vo"));
-    push("Dropped frames", dropped);
-    push("Mistimed frames", read("mistimed-frame-count"));
-    push("Delayed frames", read("vo-delayed-frame-count"));
-    push("VSync jitter", read("vsync-jitter"));
-    push("Buffer", cache);
-    push("A/V sync", sync);
-    push("Protocol", read("file-format"));
-    return rows;
+    return [
+      { label: "Latency", value: read("Latency") },
+      { label: "Low latency mode", value: read("Low latency mode") },
+      { label: "Resolution", value: read("Resolution") },
+      { label: "Framerate", value: read("FPS") },
+      { label: "Bitrate", value: read("Video bitrate") },
+      { label: "Dropped frames", value: read("Dropped frames") },
+      { label: "Playback rate", value: read("Playback rate") },
+      { label: "Buffer size", value: read("Buffer") },
+    ].filter(
+      (row): row is { label: string; value: string } => row.value !== null,
+    );
   }, [stats]);
 
-  // Chromium's compact latency badge needs current HLS stats even while the
-  // full panel is closed. The libmpv backend remains idle unless its panel or
-  // corner FPS readout is visible.
+  // The compact latency badge needs current HLS stats even while the full
+  // panel is closed.
   useEffect(() => {
     const statsRequested = statsOpen || statsHovered || fpsOverlay;
-    if (!statsRequested && state.backend !== "hls") return;
     // Do not reconcile the entire controls/chat tree for a background latency
     // badge while the user is reading older messages. Opening or hovering the
     // stats UI still requests fresh figures immediately.
@@ -1136,7 +1039,6 @@ export function NativeControls({
   }, [
     chatAutoScroll,
     fpsOverlay,
-    state.backend,
     statsHovered,
     statsOpen,
   ]);
@@ -1149,15 +1051,13 @@ export function NativeControls({
       )?.value ?? null,
     [statsRows],
   );
-  const latencyDisplay =
-    state.backend === "hls" ? (stats?.Latency ?? null) : null;
+  const latencyDisplay = stats?.Latency ?? null;
 
   // Clearing here rather than in the effect keeps a stale reading from showing
   // for a frame when the panel is reopened. Kept if the FPS overlay still needs it.
   function closeOrOpenStats(next?: boolean) {
     const open = next ?? !statsOpen;
     setStatsOpen(open);
-    if (!open && !fpsOverlay && state.backend !== "hls") setStats(null);
   }
 
   function toggleFpsOverlay(next: boolean) {
@@ -1195,7 +1095,7 @@ export function NativeControls({
   }
 
   async function togglePictureInPicture() {
-    if (state.backend !== "hls" || !document.pictureInPictureEnabled) return;
+    if (!document.pictureInPictureEnabled) return;
     const video = document.querySelector<HTMLVideoElement>(
       ".player-host > .native-hls-video",
     );
@@ -1754,13 +1654,11 @@ export function NativeControls({
       )}
       {statsOpen && (
         <div
-          className={`stats-panel${state.backend === "hls" ? " hls-stats" : ""}`}
+          className="stats-panel hls-stats"
           onPointerDown={(event) => event.stopPropagation()}
         >
           <header>
-            <strong>
-              {state.backend === "hls" ? "Video Player Stats" : "Video stats"}
-            </strong>
+            <strong>Video Player Stats</strong>
             <button aria-label="Close video stats" onClick={() => closeOrOpenStats(false)} type="button">
               <X size={15} />
             </button>
@@ -1769,7 +1667,7 @@ export function NativeControls({
             <dl>
               {statsRows.map((row, index) => (
                 <Fragment key={row.label}>
-                  {state.backend === "hls" && (index === 2 || index === 5) && (
+                  {(index === 2 || index === 5) && (
                     <span aria-hidden="true" className="stats-row-divider" />
                   )}
                   <dt>{row.label}</dt>
@@ -1910,23 +1808,14 @@ export function NativeControls({
                 : "Video stats"
             }
             aria-pressed={statsOpen}
-            className={`${statsOpen ? "active " : ""}${
-              state.backend === "hls" ? "latency-stats-button" : ""
-            }`.trim()}
-            data-tooltip={state.backend === "hls" ? undefined : "Video stats"}
+            className={`${statsOpen ? "active " : ""}latency-stats-button`.trim()}
             onClick={() => closeOrOpenStats()}
             type="button"
           >
-            {state.backend === "hls" ? (
-              <>
-                <Gauge size={17} />
-                {latencyDisplay && <span>{latencyDisplay}</span>}
-              </>
-            ) : (
-              <Info size={18} />
-            )}
+            <Gauge size={17} />
+            {latencyDisplay && <span>{latencyDisplay}</span>}
           </button>
-          {state.backend === "hls" && statsHovered && !statsOpen && (
+          {statsHovered && !statsOpen && (
             <div className="stats-hover-card" role="tooltip">
               <strong>Video Player Stats</strong>
               {statsRows.length > 0 ? (
@@ -1971,7 +1860,7 @@ export function NativeControls({
             <MessageSquareOff size={18} />
           )}
         </button>
-        {state.backend === "hls" && document.pictureInPictureEnabled && (
+        {document.pictureInPictureEnabled && (
           <button
             aria-label={
               pictureInPictureActive

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, sharedTexture } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 import type {
   ChannelAction,
   DesktopApi,
@@ -8,7 +8,6 @@ import type {
   NativePlayerCommand,
   NativePlayerState,
   NativeQualityValue,
-  PlayerBounds,
   PlayerMode,
 } from "../shared/player";
 import type { TwitchApi, BrowseCategory, BrowseStream, BrowsePage } from "../shared/twitch";
@@ -31,151 +30,6 @@ import type {
   AppPreferencesPatch,
   PreferencesApi,
 } from "../shared/preferences";
-
-// Each render target ("main" for the single full-window/mini player, or a
-// multistream tile id) tracks its own newest sequence and cached canvas so
-// tiles never drop one another's frames or paint onto the wrong <canvas>.
-const newestTextureSequence = new Map<string, number>();
-const textureCanvases = new Map<string, HTMLCanvasElement>();
-const textureContexts = new Map<string, CanvasRenderingContext2D>();
-type TexturePaintJob = {
-  imported: Electron.SharedTextureImported;
-  target: string;
-  sequence: number;
-  complete: () => void;
-};
-const activeTexturePaints = new Set<string>();
-const queuedTexturePaints = new Map<string, TexturePaintJob>();
-const presentedTextureFrames: number[] = [];
-let lastPresentedFpsReport = 0;
-
-function readTransferTarget(userData: unknown): {
-  target: string;
-  sequence: number;
-} {
-  if (typeof userData === "object" && userData !== null) {
-    const record = userData as {
-      target?: unknown;
-      sequence?: unknown;
-    };
-    return {
-      target: typeof record.target === "string" ? record.target : "main",
-      sequence: typeof record.sequence === "number" ? record.sequence : Number.NaN,
-    };
-  }
-  // Back-compat with the pre-multistream protocol where userData was the raw
-  // sequence number and there was only the "main" target.
-  return {
-    target: "main",
-    sequence: typeof userData === "number" ? userData : Number.NaN,
-  };
-}
-
-function discardTextureJob(job: TexturePaintJob): void {
-  job.imported.release();
-  job.complete();
-}
-
-function reportPresentedFrame(target: string): void {
-  if (target !== "main") return;
-  const now = performance.now();
-  presentedTextureFrames.push(now);
-  while (presentedTextureFrames[0] !== undefined && presentedTextureFrames[0] < now - 1_000) {
-    presentedTextureFrames.shift();
-  }
-  if (now - lastPresentedFpsReport >= 250) {
-    lastPresentedFpsReport = now;
-    ipcRenderer.send("native-player:presented-fps", presentedTextureFrames.length);
-  }
-}
-
-async function paintTextureJob(job: TexturePaintJob): Promise<void> {
-  let frame: VideoFrame | null = null;
-  try {
-    frame = job.imported.getVideoFrame();
-    // Nothing can be seen while the document is hidden; skip the canvas work.
-    // Decode and audio continue, and the next frame after the
-    // window becomes visible repaints the canvas.
-    if (document.visibilityState === "hidden") return;
-    // Cached: querying the DOM per frame at 60 FPS is measurable waste.
-    let canvas = textureCanvases.get(job.target);
-    if (!canvas?.isConnected) {
-      textureCanvases.delete(job.target);
-      textureContexts.delete(job.target);
-      canvas =
-        document.querySelector<HTMLCanvasElement>(
-          `[data-native-texture-canvas="${job.target}"]`,
-        ) ?? undefined;
-      if (canvas) textureCanvases.set(job.target, canvas);
-    }
-    if (!canvas) return;
-    const width = frame.displayWidth;
-    const height = frame.displayHeight;
-    if (canvas.width !== width) canvas.width = width;
-    if (canvas.height !== height) canvas.height = height;
-
-    let context = textureContexts.get(job.target);
-    if (!context) {
-      context =
-        canvas.getContext("2d", {
-          alpha: false,
-          desynchronized: true,
-        }) ?? undefined;
-      if (context) textureContexts.set(job.target, context);
-    }
-    if (!context) return;
-    context.drawImage(frame, 0, 0, width, height);
-    reportPresentedFrame(job.target);
-  } finally {
-    frame?.close();
-    job.imported.release();
-  }
-}
-
-async function drainTexturePaints(initialJob: TexturePaintJob): Promise<void> {
-  let job: TexturePaintJob | undefined = initialJob;
-  while (job) {
-    try {
-      await paintTextureJob(job);
-    } catch {
-      // A single rejected conversion must not strand this target's queue. The
-      // next shared texture is independent and can still paint successfully.
-    } finally {
-      job.complete();
-    }
-    job = queuedTexturePaints.get(initialJob.target);
-    queuedTexturePaints.delete(initialJob.target);
-  }
-  activeTexturePaints.delete(initialJob.target);
-}
-
-sharedTexture.setSharedTextureReceiver((received, userData: unknown) => {
-  const { target, sequence } = readTransferTarget(userData);
-  return new Promise<void>((complete) => {
-    const job: TexturePaintJob = {
-      imported: received.importedSharedTexture,
-      target,
-      sequence,
-      complete,
-    };
-    const newest = newestTextureSequence.get(target) ?? -1;
-    if (Number.isFinite(sequence) && sequence <= newest) {
-      discardTextureJob(job);
-      return;
-    }
-    if (Number.isFinite(sequence)) newestTextureSequence.set(target, sequence);
-
-    if (activeTexturePaints.has(target)) {
-      const superseded = queuedTexturePaints.get(target);
-      if (superseded) discardTextureJob(superseded);
-      queuedTexturePaints.set(target, job);
-      return;
-    }
-
-    activeTexturePaints.add(target);
-    void drainTexturePaints(job);
-  });
-});
 
 const api: DesktopApi = {
   system: {
@@ -299,7 +153,6 @@ const api: DesktopApi = {
     open: (channel: string, mode: PlayerMode, quality?: NativeQualityValue) =>
       ipcRenderer.invoke("player:open", channel, mode, quality),
     close: () => ipcRenderer.invoke("player:close"),
-    setBounds: (bounds: PlayerBounds) => ipcRenderer.send("player:set-bounds", bounds),
     preresolveStream: (channel: string) => ipcRenderer.send("player:preresolve", channel),
     setFullscreen: (fullscreen) => ipcRenderer.invoke("window:set-fullscreen", fullscreen),
     onFullscreenChanged: (listener: (fullscreen: boolean) => void) => {
@@ -367,8 +220,6 @@ const api: DesktopApi = {
       ipcRenderer.invoke("native-multi:add-tile", channel) as Promise<MultiStreamTileState | null>,
     multiRemoveTile: (id: number) => ipcRenderer.send("native-multi:remove-tile", id),
     multiSetActive: (id: number) => ipcRenderer.send("native-multi:set-active", id),
-    multiSetBounds: (id: number, bounds: PlayerBounds) =>
-      ipcRenderer.send("native-multi:set-bounds", id, bounds),
     multiControl: (id: number, command: NativePlayerCommand) =>
       ipcRenderer.send("native-multi:control", id, command),
     multiSetQuality: (id: number, quality: NativeQualityValue) =>

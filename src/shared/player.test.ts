@@ -7,7 +7,6 @@ import {
   nativePlayerCommandSchema,
   parseStreamlinkQualityOutput,
   presentNativePlaybackError,
-  playerBoundsSchema,
   playerModeSchema,
 } from "./player";
 
@@ -29,21 +28,6 @@ describe("channelNameSchema", () => {
     "rejects unsafe channel input %s",
     (value) => expect(() => channelNameSchema.parse(value)).toThrow(),
   );
-});
-
-describe("playerBoundsSchema", () => {
-  it("accepts a visible integer rectangle", () => {
-    expect(playerBoundsSchema.parse({ x: 0, y: 68, width: 1280, height: 720 })).toEqual({
-      x: 0,
-      y: 68,
-      width: 1280,
-      height: 720,
-    });
-  });
-
-  it("rejects negative or empty bounds", () => {
-    expect(() => playerBoundsSchema.parse({ x: -1, y: 0, width: 0, height: 720 })).toThrow();
-  });
 });
 
 describe("channelActionSchema", () => {
@@ -145,6 +129,6 @@ describe("presentNativePlaybackError", () => {
   });
 
   it("preserves unrelated native-player errors", () => {
-    expect(presentNativePlaybackError("mpv could not start")).toBe("mpv could not start");
+    expect(presentNativePlaybackError("decoder could not start")).toBe("decoder could not start");
   });
 });

@@ -202,7 +202,6 @@ const MultiTile = memo(function MultiTile({
   onToggleCompressor,
   onSetQuality,
 }: MultiTileProps) {
-  const hostRef = useRef<HTMLDivElement>(null);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [qualities, setQualities] = useState<NativeQuality[]>([]);
   // Controls auto-hide exactly like the single player: they start visible, hide
@@ -251,32 +250,6 @@ const MultiTile = memo(function MultiTile({
     };
   }, [qualityMenuOpen, qualities.length, tile.channel]);
 
-  // Report the tile's on-screen size so the tile's mpv instance renders at the
-  // right resolution (same CSS-pixel convention as the single player).
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const report = () => {
-      const bounds = host.getBoundingClientRect();
-      if (bounds.width < 1 || bounds.height < 1) return;
-      window.desktop.player.multiSetBounds(tile.id, {
-        x: Math.round(bounds.x),
-        y: Math.round(bounds.y),
-        width: Math.round(bounds.width),
-        height: Math.round(bounds.height),
-        scale: window.devicePixelRatio || 1,
-      });
-    };
-    report();
-    const observer = new ResizeObserver(report);
-    observer.observe(host);
-    window.addEventListener("resize", report);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", report);
-    };
-  }, [tile.id]);
-
   const { status, error } = tile.state;
   const offline = error === "Stream is offline." || /offline|no playable streams/i.test(error ?? "");
   const showOverlay = status !== "playing";
@@ -290,7 +263,6 @@ const MultiTile = memo(function MultiTile({
       ]
         .filter(Boolean)
         .join(" ")}
-      ref={hostRef}
       onClick={() => onActivate(tile.id)}
       onAuxClick={(event) => {
         if (event.button !== 1) return;
@@ -310,15 +282,7 @@ const MultiTile = memo(function MultiTile({
       onMouseMove={revealControls}
       onMouseLeave={hideControls}
     >
-      {tile.state.backend === "hls" ? (
-        <HlsNativeVideo state={tile.state} target={`multi-${tile.id}`} />
-      ) : (
-        <canvas
-          className="native-texture-canvas"
-          data-native-texture-canvas={String(tile.id)}
-          aria-hidden="true"
-        />
-      )}
+      <HlsNativeVideo state={tile.state} target={`multi-${tile.id}`} />
       {showOverlay && (
         <div className="multi-tile-overlay">
           <span className={`native-status-orb ${offline ? "offline" : status}`} />

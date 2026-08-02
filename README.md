@@ -37,7 +37,7 @@ subscription status, and other authenticated data — through Twitch's OAuth and
 separately, a Kick sign-in.
 
 VioletWire is an independent project and is not affiliated with, endorsed by, or
-sponsored by Twitch, Kick, 7TV, Streamlink, or mpv.
+sponsored by Twitch, Kick, 7TV, or Streamlink.
 
 ## Screenshots
 
@@ -64,7 +64,7 @@ sponsored by Twitch, Kick, 7TV, Streamlink, or mpv.
       </a>
     </td>
     <td width="50%">
-      <strong>Experimental Native player</strong><br />
+      <strong>VioletWire Native player</strong><br />
       <a href="docs/screenshots/native-player.jpg">
         <img src="docs/screenshots/native-player.jpg" alt="VioletWire using its Native player with native chat" />
       </a>
@@ -102,7 +102,7 @@ sponsored by Twitch, Kick, 7TV, Streamlink, or mpv.
 ### Playback
 
 - Twitch's official player for maximum website compatibility
-- Experimental Streamlink + mpv Native player, which also plays Kick streams
+- Low-latency Streamlink + hls.js Native player, which also plays Kick streams
 - Automatic and manual quality selection
 - Source quality when Twitch exposes it
 - Volume, mute, pause, fullscreen, theater mode, and picture-in-picture where available
@@ -175,9 +175,9 @@ unknown-publisher warning. Code signing is planned before a wider release.
 
 ## Native player
 
-The Windows installer includes pinned, checksum-verified Streamlink and libmpv
-runtimes, so the Native player works without installing anything else. Custom
-developer builds can still supply Streamlink with:
+The Windows installer includes a pinned, checksum-verified Streamlink runtime,
+so the Native player works without installing anything else. Custom developer
+builds can still supply Streamlink with:
 
 ```text
 VIOLETWIRE_STREAMLINK_PATH=C:\path\to\streamlink.exe
@@ -256,15 +256,11 @@ The tag must match the version in `package.json`.
 
 ## Third-party software and attribution
 
-VioletWire redistributes and invokes Streamlink and mpv as separate executables
-when the Native player is selected.
+VioletWire redistributes and invokes Streamlink as a separate executable when
+the Native player is selected. Chromium and hls.js render the resolved stream.
 
 - Streamlink is licensed under the
   [BSD 2-Clause License](https://github.com/streamlink/streamlink/blob/master/LICENSE).
-- mpv licensing depends on how a particular build was configured; official
-  details are in mpv's
-  [Copyright and licensing documentation](https://github.com/mpv-player/mpv/blob/master/Copyright).
-
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
 [native runtime source information](third_party/NATIVE_RUNTIME_SOURCES.md) for
 the licenses, exact versions, checksums, build definitions, and corresponding

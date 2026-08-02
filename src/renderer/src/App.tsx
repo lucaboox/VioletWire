@@ -54,7 +54,6 @@ import {
   formatQualityLabel,
   type ChatPresentation,
   type MultiStreamTileState,
-  type NativePlaybackBackend,
   type NativePlayerAvailability,
   type NativePlayerState,
   type NativeQualityValue,
@@ -273,12 +272,6 @@ const settingsSearchEntries: {
   },
   {
     section: "playback",
-    title: "Native video renderer",
-    description: "Choose Efficient HLS or the libmpv texture compatibility renderer.",
-    keywords: "streamlink chromium hls mpv gpu",
-  },
-  {
-    section: "playback",
     title: "Controls auto-hide delay",
     description: "Change how quickly player controls disappear.",
     keywords: "cursor timeout seconds",
@@ -359,7 +352,7 @@ const settingsSearchEntries: {
     section: "about",
     title: "Dependencies and licenses",
     description: "Review core dependencies and third-party notices.",
-    keywords: "electron react typescript streamlink hls mpv gpl credits",
+    keywords: "electron react typescript streamlink hls chromium gpl credits",
   },
 ];
 const bundledChangelogEntries = parseChangelog(changelogSource);
@@ -919,8 +912,6 @@ export function App() {
   const [preferredMode, setPreferredMode] = useState<PlayerMode>(() =>
     window.localStorage.getItem("glint.playback.default") === "official" ? "official" : "native",
   );
-  const [nativePlaybackBackend, setNativePlaybackBackend] =
-    useState<NativePlaybackBackend>("hls");
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = useState("");
   const changelogAutoShown = useRef(false);
@@ -940,8 +931,8 @@ export function App() {
       window.localStorage.getItem("glint.playback.audioCompression") === "true",
   });
   const [activeMode, setActiveMode] = useState<PlayerMode | null>(null);
-  // Twitch-style floating mini player: the texture session keeps playing in a
-  // small draggable corner canvas while the user browses other sections.
+  // Twitch-style floating mini player: the HLS session keeps playing in a
+  // small draggable corner while the user browses other sections.
   const [miniPlayerActive, setMiniPlayerActive] = useState(false);
   const [miniPlayerPosition, setMiniPlayerPosition] = useState<
     { left: number; top: number } | null
@@ -960,7 +951,6 @@ export function App() {
     compressorEnabled: false,
     behindLive: false,
     quality: "best",
-    backend: "texture",
   });
   const [multiStreamActive, setMultiStreamActive] = useState(false);
   const [multiTheater, setMultiTheater] = useState(false);
@@ -1320,40 +1310,6 @@ export function App() {
   }, [categoryStreamCursor, selectedBrowseCategory, fetchCategoryStreams]);
 
   useEffect(() => {
-    if (!activeChannel || !playerHost.current) return;
-
-    const syncPlayerBounds = () => {
-      const bounds = playerHost.current?.getBoundingClientRect();
-      if (!bounds || bounds.width < 1 || bounds.height < 1) return;
-      window.desktop.player.setBounds({
-        x: Math.round(bounds.x),
-        y: Math.round(bounds.y),
-        width: Math.round(bounds.width),
-        height: Math.round(bounds.height),
-        scale: window.devicePixelRatio || 1,
-      });
-    };
-
-    const observer = new ResizeObserver(syncPlayerBounds);
-    observer.observe(playerHost.current);
-    window.addEventListener("resize", syncPlayerBounds);
-    syncPlayerBounds();
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", syncPlayerBounds);
-    };
-  }, [
-    activeChannel,
-    activeMode,
-    fullscreen,
-    // The player page unmounts while the mini player floats; rebinding on
-    // restore reattaches the observers to the freshly mounted hosts.
-    miniPlayerActive,
-    theaterMode,
-  ]);
-
-  useEffect(() => {
     void refreshNativeAvailability();
     const removeStateListener = window.desktop.player.onNativeState(setNativeState);
     return () => {
@@ -1519,7 +1475,6 @@ export function App() {
     const applyPreferences = (preferences: AppPreferences) => {
       if (disposed) return;
       setPreferredMode(preferences.preferredPlayerMode);
-      setNativePlaybackBackend(preferences.nativePlaybackBackend);
       setChatTimestamps(preferences.chatTimestamps);
       setChatHistoryLimit(preferences.chatHistoryLimit);
       setChatFontSize(preferences.chatFontSize);
@@ -1569,7 +1524,6 @@ export function App() {
       void window.desktop.preferences
         .update({
           preferredPlayerMode: preferredMode,
-          nativePlaybackBackend,
           chatTimestamps,
           chatHistoryLimit,
           chatFontSize,
@@ -1609,7 +1563,6 @@ export function App() {
     genericLinkPreviewActivation,
     emoteAutocompleteMatch,
     oledMode,
-    nativePlaybackBackend,
     preferredMode,
     preferencesReady,
   ]);
@@ -1859,30 +1812,6 @@ export function App() {
     window.requestAnimationFrame(() => chatInputHost.current?.focus());
   }, []);
 
-  // While minimized, have the addon render at the mini box's actual pixel
-  // size: the full-page buffer has a different aspect ratio, which baked
-  // letterbox bars into the frames and left the box partly unfilled.
-  useEffect(() => {
-    if (!miniPlayerActive) return;
-    const host = miniPlayerRef.current;
-    if (!host) return;
-    const syncMiniBounds = () => {
-      const rect = host.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) return;
-      window.desktop.player.setBounds({
-        x: 0,
-        y: 0,
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-        scale: window.devicePixelRatio || 1,
-      });
-    };
-    const observer = new ResizeObserver(syncMiniBounds);
-    observer.observe(host);
-    syncMiniBounds();
-    return () => observer.disconnect();
-  }, [miniPlayerActive]);
-
   // hls.js and its media element must survive switching between the full
   // player and the floating mini-player. Move one fixed DOM surface between
   // the two host rectangles instead of mounting a second HlsNativeVideo,
@@ -1892,8 +1821,7 @@ export function App() {
     if (
       !surface ||
       !activeChannel ||
-      activeMode !== "native" ||
-      nativeState.backend !== "hls"
+      activeMode !== "native"
     ) {
       return;
     }
@@ -1934,7 +1862,6 @@ export function App() {
     miniPlayerActive,
     miniPlayerPosition,
     miniPlayerWidth,
-    nativeState.backend,
     theaterMode,
   ]);
 
@@ -2449,7 +2376,7 @@ export function App() {
         if (!cancelled) setStreamMetadata(metadata);
       }).catch(() => undefined);
       // 30s keeps the "stream ended" detection reasonably prompt without
-      // hammering Helix; mpv itself won't reliably report a live stream ending.
+      // hammering Helix when an HLS playlist stops advancing.
     }, 30_000);
     return () => {
       cancelled = true;
@@ -2662,29 +2589,9 @@ export function App() {
     } else {
       setNotice(
         mode === "native"
-          ? "Native Experimental will be used when you open the next stream."
+          ? "VioletWire Native will be used when you open the next stream."
           : "Standard Twitch playback will be used when you open the next stream.",
       );
-    }
-  }
-
-  async function chooseNativePlaybackBackend(backend: NativePlaybackBackend) {
-    setNativePlaybackBackend(backend);
-    try {
-      await window.desktop.preferences.update({ nativePlaybackBackend: backend });
-      if (
-        activeChannel &&
-        activeMode === "native"
-      ) {
-        await window.desktop.player.open(activeChannel, "native", nativeState.quality);
-      }
-      setNotice(
-        backend === "hls"
-          ? "Efficient HLS is enabled for Native playback."
-          : "The libmpv texture renderer is enabled for Native playback.",
-      );
-    } catch {
-      setNotice("VioletWire could not switch the Native playback renderer.");
     }
   }
 
@@ -3068,8 +2975,8 @@ export function App() {
     setReplyingTo(null);
     setEmotePickerOpen(false);
     setMiniPlayerActive(false);
-    // Mount the player shell immediately so clicking a card feels instant and
-    // the texture receiver has a canvas before Streamlink finishes resolving.
+    // Mount the player shell immediately so clicking a card feels instant
+    // while Streamlink finishes resolving the HLS playlist.
     setPlayerReturnSection(returnSection);
     setActiveSection("home");
     setActiveChannel(channel);
@@ -3144,8 +3051,7 @@ export function App() {
   async function enterMultiStream() {
     // Carry the currently-watched channel in as the first tile, if any.
     const seed = activeChannel ? [activeChannel] : [];
-    // Tear down the single-player renderer state; the main process frees its
-    // mpv session as part of multiStart.
+    // Tear down the single-player renderer state before multistream starts.
     setMiniPlayerActive(false);
     setMiniPlayerPosition(null);
     setActiveChannel(null);
@@ -3532,9 +3438,8 @@ export function App() {
     };
   }, [channelMenu]);
 
-  // A live native stream that ends usually leaves mpv stalled on the HLS
-  // playlist rather than emitting EOF, so the canvas freezes on the last frame
-  // with no state change. The reliable "it ended" signal is the Twitch metadata
+  // A live native stream can leave HLS stalled on its last frame when the
+  // channel ends. The reliable "it ended" signal is the Twitch metadata
   // poll flipping isLive to false for the channel we're actually watching.
   const nativeStreamOffline =
     activeMode === "native" &&
@@ -3613,7 +3518,7 @@ export function App() {
         <span className="titlebar-title">{locationLabel}</span>
       </div>
 
-      {activeChannel && activeMode === "native" && nativeState.backend === "hls" && (
+      {activeChannel && activeMode === "native" && (
         <div
           aria-hidden="true"
           className={
@@ -4689,9 +4594,7 @@ export function App() {
               >
                 <div
                   className={
-                    activeMode === "native" && nativeState.backend === "hls"
-                      ? "player-host hls-surface-host"
-                      : "player-host"
+                    activeMode === "native" ? "player-host hls-surface-host" : "player-host"
                   }
                   ref={playerHost}
                   aria-label={`${activeMode === "native" ? "Native" : "Official Twitch"} player for ${activeChannel}`}
@@ -4737,13 +4640,6 @@ export function App() {
                   )}
                   {activeMode === "native" && (
                     <>
-                      {nativeState.backend !== "hls" && (
-                        <canvas
-                          className="native-texture-canvas"
-                          data-native-texture-canvas="main"
-                          aria-hidden="true"
-                        />
-                      )}
                       <NativeControls
                         key={`inline-native-controls:${activeChannel}`}
                         inlineContext={{
@@ -5767,7 +5663,7 @@ export function App() {
                 <small>
                   {preferredMode === "native"
                     ? nativeAvailability?.available
-                      ? "Native Experimental is ready"
+              ? "VioletWire Native is ready"
                       : nativeAvailability?.reason ?? "Checking Native availability…"
                     : "Twitch’s official player and controls"}
                 </small>
@@ -6377,7 +6273,7 @@ export function App() {
                       <small>
                         {preferredMode === "native"
                           ? nativeAvailability?.available
-                            ? "Native Experimental is ready"
+                            ? "VioletWire Native is ready"
                             : nativeAvailability?.reason ?? "Checking Native availability…"
                           : "Twitch’s official player and controls"}
                       </small>
@@ -6398,35 +6294,6 @@ export function App() {
                         type="button"
                       >
                         Standard
-                      </button>
-                    </div>
-                  </div>
-                  <div className="settings-card">
-                    <div>
-                      <strong>Native video renderer</strong>
-                      <span>
-                        Efficient HLS lets Chromium decode and present Twitch and Kick video
-                        directly. It keeps VioletWire&apos;s Streamlink quality/auth resolution;
-                        Twitch stitched-ad filtering remains best-effort. The libmpv texture
-                        renderer remains available as the compatibility fallback.
-                      </span>
-                    </div>
-                    <div className="mode-switch">
-                      <button
-                        aria-pressed={nativePlaybackBackend === "hls"}
-                        className={nativePlaybackBackend === "hls" ? "active experimental" : "experimental"}
-                        onClick={() => void chooseNativePlaybackBackend("hls")}
-                        type="button"
-                      >
-                        Efficient HLS
-                      </button>
-                      <button
-                        aria-pressed={nativePlaybackBackend === "texture"}
-                        className={nativePlaybackBackend === "texture" ? "active" : ""}
-                        onClick={() => void chooseNativePlaybackBackend("texture")}
-                        type="button"
-                      >
-                        libmpv texture
                       </button>
                     </div>
                   </div>
@@ -6819,7 +6686,7 @@ export function App() {
                         </div>
                         <div>
                           <dt>Playback</dt>
-                          <dd>Streamlink · hls.js · libmpv</dd>
+                          <dd>Streamlink · hls.js · Chromium Media Source Extensions</dd>
                         </div>
                         <div>
                           <dt>Chat and emotes</dt>
@@ -6943,11 +6810,7 @@ export function App() {
         {activeChannel && miniPlayerActive && (
           <div
             aria-label={`Mini player: ${streamMetadata?.displayName ?? activeChannel}`}
-            className={
-              nativeState.backend === "hls"
-                ? "mini-player hls-surface-host"
-                : "mini-player"
-            }
+            className="mini-player hls-surface-host"
             ref={miniPlayerRef}
             role="region"
             style={{ ...(miniPlayerPosition ?? {}), width: miniPlayerWidth }}
@@ -7017,12 +6880,6 @@ export function App() {
               if (offset && !offset.moved) restoreMiniPlayer();
             }}
           >
-            {nativeState.backend !== "hls" && (
-              <canvas
-                className="native-texture-canvas mini-player-canvas"
-                data-native-texture-canvas="main"
-              />
-            )}
             <button
               aria-label="Close the stream"
               className="mini-player-close"

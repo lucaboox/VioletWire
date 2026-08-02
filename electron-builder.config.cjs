@@ -21,11 +21,7 @@ module.exports = {
     {
       from: "vendor/native",
       to: "native",
-      filter: ["**/*", "!mpv/**", "!mpv-dev/include/**", "!mpv-dev/*.a"],
-    },
-    {
-      from: "native/texture-player/build/Release/violetwire_texture_player.node",
-      to: "native/texture-player/violetwire_texture_player.node",
+      filter: ["streamlink/**/*", "NATIVE_RUNTIME_SOURCES.md", "THIRD_PARTY_NOTICES.md", "versions.json"],
     },
     {
       from: "native/streamlink-launcher.py",

@@ -34,23 +34,10 @@ export const channelNameSchema = z
   })
   .pipe(z.string().min(1).max(25).regex(/^[a-z0-9_]+$/, "Enter a valid Twitch channel name or URL."));
 
-export const playerBoundsSchema = z.object({
-  x: z.number().int().nonnegative(),
-  y: z.number().int().nonnegative(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
-  // The renderer's devicePixelRatio. Bounds stay in CSS pixels because the
-  // overlay windows are positioned in device-independent pixels, but the video
-  // has to be rendered at the display's real pixel count or it is drawn small
-  // and stretched back up, which looks soft above 100% display scaling.
-  scale: z.number().positive().max(4).optional(),
-});
-
 // Subscribing has its own window (a modal showing Twitch's subscribe page), so
 // it is no longer one of these isolated-window actions.
 export const channelActionSchema = z.enum(["channel", "clip"]);
 export const playerModeSchema = z.enum(["official", "native"]);
-export const nativePlaybackBackendSchema = z.enum(["texture", "hls"]);
 export const chatPresentationSchema = z.enum(["side", "overlay"]);
 export const nativeControlActionSchema = z.enum([
   "activity",
@@ -93,10 +80,8 @@ export const nativePlayerCommandSchema = z.discriminatedUnion("command", [
   }),
 ]);
 
-export type PlayerBounds = z.infer<typeof playerBoundsSchema>;
 export type ChannelAction = z.infer<typeof channelActionSchema>;
 export type PlayerMode = z.infer<typeof playerModeSchema>;
-export type NativePlaybackBackend = z.infer<typeof nativePlaybackBackendSchema>;
 export type ChatPresentation = z.infer<typeof chatPresentationSchema>;
 export type NativeControlAction = z.infer<typeof nativeControlActionSchema>;
 export type NativeQualityValue = z.infer<typeof nativeQualitySchema>;
@@ -171,7 +156,7 @@ export function presentNativePlaybackError(message: string): string {
   return message;
 }
 
-/** A normal channel state, not a failure of either Native render backend. */
+/** A normal channel state, not a failure of Native playback. */
 export function isNativeStreamUnavailable(message: string): boolean {
   return /no playable streams|stream is offline|channel is offline/i.test(message);
 }
@@ -197,7 +182,6 @@ export interface NativePlayerState {
   compressorEnabled: boolean;
   behindLive: boolean;
   quality: NativeQualityValue;
-  backend?: NativePlaybackBackend;
   hlsSource?: {
     sessionId: string;
     playlistUrl: string;
@@ -255,7 +239,6 @@ export interface DesktopApi {
       fallbackReason?: string;
     }>;
     close(): Promise<void>;
-    setBounds(bounds: PlayerBounds): void;
     preresolveStream(channel: string): void;
     setFullscreen(fullscreen: boolean): Promise<boolean>;
     onFullscreenChanged(listener: (fullscreen: boolean) => void): () => void;
@@ -270,7 +253,7 @@ export interface DesktopApi {
     onNativeHlsCommand(
       listener: (target: string, command: NativePlayerCommand) => void,
     ): () => void;
-    // Raw mpv property names mapped to their values, or null when Native is
+    // Player diagnostics reported by Chromium/hls.js, or null when Native is
     // not currently playing.
     getNativeStats(): Promise<Record<string, string> | null>;
     onNativeState(listener: (state: NativePlayerState) => void): () => void;
@@ -286,7 +269,6 @@ export interface DesktopApi {
     multiAddTile(channel: string): Promise<MultiStreamTileState | null>;
     multiRemoveTile(id: number): void;
     multiSetActive(id: number): void;
-    multiSetBounds(id: number, bounds: PlayerBounds): void;
     multiControl(id: number, command: NativePlayerCommand): void;
     multiSetQuality(id: number, quality: NativeQualityValue): Promise<void>;
     onMultiTileState(listener: (tile: MultiStreamTileState) => void): () => void;

@@ -1,8 +1,8 @@
 # Native runtime source and license information
 
-VioletWire redistributes an unmodified Streamlink portable runtime and libmpv
-Windows development/runtime package. They are aggregated with VioletWire for
-installation convenience.
+VioletWire redistributes an unmodified Streamlink portable Windows runtime for
+authenticated Twitch and Kick stream discovery. Chromium and hls.js handle the
+resolved HLS playback inside the application.
 
 ## Streamlink portable runtime
 
@@ -16,29 +16,12 @@ installation convenience.
 
 The staged package retains Streamlink's BSD 2-Clause license, Python's license,
 and dependency license metadata. VioletWire omits the portable archive's
-optional FFmpeg muxer because Twitch HLS is passed directly to mpv. No
+optional FFmpeg muxer because Chromium consumes the HLS stream directly. No
 Streamlink, Python, or Python-package binaries are modified.
-
-## libmpv runtime
-
-- Package: `mpv-dev-x86_64-20260610-git-304426c.7z`
-- Release:
-  <https://github.com/shinchiro/mpv-winbuild-cmake/releases/tag/20260610>
-- SHA-256: `8cbb25ea784f01afbb3f904217cab1317430a8bcfd5680fd827a866367f71cc9`
-- mpv revision: `304426c39`
-- mpv corresponding source:
-  <https://github.com/mpv-player/mpv/tree/304426c39>
-- Reproducible Windows build scripts and dependency definitions:
-  <https://github.com/shinchiro/mpv-winbuild-cmake/tree/20260610>
-
-The packaged libmpv runtime includes mpv's copyright information and complete
-GPL and LGPL license texts. The pinned build scripts above identify the source
-revisions and build configuration for mpv and all statically linked components.
 
 ## Source availability
 
-The links above identify the exact source revisions and build definitions for
-the redistributed binaries. VioletWire does not modify Streamlink, FFmpeg,
-mpv, or their bundled libraries. If any corresponding-source link becomes
-unavailable, open an issue at <https://github.com/lucaboox/VioletWire/issues>
-so an equivalent source archive can be restored alongside the release.
+The links above identify the exact source revision and build definitions for
+the redistributed runtime. If a source link becomes unavailable, open an issue
+at <https://github.com/lucaboox/VioletWire/issues> so an equivalent source
+archive can be restored alongside the release.
