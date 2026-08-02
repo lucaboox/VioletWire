@@ -18,6 +18,9 @@ All notable changes to VioletWire are documented in this file.
 - HLS playback now keeps one persistent media element when moving between the
   full player and the floating mini-player, eliminating the black restart and
   brief live-edge catch-up when returning to the home page.
+- Twitch prefetch responses now stream progressively into Chromium instead of
+  waiting for a complete segment, reducing short stalls while the initial
+  low-latency buffer is forming.
 - The followed-channel sidebar now memoizes channel rows, lazily loads profile
   images, and skips layout and painting work for offscreen rows so player,
   uptime, and chat updates no longer make long lists stutter while scrolling.

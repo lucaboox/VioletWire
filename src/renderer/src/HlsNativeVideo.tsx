@@ -304,6 +304,11 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     hls = new Hls({
       enableWorker: true,
       lowLatencyMode: true,
+      // Twitch PREFETCH resources are chunked responses that begin before the
+      // segment is complete. Stream them into the transmuxer as bytes arrive;
+      // the default all-at-once loader can otherwise starve startup for one
+      // full segment before the steady-state buffer has formed.
+      progressive: true,
       // Twitch commonly advertises a six-second target duration even though
       // its regular media fragments are about two seconds long. Count-based
       // sync therefore put Chromium roughly nine seconds behind. Use seconds
