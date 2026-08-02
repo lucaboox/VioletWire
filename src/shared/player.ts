@@ -204,6 +204,9 @@ export const nativeHlsStateReportSchema = z.object({
   muted: z.boolean(),
   volume: z.number().min(0).max(100),
   behindLive: z.boolean(),
+  // Chromium has decoded a stream above 1080p, where Twitch's proprietary
+  // in-progress PREFETCH path is not reliable enough to keep enabled.
+  recommendedLatencyMode: z.literal("balanced").optional(),
   error: z.string().max(500).optional(),
   stats: z.record(z.string(), z.string()).optional(),
 });

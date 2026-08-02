@@ -161,6 +161,22 @@ export class HlsNativePlayer {
       return;
     }
     if (report.stats) this.stats = { ...report.stats };
+    if (
+      report.recommendedLatencyMode === "balanced" &&
+      this.state.hlsSource?.latencyMode === "ultra-low"
+    ) {
+      this.relay?.setIncludePrefetch(false);
+      this.stats = {
+        ...(this.stats ?? {}),
+        "Latency mode": "Balanced (1440p safeguard)",
+      };
+      this.updateState({
+        hlsSource: {
+          ...this.state.hlsSource,
+          latencyMode: "balanced",
+        },
+      });
+    }
     const nextVolume = Math.round(report.volume);
     if (!report.muted && nextVolume > 0) {
       this.lastAudibleVolume = nextVolume;

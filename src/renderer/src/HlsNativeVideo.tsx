@@ -129,6 +129,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     let displayedLatency = 0;
     let stallRecoveries = 0;
     let stabilityProfile = false;
+    let balancedFallbackRequested = false;
     const appendedFragmentBytes = new Map<
       string,
       { bytes: number; duration: number }
@@ -192,6 +193,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       status: "playing" | "stopped" | "error",
       error?: string,
       includeStats = false,
+      recommendedLatencyMode?: "balanced",
     ) => {
       if (disposed) return;
       const edge = liveEdge(video);
@@ -216,6 +218,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         behindLive:
           edge !== null &&
           latency > targetLatency + Math.max(2.5, targetLatency * 0.75),
+        recommendedLatencyMode,
         error,
         stats: includeStats
           ? {
@@ -237,6 +240,19 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
             }
           : undefined,
       });
+    };
+
+    const requestBalancedFallbackForHighResolution = (): boolean => {
+      if (
+        !ultraLowLatency ||
+        balancedFallbackRequested ||
+        video.videoHeight <= 1_080
+      ) {
+        return false;
+      }
+      balancedFallbackRequested = true;
+      report("playing", undefined, true, "balanced");
+      return true;
     };
 
     const seekToLive = () => {
@@ -476,6 +492,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         showPausedFrame();
         return;
       }
+      if (requestBalancedFallbackForHighResolution()) return;
       report("playing");
     };
     const onPause = () => {
@@ -507,6 +524,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       if (elapsed > 0) measuredFps = ((currentFrames - lastFrameCount) * 1_000) / elapsed;
       lastFrameCount = currentFrames;
       lastFrameAt = now;
+      if (requestBalancedFallbackForHighResolution()) return;
       report("playing", undefined, true);
     }, 750);
 
