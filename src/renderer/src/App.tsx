@@ -160,6 +160,72 @@ type ChannelNavigationIdentity = {
   isMature?: boolean;
 };
 
+type FollowedChannelRowProps = {
+  channel: FollowedChannel;
+  collapsed: boolean;
+  favorite: boolean;
+  showServiceRing: boolean;
+  onActivate: (channel: FollowedChannel) => void;
+  onCancelPreresolve: () => void;
+  onOpenMenu: (login: string, x: number, y: number) => void;
+  onPreresolve: (login: string) => void;
+};
+
+const compactViewerFormatter = new Intl.NumberFormat("en", {
+  notation: "compact",
+});
+
+// App owns a number of clocks and fast player/chat state updates. Keeping each
+// sidebar row memoized prevents those unrelated updates from reconciling every
+// followed channel while the user scrolls.
+const FollowedChannelRow = memo(function FollowedChannelRow({
+  channel,
+  collapsed,
+  favorite,
+  showServiceRing,
+  onActivate,
+  onCancelPreresolve,
+  onOpenMenu,
+  onPreresolve,
+}: FollowedChannelRowProps) {
+  const platform = parseChannelKey(channel.login).platform;
+  return (
+    <button
+      className={channel.isLive ? "followed-channel" : "followed-channel offline"}
+      onClick={() => onActivate(channel)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onOpenMenu(channel.login, event.clientX, event.clientY);
+      }}
+      onMouseEnter={channel.isLive ? () => onPreresolve(channel.login) : undefined}
+      onMouseLeave={onCancelPreresolve}
+      title={collapsed ? channel.displayName : undefined}
+      type="button"
+    >
+      <span
+        className={
+          showServiceRing
+            ? `channel-avatar service-ring ${platform}`
+            : "channel-avatar"
+        }
+      >
+        <img alt="" loading="lazy" src={channel.profileImageUrl} />
+        {channel.isLive && <i className={`channel-live-dot ${platform}`} aria-hidden="true" />}
+        {favorite && <Star aria-hidden="true" className="channel-favorite-star" size={10} />}
+      </span>
+      <span className="followed-copy">
+        <strong>{channel.displayName}</strong>
+        <small>{channel.category}</small>
+      </span>
+      {channel.isLive && (
+        <span className="viewer-count">
+          <i className={platform} /> {compactViewerFormatter.format(channel.viewerCount)}
+        </span>
+      )}
+    </button>
+  );
+});
+
 const signedOutState: TwitchAuthState = { status: "signed-out", account: null };
 const anonymousPlaybackState: PlaybackSessionState = { linked: false };
 const emptySearchResults: TwitchSearchResults = { channels: [], categories: [] };
@@ -1834,6 +1900,15 @@ export function App() {
       preresolveTimer.current = null;
     }
   }, []);
+  const followedChannelActivator = useRef(watchChannel);
+  followedChannelActivator.current = watchChannel;
+  const activateFollowedChannel = useCallback((channel: FollowedChannel) => {
+    void followedChannelActivator.current(channel.login, channel);
+  }, []);
+  const openFollowedChannelMenu = useCallback(
+    (login: string, x: number, y: number) => setChannelMenu({ login, x, y }),
+    [],
+  );
   const refreshChangelogEntries = useCallback(async (forceRefresh = false) => {
     await window.desktop.updates
       .getReleaseNotes(forceRefresh)
@@ -3426,48 +3501,6 @@ export function App() {
   const toolbarTags = streamMetadata?.tags ?? activeChannelIdentity?.tags;
   const toolbarIsMature = streamMetadata?.isMature ?? activeChannelIdentity?.isMature;
 
-  function renderFollowedChannel(channel: FollowedChannel) {
-    const platform = parseChannelKey(channel.login).platform;
-    return (
-      <button
-        className={channel.isLive ? "followed-channel" : "followed-channel offline"}
-        key={channel.id}
-        onClick={() => void watchChannel(channel.login, channel)}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          setChannelMenu({ login: channel.login, x: event.clientX, y: event.clientY });
-        }}
-        onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
-        onMouseLeave={cancelPreresolve}
-        title={sidebarCollapsed ? channel.displayName : undefined}
-        type="button"
-      >
-        <span
-          className={
-            platformFilter === "both"
-              ? `channel-avatar service-ring ${parseChannelKey(channel.login).platform}`
-              : "channel-avatar"
-          }
-        >
-          <img alt="" src={channel.profileImageUrl} />
-          {channel.isLive && <i className={`channel-live-dot ${platform}`} aria-hidden="true" />}
-          {favoriteChannels.has(channel.login) && (
-            <Star aria-hidden="true" className="channel-favorite-star" size={10} />
-          )}
-        </span>
-        <span className="followed-copy">
-          <strong>{channel.displayName}</strong>
-          <small>{channel.category}</small>
-        </span>
-        {channel.isLive && (
-          <span className="viewer-count">
-            <i className={platform} /> {Intl.NumberFormat("en", { notation: "compact" }).format(channel.viewerCount)}
-          </span>
-        )}
-      </button>
-    );
-  }
-
   return (
     <div
       className={[
@@ -3587,7 +3620,19 @@ export function App() {
                   <span>Live</span>
                   <b>{sidebarLiveChannels.length}</b>
                 </div>
-                {sidebarLiveChannels.map(renderFollowedChannel)}
+                {sidebarLiveChannels.map((channel) => (
+                  <FollowedChannelRow
+                    channel={channel}
+                    collapsed={sidebarCollapsed}
+                    favorite={favoriteChannels.has(channel.login)}
+                    key={channel.id}
+                    onActivate={activateFollowedChannel}
+                    onCancelPreresolve={cancelPreresolve}
+                    onOpenMenu={openFollowedChannelMenu}
+                    onPreresolve={schedulePreresolve}
+                    showServiceRing={platformFilter === "both"}
+                  />
+                ))}
               </>
             )}
             {sidebarOfflineChannels.length > 0 && (
@@ -3596,7 +3641,19 @@ export function App() {
                   <span>Offline</span>
                   <b>{sidebarOfflineChannels.length}</b>
                 </div>
-                {sidebarOfflineChannels.map(renderFollowedChannel)}
+                {sidebarOfflineChannels.map((channel) => (
+                  <FollowedChannelRow
+                    channel={channel}
+                    collapsed={sidebarCollapsed}
+                    favorite={favoriteChannels.has(channel.login)}
+                    key={channel.id}
+                    onActivate={activateFollowedChannel}
+                    onCancelPreresolve={cancelPreresolve}
+                    onOpenMenu={openFollowedChannelMenu}
+                    onPreresolve={schedulePreresolve}
+                    showServiceRing={platformFilter === "both"}
+                  />
+                ))}
               </>
             )}
             {followedChannels.length === 0 && (

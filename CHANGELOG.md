@@ -4,6 +4,15 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Improvements
+
+- Chromium HLS playback now targets a slightly tighter live edge and adds less
+  permanent latency after a brief stall, while retaining a safety buffer for
+  normal Twitch playlist jitter.
+- The followed-channel sidebar now memoizes channel rows, lazily loads profile
+  images, and skips layout and painting work for offscreen rows so player,
+  uptime, and chat updates no longer make long lists stutter while scrolling.
+
 ## [0.3.4-alpha.6] - 2026-07-31
 
 ### Additions

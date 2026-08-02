@@ -305,14 +305,17 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       enableWorker: true,
       lowLatencyMode: true,
       // One complete Twitch segment previously starved Chromium on some
-      // channels, while two segments adds more delay than necessary. A
-      // one-and-three-quarter segment target absorbs normal playlist-arrival
-      // jitter without returning to the old two-segment delay.
+      // channels. One-and-a-half segments keeps a half-segment jitter cushion
+      // while trimming another quarter segment from the normal live delay.
       backBufferLength: 30,
       maxBufferLength: 20,
       maxMaxBufferLength: 30,
-      liveSyncDurationCount: 1.75,
-      liveMaxLatencyDurationCount: 3.5,
+      liveSyncDurationCount: 1.5,
+      liveMaxLatencyDurationCount: 3.25,
+      // A short stall should not permanently push the target a full second
+      // farther from live. Keep a smaller safety increase and let the existing
+      // max-latency resync handle larger drift.
+      liveSyncOnStallIncrease: 0.5,
       // Keep frame presentation at the source cadence. Even subtle variable
       // playback rates can make Chromium's video compositor and a neighboring
       // scroll layer contend at mismatched frame intervals. If playback drifts
