@@ -14,8 +14,9 @@ All notable changes to VioletWire are documented in this file.
   player controls.
 - Chromium HLS playback now uses an explicit three-second live target instead
   of multiplying Twitch's oversized advertised target duration, refreshes the
-  filtered playlist at the actual content-segment cadence, and adds less
-  permanent latency after a brief stall.
+  filtered playlist at the actual content-segment cadence, bridges tiny media
+  timestamp gaps, and adds jitter headroom only after a real stall so
+  high-bitrate streams remain smooth without increasing baseline latency.
 - Twitch's in-progress low-latency prefetch segments now pass through the
   filtered HLS relay as playable live segments, then reconcile with their
   completed metadata without duplication while retaining ad filtering.

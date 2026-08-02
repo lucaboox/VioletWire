@@ -1,4 +1,4 @@
-import Hls, { ErrorTypes, Events } from "hls.js";
+import Hls, { ErrorDetails, ErrorTypes, Events } from "hls.js";
 import { useEffect, useRef } from "react";
 import type {
   NativePlayerCommand,
@@ -114,6 +114,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     let measuredFps = 0;
     let hls: Hls | null = null;
     let displayedLatency = 0;
+    let stallRecoveries = 0;
     let pendingVideoFrame: number | null = null;
     // Keep the user's intent separate from HTMLMediaElement.paused. Source
     // attachment, manifest reparses, and hls.js recovery can all transiently
@@ -199,13 +200,16 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
           latency > targetLatency + Math.max(2.5, targetLatency * 0.75),
         error,
         stats: includeStats
-          ? playbackStats(
+          ? {
+              ...playbackStats(
               video,
               measuredFps,
               streamBitrate,
               displayedLatency,
               targetLatency,
-            )
+              ),
+              "Stall recoveries": String(stallRecoveries),
+            }
           : undefined,
       });
     };
@@ -315,12 +319,17 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       backBufferLength: 30,
       maxBufferLength: 20,
       maxMaxBufferLength: 30,
+      // Filtered ad boundaries and Twitch's in-progress fragments can leave
+      // sub-frame timestamp gaps. Treat a short gap as continuous media rather
+      // than presenting it as a visible stall.
+      maxBufferHole: 0.5,
       liveSyncDuration: 3,
       liveMaxLatencyDuration: 7,
-      // A short stall should not permanently push the target a full second
-      // farther from live. Keep a smaller safety increase and let the existing
-      // max-latency resync handle larger drift.
-      liveSyncOnStallIncrease: 0.5,
+      // Start at the same low-latency target, then trade at most roughly two
+      // seconds for stability only after hls.js observes a real playback
+      // stall. This gives high-bitrate 1440p streams enough jitter headroom
+      // without penalizing streams that are already healthy.
+      liveSyncOnStallIncrease: 1,
       // Keep frame presentation at the source cadence. Even subtle variable
       // playback rates can make Chromium's video compositor and a neighboring
       // scroll layer contend at mismatched frame intervals. If playback drifts
@@ -367,7 +376,11 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       }
     });
     player.on(Events.ERROR, (_event, data) => {
-      if (!data.fatal || disposed) return;
+      if (disposed) return;
+      if (data.details === ErrorDetails.BUFFER_STALLED_ERROR) {
+        stallRecoveries += 1;
+      }
+      if (!data.fatal) return;
       if (data.type === ErrorTypes.NETWORK_ERROR) {
         if (recoveryTimer !== null) window.clearTimeout(recoveryTimer);
         recoveryTimer = window.setTimeout(() => {
