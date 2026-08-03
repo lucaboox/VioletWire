@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  kickBadges,
   parseKickEmotes,
   parseKickModerationEvent,
   parseKickReply,
@@ -204,5 +205,52 @@ describe("parseKickModerationEvent", () => {
       deleted: true,
       moderation: { type: "ban" },
     });
+  });
+});
+
+describe("kickBadges", () => {
+  const badges = (types: { type: string; text?: string; count?: number }[]) =>
+    kickBadges({ badges: types }, []);
+
+  it("gives a badge Kick's own artwork and keeps the drawn glyph behind it", () => {
+    const [badge] = badges([{ type: "moderator", text: "Moderator" }]);
+
+    expect(badge.imageUrl).toBe("https://cdn.kicktalk.app/Badges/moderator.svg");
+    // The glyph stays so the badge still renders if the artwork cannot load.
+    expect(badge.glyph).toBe("moderator");
+    expect(badge.title).toBe("Moderator");
+  });
+
+  it("finds artwork for a badge type it has never seen", () => {
+    // The point of deriving the address from the type: a badge Kick adds later
+    // needs no change here.
+    const [badge] = badges([{ type: "brandnewbadge", text: "Brand New" }]);
+
+    expect(badge.imageUrl).toBe("https://cdn.kicktalk.app/Badges/brandnewbadge.svg");
+    // And it still falls back to a chip if that artwork does not exist.
+    expect(badge.label).toBe("BN");
+  });
+
+  it("follows the name artwork is filed under when it differs", () => {
+    const [badge] = badges([{ type: "sub_gifter", text: "Sub Gifter" }]);
+
+    expect(badge.imageUrl).toBe("https://cdn.kicktalk.app/Badges/subgifter1.svg");
+  });
+
+  it("refuses a badge type that could point the address elsewhere", () => {
+    const [badge] = badges([{ type: "../../evil", text: "Evil" }]);
+
+    expect(badge.imageUrl).toBe("");
+  });
+
+  it("still prefers the channel's own subscriber artwork", () => {
+    const assets = kickBadges({ badges: [{ type: "subscriber", text: "Subscriber", count: 7 }] }, [
+      { months: 6, imageUrl: "https://files.kick.com/channel_subscriber_badges/9/original" },
+      { months: 1, imageUrl: "https://files.kick.com/channel_subscriber_badges/8/original" },
+    ]);
+
+    expect(assets[0].imageUrl).toBe(
+      "https://files.kick.com/channel_subscriber_badges/9/original",
+    );
   });
 });

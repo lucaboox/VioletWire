@@ -275,6 +275,25 @@ export function parseKickModerationEvent(
 // to a small coloured chip below.
 const KICK_GLYPH_BADGES = new Set<string>(KICK_GLYPH_BADGE_TYPES);
 
+// Kick's own badges arrive as a type with no artwork attached, so every new one
+// used to mean drawing another glyph by hand. KickTalk publishes Kick's badge
+// art under its type name, which means a badge type VioletWire has never seen
+// still renders correctly. The hand-drawn glyphs stay as the fallback, so a
+// badge whose art is missing — or the whole host being unreachable — still
+// looks the way it did before.
+const KICK_BADGE_ART_HOST = "https://cdn.kicktalk.app/Badges";
+// The few whose art is filed under a different name than Kick's badge type.
+const KICK_BADGE_ART_NAMES: Record<string, string> = {
+  sub_gifter: "subgifter1",
+};
+
+function kickBadgeArtUrl(type: string): string {
+  // The type comes from Kick's API, so only a plain name is allowed to reach
+  // the URL; anything else would be able to point this somewhere else entirely.
+  if (!/^[a-z0-9_]+$/i.test(type)) return "";
+  return `${KICK_BADGE_ART_HOST}/${KICK_BADGE_ART_NAMES[type] ?? type}.svg`;
+}
+
 const KICK_TEXT_BADGE_COLORS: Record<string, string> = {
   broadcaster: "#fa5838",
   moderator: "#00c9a7",
@@ -287,7 +306,7 @@ const KICK_TEXT_BADGE_COLORS: Record<string, string> = {
   sub_gifter: "#5a9bff",
 };
 
-function kickBadges(
+export function kickBadges(
   identity: KickChatIdentity | undefined,
   subscriberBadges: { months: number; imageUrl: string }[],
 ): ChatBadgeAsset[] {
@@ -321,14 +340,20 @@ function kickBadges(
       }
     }
     if (KICK_GLYPH_BADGES.has(type)) {
-      assets.push({ key: `kick-${type}`, title: label, imageUrl: "", glyph: type });
+      assets.push({
+        key: `kick-${type}`,
+        title: label,
+        imageUrl: kickBadgeArtUrl(type),
+        glyph: type,
+      });
       continue;
     }
-    // Anything without a glyph becomes a coloured chip.
+    // A badge with no glyph of its own still gets Kick's artwork; only one
+    // Kick has never published falls all the way through to a coloured chip.
     assets.push({
       key: `kick-${type}`,
       title: label,
-      imageUrl: "",
+      imageUrl: kickBadgeArtUrl(type),
       label: label
         .split(/\s+/)
         .map((word) => word[0] ?? "")
