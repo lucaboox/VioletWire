@@ -6417,32 +6417,30 @@ export function App() {
                   </div>
                   <div className="settings-card">
                     <div>
-                      <strong>Playback latency</strong>
+                      <strong>Low latency</strong>
                       <span>
-                        Low latency plays completed Twitch fragments close to the live
-                        edge. Balanced keeps a larger cushion for unstable connections.
+                        Play completed Twitch fragments close to the live edge. Turn this
+                        off to keep a larger cushion for unstable connections.
                         Twitch&apos;s proprietary in-progress fragments are not used because
                         hls.js cannot play them reliably at high bitrates.
                       </span>
                     </div>
-                    <div className="mode-switch">
-                      <button
-                        aria-pressed={playbackLatencyMode === "balanced"}
-                        className={playbackLatencyMode === "balanced" ? "active" : ""}
-                        onClick={() => setPlaybackLatencyMode("balanced")}
-                        type="button"
-                      >
-                        Balanced
-                      </button>
-                      <button
-                        aria-pressed={playbackLatencyMode === "ultra-low"}
-                        className={playbackLatencyMode === "ultra-low" ? "active" : ""}
-                        onClick={() => setPlaybackLatencyMode("ultra-low")}
-                        type="button"
-                      >
-                        Low latency
-                      </button>
-                    </div>
+                    <button
+                      aria-pressed={playbackLatencyMode === "ultra-low"}
+                      className={
+                        playbackLatencyMode === "ultra-low"
+                          ? "settings-switch active"
+                          : "settings-switch"
+                      }
+                      onClick={() =>
+                        setPlaybackLatencyMode((current) =>
+                          current === "ultra-low" ? "balanced" : "ultra-low",
+                        )
+                      }
+                      type="button"
+                    >
+                      <span />
+                    </button>
                   </div>
                   <div className="settings-card">
                     <div>
