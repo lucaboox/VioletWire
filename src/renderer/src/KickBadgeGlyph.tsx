@@ -67,6 +67,9 @@ export function KickBadgeGlyph({ glyph, title }: KickBadgeGlyphProps) {
       className="kick-badge-glyph"
       dangerouslySetInnerHTML={{ __html: withUniqueIds(markup, uid) }}
       role="img"
+      // The tooltip layer builds itself from title attributes, so naming the
+      // badge only for assistive technology left it with nothing to show.
+      title={title}
     />
   );
 }
