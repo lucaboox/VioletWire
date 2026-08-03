@@ -154,6 +154,16 @@ const OVERLAY_MIN_HEIGHT = 200;
 const OVERLAY_MAX_HEIGHT = 1000;
 const OVERLAY_MARGIN = 8;
 
+/**
+ * The one video element playing the native stream. It lives in a surface that
+ * outlives any single player layout — it is moved over the player, the mini
+ * player, or a multistream tile rather than remounted — so it is found by what
+ * it is rather than by where it currently sits.
+ */
+function nativeVideoElement(): HTMLVideoElement | null {
+  return document.querySelector<HTMLVideoElement>(".native-hls-video");
+}
+
 function clampOverlayGeometry(
   geometry: OverlayGeometry,
   containerWidth: number,
@@ -613,9 +623,7 @@ export function NativeControls({
   );
 
   useEffect(() => {
-    const video = document.querySelector<HTMLVideoElement>(
-      ".player-host > .native-hls-video",
-    );
+    const video = nativeVideoElement();
     if (!video) return;
     const updatePictureInPictureState = () => {
       setPictureInPictureActive(document.pictureInPictureElement === video);
@@ -1098,9 +1106,7 @@ export function NativeControls({
 
   async function togglePictureInPicture() {
     if (!document.pictureInPictureEnabled) return;
-    const video = document.querySelector<HTMLVideoElement>(
-      ".player-host > .native-hls-video",
-    );
+    const video = nativeVideoElement();
     if (!video) return;
     try {
       if (document.pictureInPictureElement === video) {
