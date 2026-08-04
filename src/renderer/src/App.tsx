@@ -4817,6 +4817,7 @@ export function App() {
                         anchor={selectedChatUserAnchor}
                         badges={twitchBadges}
                         channel={activeChannel}
+                        root={chatWindowTarget?.document}
                         key={`${activeChannel}:${selectedChatUser.login}`}
                         messages={chatMessages}
                         onClose={() => {

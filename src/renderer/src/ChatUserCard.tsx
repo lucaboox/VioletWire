@@ -39,6 +39,12 @@ const UserCardMessage = memo(function UserCardMessage({
 });
 
 interface ChatUserCardProps {
+  /**
+   * The document to open in. Chat can be rendered into a window of its own,
+   * and a card that puts itself in this window is left behind on the wrong
+   * screen, measured against the wrong viewport.
+   */
+  root?: Document;
   anchor?: DOMRect;
   badges: Map<string, ChatBadgeAsset>;
   channel: string;
@@ -99,7 +105,18 @@ function tierLabel(tier: string | undefined): string {
   return "Tier 1";
 }
 
-export function ChatUserCard({ anchor, badges, channel, messages, onClose, renderText, selected }: ChatUserCardProps) {
+export function ChatUserCard({
+  anchor,
+  badges,
+  channel,
+  messages,
+  onClose,
+  renderText,
+  root = document,
+  selected,
+}: ChatUserCardProps) {
+  // The window the card opens in, so it is measured against that viewport.
+  const view = root.defaultView ?? window;
   const [profile, setProfile] = useState<ChatUserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState<CardPosition | null>(null);
@@ -170,14 +187,14 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
     const height = card.offsetHeight;
     const margin = 8;
     let left = anchor.right + 10;
-    if (left + width > window.innerWidth - margin) left = anchor.left - width - 10;
-    left = Math.max(margin, Math.min(window.innerWidth - width - margin, left));
+    if (left + width > view.innerWidth - margin) left = anchor.left - width - 10;
+    left = Math.max(margin, Math.min(view.innerWidth - width - margin, left));
     const top = Math.max(
       margin,
-      Math.min(window.innerHeight - height - margin, anchor.top - 8),
+      Math.min(view.innerHeight - height - margin, anchor.top - 8),
     );
     setPosition({ left, top });
-  }, [anchor, selected.login]);
+  }, [anchor, selected.login, view]);
 
   useLayoutEffect(() => {
     const card = cardRef.current;
@@ -370,6 +387,6 @@ export function ChatUserCard({ anchor, badges, channel, messages, onClose, rende
           )}
         </div>
     </section>,
-    document.body,
+    root.body,
   );
 }
