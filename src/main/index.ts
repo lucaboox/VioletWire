@@ -216,11 +216,20 @@ const updateService = new UpdateService(
 );
 const githubReleaseNotesService = new GitHubReleaseNotesService();
 
+/**
+ * What a URL should be compared against to say where it came from. A scheme of
+ * the app's own is not one the URL standard gives an origin to — it reports
+ * "null" — so its scheme and host stand in for one.
+ */
+function rendererOriginOf(url: URL): string {
+  return url.origin === "null" ? `${url.protocol}//${url.host}` : url.origin;
+}
+
 function isTrustedRendererUrl(rawUrl: string): boolean {
   if (!trustedRendererOrigin) return false;
   try {
     const url = new URL(rawUrl);
-    if (url.origin !== trustedRendererOrigin) return false;
+    if (rendererOriginOf(url) !== trustedRendererOrigin) return false;
     return url.pathname === "/" || url.pathname === "/index.html";
   } catch {
     return false;
@@ -803,7 +812,7 @@ async function loadRendererView(window: BrowserWindow, view?: string): Promise<v
   const query = view ? `?view=${encodeURIComponent(view)}` : "";
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl) {
-    trustedRendererOrigin = new URL(rendererUrl).origin;
+    trustedRendererOrigin = rendererOriginOf(new URL(rendererUrl));
     lockLocalRendererNavigation(window);
     await window.loadURL(`${rendererUrl}${query}`);
     return;
