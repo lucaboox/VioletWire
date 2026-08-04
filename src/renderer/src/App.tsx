@@ -647,6 +647,23 @@ export function App() {
     useChatWindow();
   const pictureInPicture = useDocumentPip();
   const pictureInPictureTarget = pictureInPicture.target;
+  // Moving the surface into the picture-in-picture window is done to the node
+  // itself, not by rendering it there. Rendering into another container makes
+  // React build the subtree again, which would tear down the media element and
+  // restart the stream — the whole reason this surface exists is that it never
+  // remounts. Moving the node leaves React holding the same element.
+  useLayoutEffect(() => {
+    const surface = persistentHlsSurfaceRef.current;
+    if (!surface || !pictureInPictureTarget) return;
+    const home = surface.parentElement;
+    const nextSibling = surface.nextSibling;
+    pictureInPictureTarget.document.body.append(surface);
+    return () => {
+      if (!home) return;
+      if (nextSibling && nextSibling.parentNode === home) home.insertBefore(surface, nextSibling);
+      else home.append(surface);
+    };
+  }, [pictureInPictureTarget]);
   const closeChatWindowRef = useRef(closeChatWindow);
   useEffect(() => {
     closeChatWindowRef.current = closeChatWindow;
@@ -3408,7 +3425,6 @@ export function App() {
       </div>
 
       {activeChannel && activeMode === "native" && (
-        <WindowPortal className="pip-window-shell" target={pictureInPictureTarget}>
         <div
           aria-hidden="true"
           className={
@@ -3423,7 +3439,6 @@ export function App() {
             state={nativeState}
           />
         </div>
-        </WindowPortal>
       )}
 
       <div className="brand">
