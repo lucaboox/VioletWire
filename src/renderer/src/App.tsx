@@ -116,9 +116,8 @@ import {
 import { NativeControls } from "./NativeControls";
 import { ChatMessageRow } from "./ChatMessageRow";
 import { ChatWindowPlacer } from "./ChatWindowPlacer";
-import { WindowPortal } from "./WindowPortal";
+import { ChatWindowPortal } from "./ChatWindowPortal";
 import { useChatWindow } from "./use-chat-window";
-import { useDocumentPip } from "./use-document-pip";
 import { renderChatMessageText } from "./chat-message-text";
 import { HlsNativeVideo } from "./HlsNativeVideo";
 import { PinnedChatMessage } from "./PinnedChatMessage";
@@ -645,25 +644,6 @@ export function App() {
   const [chatVisible, setChatVisible] = useState(true);
   const { target: chatWindowTarget, open: openChatWindow, close: closeChatWindow } =
     useChatWindow();
-  const pictureInPicture = useDocumentPip();
-  const pictureInPictureTarget = pictureInPicture.target;
-  // Moving the surface into the picture-in-picture window is done to the node
-  // itself, not by rendering it there. Rendering into another container makes
-  // React build the subtree again, which would tear down the media element and
-  // restart the stream — the whole reason this surface exists is that it never
-  // remounts. Moving the node leaves React holding the same element.
-  useLayoutEffect(() => {
-    const surface = persistentHlsSurfaceRef.current;
-    if (!surface || !pictureInPictureTarget) return;
-    const home = surface.parentElement;
-    const nextSibling = surface.nextSibling;
-    pictureInPictureTarget.document.body.append(surface);
-    return () => {
-      if (!home) return;
-      if (nextSibling && nextSibling.parentNode === home) home.insertBefore(surface, nextSibling);
-      else home.append(surface);
-    };
-  }, [pictureInPictureTarget]);
   const closeChatWindowRef = useRef(closeChatWindow);
   useEffect(() => {
     closeChatWindowRef.current = closeChatWindow;
@@ -1710,16 +1690,6 @@ export function App() {
     ) {
       return;
     }
-    // In its own window the player fills that window, so the measurements that
-    // hold it over a rectangle in this one are dropped rather than fought with.
-    if (pictureInPictureTarget) {
-      surface.style.left = "";
-      surface.style.top = "";
-      surface.style.width = "";
-      surface.style.height = "";
-      surface.style.visibility = "visible";
-      return;
-    }
     const host = miniPlayerActive ? miniPlayerRef.current : playerHost.current;
     if (!host) {
       surface.style.visibility = "hidden";
@@ -1760,7 +1730,6 @@ export function App() {
     chatVisible,
     chatWindowTarget,
     fullscreen,
-    pictureInPictureTarget,
     miniPlayerActive,
     miniPlayerPosition,
     miniPlayerWidth,
@@ -4563,27 +4532,6 @@ export function App() {
                           isFollowed: activeChannelFollowState ?? undefined,
                         }}
                         inlineVisible={nativeControlsVisible}
-                        onTogglePictureInPicture={
-                          pictureInPicture.supported
-                            ? () => {
-                                if (pictureInPictureTarget) {
-                                  pictureInPicture.close();
-                                  return;
-                                }
-                                void pictureInPicture.open().then((opened) => {
-                                  // Chromium own picture in picture still works
-                                  // when a window of our own is refused.
-                                  if (!opened) {
-                                    void document
-                                      .querySelector<HTMLVideoElement>(".native-hls-video")
-                                      ?.requestPictureInPicture()
-                                      .catch(() => undefined);
-                                  }
-                                });
-                              }
-                            : undefined
-                        }
-                        pictureInPictureShown={pictureInPictureTarget !== null}
                         onOpenChatSettings={openFullChatSettings}
                       />
                     </>
@@ -4625,7 +4573,7 @@ export function App() {
                 </div>
               </div>
               {!(activeMode === "native" && chatPresentation === "overlay") && (
-                <WindowPortal
+                <ChatWindowPortal
                   className={oledMode ? "chat-window-shell oled-mode" : "chat-window-shell"}
                   target={chatWindowTarget}
                 >
@@ -5211,7 +5159,7 @@ export function App() {
                     </form>
                   </div>
                 </aside>
-                </WindowPortal>
+                </ChatWindowPortal>
               )}
             </div>
           </section>

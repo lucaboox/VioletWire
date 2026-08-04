@@ -317,13 +317,10 @@ function lockLocalRendererNavigation(
   window: BrowserWindow,
 ): void {
   window.webContents.setWindowOpenHandler(({ frameName, url }) => {
-    // Chat and the picture-in-picture player are both windows this renderer
-    // opens empty and then fills with its own nodes. Neither carries a
-    // destination, and one asking for a document picture-in-picture window does
-    // not name itself, so a blank request is what identifies them; anything
-    // carrying somewhere to go is still refused.
-    if (url !== "" && url !== "about:blank") return { action: "deny" };
-    if (frameName === CHAT_WINDOW_NAME) {
+    // Chat renders itself into a window of its own. That window is opened blank
+    // and never navigated — the renderer puts the panel's own nodes into it —
+    // so anything carrying a destination is still refused.
+    if (frameName === CHAT_WINDOW_NAME && (url === "" || url === "about:blank")) {
       return {
         action: "allow",
         overrideBrowserWindowOptions: {
@@ -336,14 +333,7 @@ function lockLocalRendererNavigation(
         },
       };
     }
-    return {
-      action: "allow",
-      overrideBrowserWindowOptions: {
-        icon: applicationIcon,
-        backgroundColor: "#000000",
-        autoHideMenuBar: true,
-      },
-    };
+    return { action: "deny" };
   });
   window.webContents.on("did-create-window", (created, { frameName }) => {
     if (frameName !== CHAT_WINDOW_NAME) return;
