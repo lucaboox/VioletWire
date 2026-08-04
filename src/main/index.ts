@@ -261,6 +261,28 @@ function onTrusted<Arguments extends unknown[]>(
   });
 }
 
+
+/**
+ * Stands the chat window against the side of a display, filling its working
+ * height. This is only a position and a size — the window stays an ordinary
+ * one, so nothing is tiled and no other window is resized to make room, and
+ * the working area already excludes the taskbar. The side chosen is the one
+ * the main window sits furthest from, so chat does not land on top of it.
+ */
+function standChatWindowAtDisplayEdge(window: BrowserWindow): void {
+  const anchor =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : window.getBounds();
+  const workArea = screen.getDisplayMatching(anchor).workArea;
+  const width = Math.max(320, Math.min(window.getBounds().width, Math.round(workArea.width / 3)));
+  const anchorCentre = anchor.x + anchor.width / 2;
+  const towardsRight = anchorCentre <= workArea.x + workArea.width / 2;
+  window.setBounds({
+    x: towardsRight ? workArea.x + workArea.width - width : workArea.x,
+    y: workArea.y,
+    width,
+    height: workArea.height,
+  });
+}
 function lockLocalRendererNavigation(
   window: BrowserWindow,
 ): void {
@@ -286,6 +308,7 @@ function lockLocalRendererNavigation(
   window.webContents.on("did-create-window", (created, { frameName }) => {
     if (frameName !== CHAT_WINDOW_NAME) return;
     chatPopoutWindow = created;
+    standChatWindowAtDisplayEdge(created);
     created.on("closed", () => {
       if (chatPopoutWindow === created) chatPopoutWindow = null;
     });
