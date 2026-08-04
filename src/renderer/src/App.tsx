@@ -4590,6 +4590,15 @@ export function App() {
               {!(activeMode === "native" && chatPresentation === "overlay") && (
                 <ChatWindowPortal
                   className={oledMode ? "chat-window-shell oled-mode" : "chat-window-shell"}
+                  // The sizes chat is drawn at are set on the app shell, which
+                  // the panel is no longer inside once it is in a window of its
+                  // own, so they travel with it.
+                  style={
+                    {
+                      "--chat-font-size": `${chatFontSize}px`,
+                      "--chat-emote-size": `${chatEmoteSize}px`,
+                    } as CSSProperties
+                  }
                   target={chatWindowTarget}
                 >
                 <aside
