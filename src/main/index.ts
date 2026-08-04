@@ -948,10 +948,6 @@ handleTrusted("chat-window:get-displays", () => {
     primary: display.id === primaryId,
     bounds: display.bounds,
     workArea: display.workArea,
-    // Positions and sizes are reported already divided by the display's
-    // scaling, so a large screen at a high scaling reads as barely bigger than
-    // a small one. A picture of the desk needs the sizes actually on it.
-    scaleFactor: display.scaleFactor,
   }));
 });
 
