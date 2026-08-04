@@ -115,6 +115,8 @@ import {
 } from "../../shared/platform";
 import { NativeControls } from "./NativeControls";
 import { ChatMessageRow } from "./ChatMessageRow";
+import { ChatWindowPortal } from "./ChatWindowPortal";
+import { useChatWindow } from "./use-chat-window";
 import { renderChatMessageText } from "./chat-message-text";
 import { HlsNativeVideo } from "./HlsNativeVideo";
 import { PinnedChatMessage } from "./PinnedChatMessage";
@@ -639,9 +641,7 @@ export function App() {
     useState<ChannelNavigationIdentity>();
   const [error, setError] = useState<string | null>(null);
   const [chatVisible, setChatVisible] = useState(true);
-  // While chat has a window of its own the docked panel steps aside, so the
-  // same conversation is not being read in two places at once.
-  const [chatPoppedOut, setChatPoppedOut] = useState(false);
+  const chatWindow = useChatWindow();
   const [chatPresentation, setChatPresentation] = useState<ChatPresentation>("side");
   const [theaterMode, setTheaterMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -884,10 +884,6 @@ export function App() {
     currentPinnedChatMessage.id === dismissedPinnedMessage?.id &&
     dismissedPinnedMessage?.channel === chatChannel;
 
-  useEffect(
-    () => window.desktop.chat.onPopoutState(setChatPoppedOut),
-    [],
-  );
   useEffect(() => {
     if (!chatChannel || !chatBroadcasterId) {
       return;
@@ -4250,9 +4246,7 @@ export function App() {
           >
             <div
               className={`player-toolbar ${
-                !chatVisible || chatPoppedOut || chatPresentation === "overlay"
-                  ? "chat-collapsed"
-                  : ""
+                !chatVisible || chatPresentation === "overlay" ? "chat-collapsed" : ""
               }`}
             >
               <div className="player-toolbar-main">
@@ -4433,9 +4427,7 @@ export function App() {
             <div
               className={[
                 "viewer-layout",
-                !chatVisible || chatPoppedOut || chatPresentation === "overlay"
-                  ? "chat-collapsed"
-                  : "",
+                !chatVisible || chatPresentation === "overlay" ? "chat-collapsed" : "",
                 chatPresentation === "overlay" ? "chat-overlay-mode" : "",
               ].join(" ")}
             >
@@ -4561,6 +4553,7 @@ export function App() {
                 </div>
               </div>
               {!(activeMode === "native" && chatPresentation === "overlay") && (
+                <ChatWindowPortal target={chatWindow.target}>
                 <aside
                   className={[
                     "chat-panel",
@@ -4661,7 +4654,7 @@ export function App() {
                       <button
                         aria-label="Pop chat out into its own window"
                         className="toolbar-icon"
-                        onClick={() => void window.desktop.chat.popOut()}
+                        onClick={chatWindow.open}
                         title="Pop out chat"
                         type="button"
                       >
@@ -5135,6 +5128,7 @@ export function App() {
                     </form>
                   </div>
                 </aside>
+                </ChatWindowPortal>
               )}
             </div>
           </section>

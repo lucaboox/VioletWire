@@ -95,6 +95,8 @@ const applicationIcon = app.isPackaged
 let mainWindow: BrowserWindow | null = null;
 let channelActionWindow: BrowserWindow | null = null;
 let subscriptionWindow: BrowserWindow | null = null;
+// Must match CHAT_WINDOW_NAME in the renderer’s use-chat-window module.
+const CHAT_WINDOW_NAME = "violetwire-chat";
 let chatPopoutWindow: BrowserWindow | null = null;
 let activePlayerMode: PlayerMode | null = null;
 let activeChannelName: string | null = null;
@@ -227,16 +229,10 @@ function isTrustedRendererUrl(rawUrl: string): boolean {
 function isTrustedIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   const frame = event.senderFrame;
   if (!frame || frame !== event.sender.mainFrame) return false;
-  // Only windows this app built for its own interface, and only while they are
-  // showing the renderer itself. An embedded site, or a window a page opened,
-  // stays untrusted whatever it claims to be.
-  const ownWindows = [mainWindow, chatPopoutWindow];
-  const isOwnWindow = ownWindows.some(
-    (window) =>
-      window && !window.isDestroyed() && event.sender === window.webContents,
-  );
-  if (!isOwnWindow) return false;
-  return isTrustedRendererUrl(frame.url);
+  if (mainWindow && event.sender === mainWindow.webContents) {
+    return isTrustedRendererUrl(frame.url);
+  }
+  return false;
 }
 
 function assertTrustedIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): void {
@@ -268,7 +264,32 @@ function onTrusted<Arguments extends unknown[]>(
 function lockLocalRendererNavigation(
   window: BrowserWindow,
 ): void {
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.setWindowOpenHandler(({ frameName, url }) => {
+    // Chat renders itself into a window of its own. That window is opened blank
+    // and never navigated — the renderer puts the panel's own nodes into it —
+    // so anything carrying a destination is still refused.
+    if (frameName === CHAT_WINDOW_NAME && (url === "" || url === "about:blank")) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          title: "VioletWire Chat",
+          icon: applicationIcon,
+          backgroundColor: "#0e0e10",
+          minWidth: 300,
+          minHeight: 320,
+          autoHideMenuBar: true,
+        },
+      };
+    }
+    return { action: "deny" };
+  });
+  window.webContents.on("did-create-window", (created, { frameName }) => {
+    if (frameName !== CHAT_WINDOW_NAME) return;
+    chatPopoutWindow = created;
+    created.on("closed", () => {
+      if (chatPopoutWindow === created) chatPopoutWindow = null;
+    });
+  });
   const blockUnexpectedNavigation = (event: Electron.Event, url: string) => {
     if (!isTrustedRendererUrl(url)) event.preventDefault();
   };
@@ -647,7 +668,6 @@ function destroyPlayer(invalidatePendingOpen = true): void {
   twitchChatService.disconnect();
   activePlayerMode = null;
   activeChannelName = null;
-  sendToChatSurfaces("chat:active-channel", null);
   latestNativePlayerState = null;
   updateThumbnailToolbar();
 }
@@ -742,55 +762,6 @@ async function loadRendererView(window: BrowserWindow, view?: string): Promise<v
   await window.loadURL(`${rendererServer.origin}/index.html${query}`);
 }
 
-/**
- * Chat in a window of its own, so it can be parked on another display or
- * beside a game. It is deliberately not a child of the main window: a child
- * minimizes with its parent and is pinned above it, which is the opposite of
- * what a chat you want to leave open on a second monitor should do.
- */
-async function openChatPopout(): Promise<void> {
-  if (chatPopoutWindow && !chatPopoutWindow.isDestroyed()) {
-    if (chatPopoutWindow.isMinimized()) chatPopoutWindow.restore();
-    chatPopoutWindow.show();
-    chatPopoutWindow.focus();
-    return;
-  }
-  const window = new BrowserWindow({
-    width: 420,
-    height: 720,
-    minWidth: 300,
-    minHeight: 320,
-    show: false,
-    title: "VioletWire Chat",
-    icon: applicationIcon,
-    backgroundColor: "#0e0e10",
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(currentDirectory, "../preload/index.cjs"),
-      partition: APP_UI_PARTITION,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  chatPopoutWindow = window;
-  chatSurfaces.add(window);
-  window.once("ready-to-show", () => window.show());
-  window.on("closed", () => {
-    chatSurfaces.delete(window);
-    if (chatPopoutWindow === window) chatPopoutWindow = null;
-    // Closing the window is how the chat comes back, so the docked panel has
-    // to hear about it; otherwise closing it would leave no chat anywhere.
-    sendToWindow(mainWindow, "chat:popout-state", false);
-  });
-  await loadRendererView(window, "chat");
-  sendToWindow(mainWindow, "chat:popout-state", true);
-}
-
-function closeChatPopout(): void {
-  if (!chatPopoutWindow || chatPopoutWindow.isDestroyed()) return;
-  chatPopoutWindow.close();
-}
 async function createWindow(): Promise<void> {
   const savedBounds = restoredMainWindowBounds();
   const preferences = preferencesService.get();
@@ -908,15 +879,8 @@ async function createWindow(): Promise<void> {
 
 
 
-handleTrusted("chat:get-active-channel", () => activeChannelName);
 
-handleTrusted("chat:pop-out", async () => {
-  await openChatPopout();
-});
 
-handleTrusted("chat:dock", () => {
-  closeChatPopout();
-});
 
 handleTrusted(
   "player:open",
@@ -930,7 +894,6 @@ handleTrusted(
   const openGeneration = ++playerOpenGeneration;
   destroyPlayer(false);
   activeChannelName = channel;
-  sendToChatSurfaces("chat:active-channel", channel);
 
   let fallbackReason: string | undefined;
   if (requestedMode === "native") {
