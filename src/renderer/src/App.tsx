@@ -2,7 +2,6 @@ import {
   FormEvent,
   Fragment,
   memo,
-  type ReactNode,
   type CSSProperties,
   useCallback,
   useEffect,
@@ -83,8 +82,6 @@ import type {
 } from "../../shared/chat";
 import { applyChatMessageBatch } from "../../shared/chat-messages";
 import {
-  formatChatTimestamp,
-  formatModerationAction,
   messageMentionsLogin,
 } from "../../shared/chat";
 import {
@@ -104,7 +101,6 @@ import { useChatSendQueue } from "./use-chat-send-queue";
 import { EmotePicker } from "./EmotePicker";
 import { MultiStreamView } from "./MultiStreamView";
 import { ReactTooltipLayer } from "./ReactTooltipLayer";
-import { ChatEmote } from "./ChatEmote";
 import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
@@ -118,6 +114,8 @@ import {
   type KickUserAccount,
 } from "../../shared/platform";
 import { NativeControls } from "./NativeControls";
+import { ChatMessageRow } from "./ChatMessageRow";
+import { renderChatMessageText } from "./chat-message-text";
 import { HlsNativeVideo } from "./HlsNativeVideo";
 import { PinnedChatMessage } from "./PinnedChatMessage";
 import { ProviderLogo } from "./ProviderLogo";
@@ -126,9 +124,7 @@ import {
   MentionSoundControls,
   TwitchChatColorControls,
 } from "./ChatSettingsControls";
-import { withoutRedundantReplyMention } from "./chat-display";
 import { playMentionSound } from "./mention-sound";
-import { renderProviderText } from "./ProviderEmoteText";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
 import changelogSource from "../../../CHANGELOG.md?raw";
@@ -593,264 +589,6 @@ function visibleStreamTags(tags: string[] | undefined, language: string | undefi
     .slice(0, 3);
 }
 
-function renderChatMessageText(
-  message: ChatMessage,
-  providerEmotes: Map<string, ProviderEmote>,
-): ReactNode[] {
-  const displayMessage = withoutRedundantReplyMention(message);
-  const ranges = [...displayMessage.twitchEmotes].sort(
-    (left, right) => left.start - right.start,
-  );
-  if (ranges.length === 0) {
-    return renderProviderText(
-      displayMessage.text,
-      providerEmotes,
-      message.id,
-      "chat-emote",
-    );
-  }
-  const output: ReactNode[] = [];
-  let cursor = 0;
-  ranges.forEach((range, index) => {
-    if (range.start > cursor) {
-      output.push(
-        ...renderProviderText(
-          displayMessage.text.slice(cursor, range.start),
-          providerEmotes,
-          `${message.id}-text-${index}`,
-          "chat-emote",
-        ),
-      );
-    }
-    const name = displayMessage.text.slice(range.start, range.end + 1);
-    output.push(
-      <ChatEmote
-        className="chat-emote"
-        imageUrl={
-          range.imageUrl ??
-          `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`
-        }
-        key={`${message.id}-twitch-${index}`}
-        name={name}
-        provider={range.provider ?? "twitch"}
-      />,
-    );
-    cursor = range.end + 1;
-  });
-  if (cursor < displayMessage.text.length) {
-    output.push(
-      ...renderProviderText(
-        displayMessage.text.slice(cursor),
-        providerEmotes,
-        `${message.id}-tail`,
-        "chat-emote",
-      ),
-    );
-  }
-  return output;
-}
-
-interface ChatMessageRowProps {
-  message: ChatMessage;
-  showTimestamp: boolean;
-  badges: Map<string, ChatBadgeAsset>;
-  oledMode: boolean;
-  mentioned: boolean;
-  deletedRevealed: boolean;
-  deletedMessageStyle: AppPreferences["chatDeletedMessageStyle"];
-  onRevealDeleted: (id: string) => void;
-  onReply: (message: ChatMessage) => void;
-  onOpenThread: (message: ChatMessage) => void;
-  onOpenUser: (message: ChatMessage, anchor: DOMRect) => void;
-  providerEmotes: Map<string, ProviderEmote>;
-}
-
-// Memoized so a new chat message only renders its own row instead of
-// re-rendering (and re-tokenizing emotes for) every message in the list.
-const ChatMessageRow = memo(function ChatMessageRow({
-  message,
-  showTimestamp,
-  badges,
-  oledMode,
-  mentioned,
-  deletedRevealed,
-  deletedMessageStyle,
-  onRevealDeleted,
-  onReply,
-  onOpenThread,
-  onOpenUser,
-  providerEmotes,
-}: ChatMessageRowProps) {
-  if (message.notice) {
-    return (
-      <div
-        className="native-chat-message chat-notice-message"
-        data-chat-message-id={message.id}
-      >
-        <div className="chat-notice-heading">
-          <Star fill="currentColor" size={15} />
-          <strong>{message.notice.systemMessage}</strong>
-        </div>
-        <div className="chat-notice-facts">
-          {message.notice.tier && <span>{message.notice.tier}</span>}
-          {message.notice.cumulativeMonths && (
-            <span>{message.notice.cumulativeMonths} months</span>
-          )}
-          {message.notice.streakMonths && (
-            <span>{message.notice.streakMonths} month streak</span>
-          )}
-          {message.notice.giftCount && <span>{message.notice.giftCount} gifts</span>}
-        </div>
-        {message.text && (
-          <div className="chat-notice-text">
-            {showTimestamp && (
-              <time dateTime={new Date(message.sentAt).toISOString()}>
-                {formatChatTimestamp(message.sentAt)}
-              </time>
-            )}
-            {message.badgeAssets && message.badgeAssets.length > 0 ? (
-              <span className="native-chat-badges">
-                {message.badgeAssets.slice(0, 4).map((badge) => (
-                  <ChatBadge badge={badge} key={badge.key} />
-                ))}
-              </span>
-            ) : (
-              message.badges.length > 0 && (
-                <span className="native-chat-badges" title={message.badges.join(", ")}>
-                  {message.badges.slice(0, 4).map((badgeKey) => {
-                    const badge = badges.get(badgeKey);
-                    return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
-                  })}
-                </span>
-              )
-            )}
-            <button
-              className="chat-username"
-              onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}
-              style={{
-                color: readableUsernameColor(
-                  message.color,
-                  oledMode ? "#000000" : "#18181b",
-                ),
-              }}
-              type="button"
-            >
-              {message.displayName}
-            </button>
-            <span className="chat-colon">:</span>{" "}
-            {renderChatMessageText(message, providerEmotes)}
-          </div>
-        )}
-      </div>
-    );
-  }
-  return (
-    <div
-      className={[
-        "native-chat-message",
-        mentioned ? "mentioned" : "",
-        message.deleted && deletedMessageStyle === "dimmed" ? "deleted-dimmed" : "",
-      ].filter(Boolean).join(" ")}
-      data-chat-message-id={message.id}
-    >
-      {message.reply && (
-        <button
-          className="chat-reply-parent"
-          onClick={() => onOpenThread(message)}
-          title={message.reply.parentMessageBody}
-          type="button"
-        >
-          Replying to {message.reply.parentDisplayName || message.reply.parentUserLogin}:{" "}
-          {message.reply.parentMessageBody}
-        </button>
-      )}
-      {showTimestamp && (
-        <time
-          className="chat-timestamp"
-          dateTime={new Date(message.sentAt).toISOString()}
-        >
-          {formatChatTimestamp(message.sentAt)}
-        </time>
-      )}
-      {message.badgeAssets && message.badgeAssets.length > 0 ? (
-        <span className="native-chat-badges">
-          {message.badgeAssets.slice(0, 4).map((badge) => (
-            <ChatBadge badge={badge} key={badge.key} />
-          ))}
-        </span>
-      ) : (
-        message.badges.length > 0 && (
-          <span className="native-chat-badges" title={message.badges.join(", ")}>
-            {message.badges.slice(0, 4).map((badgeKey) => {
-              const badge = badges.get(badgeKey);
-              return badge ? <ChatBadge badge={badge} key={badgeKey} /> : null;
-            })}
-          </span>
-        )
-      )}
-      <button
-        className="chat-username"
-        onClick={(event) => onOpenUser(message, event.currentTarget.getBoundingClientRect())}
-        style={{
-          color: readableUsernameColor(
-            message.color,
-            oledMode ? "#000000" : "#18181b",
-          ),
-        }}
-        type="button"
-      >
-        {message.displayName}
-      </button>
-      {message.action ? " " : <><span className="chat-colon">:</span>{" "}</>}
-      <span
-        className="native-chat-text"
-        style={
-          message.action
-            ? {
-                color: readableUsernameColor(
-                  message.color,
-                  oledMode ? "#000000" : "#18181b",
-                ),
-              }
-            : undefined
-        }
-      >
-        {message.deleted && deletedMessageStyle === "placeholder" && !deletedRevealed ? (
-          <button
-            className="deleted-message-toggle"
-            onClick={() => onRevealDeleted(message.id)}
-            title="Show the deleted message locally"
-            type="button"
-          >
-            &lt;{formatModerationAction(message)}&gt;
-          </button>
-        ) : (
-          <>
-            <span className={message.deleted ? "deleted-original-content" : undefined}>
-              {renderChatMessageText(message, providerEmotes)}
-            </span>
-            {message.deleted && deletedMessageStyle === "dimmed" && (
-              <span className="moderation-reason">
-                {" "}({formatModerationAction(message)})
-              </span>
-            )}
-          </>
-        )}
-      </span>
-      {!message.deleted && (
-        <button
-          aria-label={`Reply to ${message.displayName}`}
-          className="chat-message-reply"
-          onClick={() => onReply(message)}
-          title={`Reply to ${message.displayName}`}
-          type="button"
-        >
-          <Reply size={14} />
-        </button>
-      )}
-    </div>
-  );
-});
 
 export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("home");
