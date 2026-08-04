@@ -1,4 +1,6 @@
-import { net, protocol } from "electron";
+import { net } from "electron";
+import type { Session } from "electron";
+import { readCachedKickBadge } from "./kick-badge-cache";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -27,12 +29,30 @@ export const appProtocolPrivileges = {
   },
 };
 
-export function registerAppProtocol(rendererDirectory: string): void {
-  protocol.handle(APP_SCHEME, async (request) => {
+/**
+ * Registered against the session the interface actually runs in. A scheme
+ * handled on the default session does not exist inside a partition, and the
+ * window would have nothing to load.
+ */
+export function registerAppProtocol(
+  target: Session,
+  rendererDirectory: string,
+): void {
+  target.protocol.handle(APP_SCHEME, async (request) => {
     const url = new URL(request.url);
     // Only the one host serves anything, and a single page backs every route.
     if (url.hostname !== "app") return new Response("Not found", { status: 404 });
     const requested = decodeURIComponent(url.pathname);
+    // Kick badge artwork is kept in the app's own data rather than fetched
+    // from its publisher every time, so it is served from there.
+    const badge = /^\/kick-badges\/([a-z0-9_]+)\.svg$/i.exec(requested);
+    if (badge) {
+      const bytes = await readCachedKickBadge(badge[1]);
+      if (!bytes) return new Response("Not found", { status: 404 });
+      return new Response(new Uint8Array(bytes), {
+        headers: { "Content-Type": "image/svg+xml" },
+      });
+    }
     const relative = requested === "/" ? "/index.html" : requested;
     const target = path.join(rendererDirectory, relative);
     // Keep a path built from the address inside the directory being served.

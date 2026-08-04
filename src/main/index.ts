@@ -809,7 +809,10 @@ async function loadRendererView(window: BrowserWindow, view?: string): Promise<v
     return;
   }
   if (!appProtocolReady) {
-    registerAppProtocol(path.join(currentDirectory, "../../dist/renderer"));
+    registerAppProtocol(
+      session.fromPartition(APP_UI_PARTITION),
+      path.join(currentDirectory, "../../dist/renderer"),
+    );
     appProtocolReady = true;
   }
   trustedRendererOrigin = APP_ORIGIN;

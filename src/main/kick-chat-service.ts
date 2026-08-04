@@ -6,6 +6,11 @@ import type {
   TwitchChatEmoteRange,
 } from "../shared/chat";
 import { KICK_GLYPH_BADGE_TYPES, NO_CHAT_RESTRICTIONS } from "../shared/chat";
+import {
+  keepKickBadge,
+  kickBadgeCachedUrl,
+  kickBadgeRemoteUrl,
+} from "./kick-badge-cache";
 import type { KickService } from "./kick-service";
 import type { KickChatReplyTarget } from "./kick-service";
 
@@ -281,17 +286,14 @@ const KICK_GLYPH_BADGES = new Set<string>(KICK_GLYPH_BADGE_TYPES);
 // still renders correctly. The hand-drawn glyphs stay as the fallback, so a
 // badge whose art is missing — or the whole host being unreachable — still
 // looks the way it did before.
-const KICK_BADGE_ART_HOST = "https://cdn.kicktalk.app/Badges";
-// The few whose art is filed under a different name than Kick's badge type.
-const KICK_BADGE_ART_NAMES: Record<string, string> = {
-  sub_gifter: "subgifter1",
-};
-
-function kickBadgeArtUrl(type: string): string {
-  // The type comes from Kick's API, so only a plain name is allowed to reach
-  // the URL; anything else would be able to point this somewhere else entirely.
-  if (!/^[a-z0-9_]+$/i.test(type)) return "";
-  return `${KICK_BADGE_ART_HOST}/${KICK_BADGE_ART_NAMES[type] ?? type}.svg`;
+function kickBadgeArt(type: string): { imageUrl: string; imageUrls?: string[] } {
+  const remote = kickBadgeRemoteUrl(type);
+  if (!remote) return { imageUrl: "" };
+  // Keep a copy so the artwork is not asked of its publisher again, and prefer
+  // that copy; the published address stays behind it for the first sighting of
+  // a badge and for anything that fails to keep.
+  keepKickBadge(type);
+  return { imageUrl: remote, imageUrls: [kickBadgeCachedUrl(type)] };
 }
 
 const KICK_TEXT_BADGE_COLORS: Record<string, string> = {
@@ -343,7 +345,7 @@ export function kickBadges(
       assets.push({
         key: `kick-${type}`,
         title: label,
-        imageUrl: kickBadgeArtUrl(type),
+        ...kickBadgeArt(type),
         glyph: type,
       });
       continue;
@@ -353,7 +355,7 @@ export function kickBadges(
     assets.push({
       key: `kick-${type}`,
       title: label,
-      imageUrl: kickBadgeArtUrl(type),
+      ...kickBadgeArt(type),
       label: label
         .split(/\s+/)
         .map((word) => word[0] ?? "")
