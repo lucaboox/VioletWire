@@ -227,10 +227,16 @@ function isTrustedRendererUrl(rawUrl: string): boolean {
 function isTrustedIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   const frame = event.senderFrame;
   if (!frame || frame !== event.sender.mainFrame) return false;
-  if (mainWindow && event.sender === mainWindow.webContents) {
-    return isTrustedRendererUrl(frame.url);
-  }
-  return false;
+  // Only windows this app built for its own interface, and only while they are
+  // showing the renderer itself. An embedded site, or a window a page opened,
+  // stays untrusted whatever it claims to be.
+  const ownWindows = [mainWindow, chatPopoutWindow];
+  const isOwnWindow = ownWindows.some(
+    (window) =>
+      window && !window.isDestroyed() && event.sender === window.webContents,
+  );
+  if (!isOwnWindow) return false;
+  return isTrustedRendererUrl(frame.url);
 }
 
 function assertTrustedIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): void {

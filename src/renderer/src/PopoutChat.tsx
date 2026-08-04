@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppPreferences } from "../../shared/preferences";
-import type { ChatBadgeAsset, ChatMessage } from "../../shared/chat";
+import type { ChatMessage } from "../../shared/chat";
 import { messageMentionsLogin } from "../../shared/chat";
-import type { ProviderEmote } from "../../shared/emotes";
 import { ChatMessageRow } from "./ChatMessageRow";
 import { useChatFeed } from "./chat-feed";
+import { useChatAssets } from "./use-chat-assets";
 
 /**
  * Chat on its own, in its own window. It renders the same message rows the
@@ -50,8 +50,7 @@ export function PopoutChat() {
     revealDeleted,
   } = useChatFeed(channel);
 
-  const badges = useMemo(() => new Map<string, ChatBadgeAsset>(), []);
-  const providerEmotes = useMemo(() => new Map<string, ProviderEmote>(), []);
+  const { badges, providerEmotes } = useChatAssets(channel);
 
   const send = useCallback(async () => {
     const text = draft.trim();

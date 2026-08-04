@@ -639,6 +639,9 @@ export function App() {
     useState<ChannelNavigationIdentity>();
   const [error, setError] = useState<string | null>(null);
   const [chatVisible, setChatVisible] = useState(true);
+  // While chat has a window of its own the docked panel steps aside, so the
+  // same conversation is not being read in two places at once.
+  const [chatPoppedOut, setChatPoppedOut] = useState(false);
   const [chatPresentation, setChatPresentation] = useState<ChatPresentation>("side");
   const [theaterMode, setTheaterMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -881,6 +884,10 @@ export function App() {
     currentPinnedChatMessage.id === dismissedPinnedMessage?.id &&
     dismissedPinnedMessage?.channel === chatChannel;
 
+  useEffect(
+    () => window.desktop.chat.onPopoutState(setChatPoppedOut),
+    [],
+  );
   useEffect(() => {
     if (!chatChannel || !chatBroadcasterId) {
       return;
@@ -4243,7 +4250,9 @@ export function App() {
           >
             <div
               className={`player-toolbar ${
-                !chatVisible || chatPresentation === "overlay" ? "chat-collapsed" : ""
+                !chatVisible || chatPoppedOut || chatPresentation === "overlay"
+                  ? "chat-collapsed"
+                  : ""
               }`}
             >
               <div className="player-toolbar-main">
@@ -4424,7 +4433,9 @@ export function App() {
             <div
               className={[
                 "viewer-layout",
-                !chatVisible || chatPresentation === "overlay" ? "chat-collapsed" : "",
+                !chatVisible || chatPoppedOut || chatPresentation === "overlay"
+                  ? "chat-collapsed"
+                  : "",
                 chatPresentation === "overlay" ? "chat-overlay-mode" : "",
               ].join(" ")}
             >
