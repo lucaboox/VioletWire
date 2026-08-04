@@ -1670,7 +1670,11 @@ export function App() {
     observer.observe(composer);
     syncComposerSpace();
     return () => observer.disconnect();
-  }, [activeChannel, chatPresentation, chatVisible]);
+    // Chat moving to a window of its own, and back, changes how much room the
+    // composer takes without necessarily changing its size, and a resize
+    // observer has nothing to say about that. Measured again either way, or the
+    // scroll-to-live button keeps sitting where the other window put it.
+  }, [activeChannel, chatPresentation, chatVisible, chatWindowTarget]);
 
   const beginReply = useCallback((message: ChatMessage) => {
     setReplyingTo(message);
