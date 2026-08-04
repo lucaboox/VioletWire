@@ -4588,7 +4588,7 @@ export function App() {
                       : undefined
                   }
                 >
-                  {chatPresentation === "side" && (
+                  {chatPresentation === "side" && !chatWindowTarget && (
                     <div
                       aria-label="Resize chat"
                       className={
