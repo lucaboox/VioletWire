@@ -33,6 +33,12 @@ interface TooltipState {
 interface ReactTooltipLayerProps {
   genericLinkPreviewsEnabled: boolean;
   genericLinkPreviewActivation: "hover" | "ctrl" | "alt";
+  /**
+   * The document this layer watches and draws into. Chat can be rendered into a
+   * window of its own, and a layer watching this window's document would never
+   * see anything over there, so that window is given a layer of its own.
+   */
+  root?: Document;
 }
 
 function convertNativeTitles(root: ParentNode): void {
@@ -88,6 +94,7 @@ function positionTooltip(tooltip: TooltipState): CSSProperties {
 export function ReactTooltipLayer({
   genericLinkPreviewsEnabled,
   genericLinkPreviewActivation,
+  root = document,
 }: ReactTooltipLayerProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const showTimer = useRef<number | null>(null);
@@ -183,7 +190,7 @@ export function ReactTooltipLayer({
         if (!current?.target.isConnected) return null;
         if (current.trigger === "pointer") {
           const { x, y } = pointerPosition.current;
-          const elementAtPointer = document.elementFromPoint(x, y);
+          const elementAtPointer = root.elementFromPoint(x, y);
           if (
             !elementAtPointer
             || (
@@ -198,10 +205,10 @@ export function ReactTooltipLayer({
         return { ...current };
       });
     });
-  }, []);
+  }, [root]);
 
   useLayoutEffect(() => {
-    convertNativeTitles(document);
+    convertNativeTitles(root);
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         if (record.type === "attributes") {
@@ -213,7 +220,7 @@ export function ReactTooltipLayer({
         }
       }
     });
-    observer.observe(document.documentElement, {
+    observer.observe(root.documentElement, {
       attributeFilter: ["title"],
       attributes: true,
       childList: true,
@@ -264,7 +271,7 @@ export function ReactTooltipLayer({
         return;
       }
       const { x, y } = pointerPosition.current;
-      const target = tooltipTarget(document.elementFromPoint(x, y));
+      const target = tooltipTarget(root.elementFromPoint(x, y));
       if (target?.hasAttribute(LINK_PREVIEW_ATTRIBUTE)) {
         schedule(target, "pointer", true, true);
       }
@@ -282,13 +289,13 @@ export function ReactTooltipLayer({
       );
     };
 
-    document.addEventListener("pointerover", onPointerOver, true);
-    document.addEventListener("pointermove", onPointerMove, true);
-    document.addEventListener("pointerout", onPointerOut, true);
-    document.addEventListener("focusin", onFocusIn, true);
-    document.addEventListener("focusout", onFocusOut, true);
-    document.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("keyup", onKeyUp, true);
+    root.addEventListener("pointerover", onPointerOver, true);
+    root.addEventListener("pointermove", onPointerMove, true);
+    root.addEventListener("pointerout", onPointerOut, true);
+    root.addEventListener("focusin", onFocusIn, true);
+    root.addEventListener("focusout", onFocusOut, true);
+    root.addEventListener("keydown", onKeyDown, true);
+    root.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", hide);
     window.addEventListener("resize", refreshPosition);
     window.addEventListener("scroll", refreshPosition, true);
@@ -299,13 +306,13 @@ export function ReactTooltipLayer({
         window.cancelAnimationFrame(refreshFrame.current);
         refreshFrame.current = null;
       }
-      document.removeEventListener("pointerover", onPointerOver, true);
-      document.removeEventListener("pointermove", onPointerMove, true);
-      document.removeEventListener("pointerout", onPointerOut, true);
-      document.removeEventListener("focusin", onFocusIn, true);
-      document.removeEventListener("focusout", onFocusOut, true);
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("keyup", onKeyUp, true);
+      root.removeEventListener("pointerover", onPointerOver, true);
+      root.removeEventListener("pointermove", onPointerMove, true);
+      root.removeEventListener("pointerout", onPointerOut, true);
+      root.removeEventListener("focusin", onFocusIn, true);
+      root.removeEventListener("focusout", onFocusOut, true);
+      root.removeEventListener("keydown", onKeyDown, true);
+      root.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", hide);
       window.removeEventListener("resize", refreshPosition);
       window.removeEventListener("scroll", refreshPosition, true);
@@ -318,6 +325,7 @@ export function ReactTooltipLayer({
     hide,
     refreshPosition,
     schedule,
+    root,
   ]);
 
   return tooltip
@@ -382,7 +390,7 @@ export function ReactTooltipLayer({
             </span>
           ) : tooltip.text}
         </div>,
-        document.body,
+        root.body,
       )
     : null;
 }
