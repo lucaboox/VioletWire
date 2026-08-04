@@ -106,6 +106,22 @@ const api: DesktopApi = {
       ipcRenderer.invoke("chat:send", channel, message, replyParentMessageId),
     getAssets: (channel: string) => ipcRenderer.invoke("chat:get-assets", channel),
     setHistoryLimit: (limit: number) => ipcRenderer.send("chat:set-history-limit", limit),
+    getActiveChannel: (): Promise<string | null> =>
+      ipcRenderer.invoke("chat:get-active-channel"),
+    onActiveChannel: (listener: (channel: string | null) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, channel: string | null) =>
+        listener(channel);
+      ipcRenderer.on("chat:active-channel", handler);
+      return () => ipcRenderer.removeListener("chat:active-channel", handler);
+    },
+    popOut: () => ipcRenderer.invoke("chat:pop-out"),
+    dock: () => ipcRenderer.invoke("chat:dock"),
+    onPopoutState: (listener: (poppedOut: boolean) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, poppedOut: boolean) =>
+        listener(poppedOut);
+      ipcRenderer.on("chat:popout-state", handler);
+      return () => ipcRenderer.removeListener("chat:popout-state", handler);
+    },
     onMessage: (listener: (message: ChatMessage) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, message: ChatMessage) =>
         listener(message);

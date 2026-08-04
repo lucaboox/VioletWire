@@ -1275,3 +1275,14 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 /* Kick's built-in badges, drawn from its own SVG artwork at the badge size. */
 .kick-badge-glyph { display: inline-flex; width: 17px; height: 17px; vertical-align: middle; }
 .kick-badge-glyph svg { width: 100%; height: 100%; }
+
+/* Chat in a window of its own. It fills that window, so it has no width of its
+   own the way the docked panel does. */
+.popout-chat { display: flex; flex-direction: column; height: 100vh; background: #0e0e10; color: #e4e4e7; }
+.popout-chat-messages { flex: 1 1 auto; overflow-y: auto; padding: 8px 10px; overscroll-behavior: contain; }
+.popout-chat-resume { flex: 0 0 auto; margin: 0 10px 6px; padding: 5px 10px; border: 0; border-radius: 6px; background: #7c3aed; color: #fff; font-size: 11px; cursor: pointer; }
+.popout-chat-composer { display: flex; gap: 6px; flex: 0 0 auto; padding: 8px 10px; border-top: 1px solid #26262c; }
+.popout-chat-composer input { flex: 1 1 auto; min-width: 0; padding: 7px 9px; border: 1px solid #303037; border-radius: 6px; background: #17171a; color: #e4e4e7; font-size: 12px; }
+.popout-chat-composer input:focus { outline: none; border-color: #7c3aed; }
+.popout-chat-composer button { flex: 0 0 auto; padding: 7px 12px; border: 0; border-radius: 6px; background: #7c3aed; color: #fff; font-size: 12px; cursor: pointer; }
+.popout-chat-composer button:disabled { opacity: .5; cursor: default; }

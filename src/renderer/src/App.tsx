@@ -4647,6 +4647,15 @@ export function App() {
                     </button>
                     <strong>Stream Chat</strong>
                     <div className="chat-header-actions">
+                      <button
+                        aria-label="Pop chat out into its own window"
+                        className="toolbar-icon"
+                        onClick={() => void window.desktop.chat.popOut()}
+                        title="Pop out chat"
+                        type="button"
+                      >
+                        <ExternalLink size={16} />
+                      </button>
                       {pinnedChatMessageHidden && (
                         <button
                           aria-label="Show pinned message"

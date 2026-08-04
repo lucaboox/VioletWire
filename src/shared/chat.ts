@@ -190,4 +190,11 @@ export interface ChatApi {
   onMessage(listener: (message: ChatMessage) => void): () => void;
   onState(listener: (state: ChatConnectionState) => void): () => void;
   onRestrictions(listener: (restrictions: ChatRestrictions) => void): () => void;
+  /** The channel being watched, for a chat surface that does not own the player. */
+  getActiveChannel(): Promise<string | null>;
+  onActiveChannel(listener: (channel: string | null) => void): () => void;
+  /** Opens chat in a window of its own; closing that window docks it again. */
+  popOut(): Promise<void>;
+  dock(): Promise<void>;
+  onPopoutState(listener: (poppedOut: boolean) => void): () => void;
 }

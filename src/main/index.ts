@@ -95,6 +95,7 @@ const applicationIcon = app.isPackaged
 let mainWindow: BrowserWindow | null = null;
 let channelActionWindow: BrowserWindow | null = null;
 let subscriptionWindow: BrowserWindow | null = null;
+let chatPopoutWindow: BrowserWindow | null = null;
 let activePlayerMode: PlayerMode | null = null;
 let activeChannelName: string | null = null;
 let playerOpenGeneration = 0;
@@ -640,6 +641,7 @@ function destroyPlayer(invalidatePendingOpen = true): void {
   twitchChatService.disconnect();
   activePlayerMode = null;
   activeChannelName = null;
+  sendToChatSurfaces("chat:active-channel", null);
   latestNativePlayerState = null;
   updateThumbnailToolbar();
 }
@@ -715,6 +717,74 @@ function restoredMainWindowBounds(): Rectangle | null {
   };
 }
 
+
+/** The URL the trusted renderer is served from, with an optional view. */
+async function loadRendererView(window: BrowserWindow, view?: string): Promise<void> {
+  const query = view ? `?view=${encodeURIComponent(view)}` : "";
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+  if (rendererUrl) {
+    trustedRendererOrigin = new URL(rendererUrl).origin;
+    lockLocalRendererNavigation(window);
+    await window.loadURL(`${rendererUrl}${query}`);
+    return;
+  }
+  rendererServer ??= await startRendererServer(
+    path.join(currentDirectory, "../../dist/renderer"),
+  );
+  trustedRendererOrigin = rendererServer.origin;
+  lockLocalRendererNavigation(window);
+  await window.loadURL(`${rendererServer.origin}/index.html${query}`);
+}
+
+/**
+ * Chat in a window of its own, so it can be parked on another display or
+ * beside a game. It is deliberately not a child of the main window: a child
+ * minimizes with its parent and is pinned above it, which is the opposite of
+ * what a chat you want to leave open on a second monitor should do.
+ */
+async function openChatPopout(): Promise<void> {
+  if (chatPopoutWindow && !chatPopoutWindow.isDestroyed()) {
+    if (chatPopoutWindow.isMinimized()) chatPopoutWindow.restore();
+    chatPopoutWindow.show();
+    chatPopoutWindow.focus();
+    return;
+  }
+  const window = new BrowserWindow({
+    width: 420,
+    height: 720,
+    minWidth: 300,
+    minHeight: 320,
+    show: false,
+    title: "VioletWire Chat",
+    icon: applicationIcon,
+    backgroundColor: "#0e0e10",
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(currentDirectory, "../preload/index.cjs"),
+      partition: APP_UI_PARTITION,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  chatPopoutWindow = window;
+  chatSurfaces.add(window);
+  window.once("ready-to-show", () => window.show());
+  window.on("closed", () => {
+    chatSurfaces.delete(window);
+    if (chatPopoutWindow === window) chatPopoutWindow = null;
+    // Closing the window is how the chat comes back, so the docked panel has
+    // to hear about it; otherwise closing it would leave no chat anywhere.
+    sendToWindow(mainWindow, "chat:popout-state", false);
+  });
+  await loadRendererView(window, "chat");
+  sendToWindow(mainWindow, "chat:popout-state", true);
+}
+
+function closeChatPopout(): void {
+  if (!chatPopoutWindow || chatPopoutWindow.isDestroyed()) return;
+  chatPopoutWindow.close();
+}
 async function createWindow(): Promise<void> {
   const savedBounds = restoredMainWindowBounds();
   const preferences = preferencesService.get();
@@ -827,20 +897,20 @@ async function createWindow(): Promise<void> {
   mainWindow.on("unmaximize", () => persistWindowState(true));
   mainWindow.on("focus", () => updateThumbnailToolbar());
 
-  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
-  if (rendererUrl) {
-    trustedRendererOrigin = new URL(rendererUrl).origin;
-    lockLocalRendererNavigation(mainWindow);
-    await mainWindow.loadURL(rendererUrl);
-  } else {
-    rendererServer ??= await startRendererServer(
-      path.join(currentDirectory, "../../dist/renderer"),
-    );
-    trustedRendererOrigin = rendererServer.origin;
-    lockLocalRendererNavigation(mainWindow);
-    await mainWindow.loadURL(`${rendererServer.origin}/index.html`);
-  }
+  await loadRendererView(mainWindow);
 }
+
+
+
+handleTrusted("chat:get-active-channel", () => activeChannelName);
+
+handleTrusted("chat:pop-out", async () => {
+  await openChatPopout();
+});
+
+handleTrusted("chat:dock", () => {
+  closeChatPopout();
+});
 
 handleTrusted(
   "player:open",
@@ -854,6 +924,7 @@ handleTrusted(
   const openGeneration = ++playerOpenGeneration;
   destroyPlayer(false);
   activeChannelName = channel;
+  sendToChatSurfaces("chat:active-channel", channel);
 
   let fallbackReason: string | undefined;
   if (requestedMode === "native") {
