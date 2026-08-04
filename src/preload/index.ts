@@ -106,6 +106,9 @@ const api: DesktopApi = {
       ipcRenderer.invoke("chat:send", channel, message, replyParentMessageId),
     getAssets: (channel: string) => ipcRenderer.invoke("chat:get-assets", channel),
     setHistoryLimit: (limit: number) => ipcRenderer.send("chat:set-history-limit", limit),
+    getDisplays: () => ipcRenderer.invoke("chat-window:get-displays"),
+    placeWindow: (displayId: number, side: "left" | "right") =>
+      ipcRenderer.invoke("chat-window:place", { displayId, side }),
     onMessage: (listener: (message: ChatMessage) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, message: ChatMessage) =>
         listener(message);

@@ -269,19 +269,30 @@ function onTrusted<Arguments extends unknown[]>(
  * the working area already excludes the taskbar. The side chosen is the one
  * the main window sits furthest from, so chat does not land on top of it.
  */
-function standChatWindowAtDisplayEdge(window: BrowserWindow): void {
-  const anchor =
-    mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : window.getBounds();
-  const workArea = screen.getDisplayMatching(anchor).workArea;
-  const width = Math.max(320, Math.min(window.getBounds().width, Math.round(workArea.width / 3)));
-  const anchorCentre = anchor.x + anchor.width / 2;
-  const towardsRight = anchorCentre <= workArea.x + workArea.width / 2;
+function standChatWindowAt(
+  window: BrowserWindow,
+  workArea: Rectangle,
+  side: "left" | "right",
+): void {
+  const width = Math.max(
+    320,
+    Math.min(window.getBounds().width, Math.round(workArea.width / 3)),
+  );
   window.setBounds({
-    x: towardsRight ? workArea.x + workArea.width - width : workArea.x,
+    x: side === "right" ? workArea.x + workArea.width - width : workArea.x,
     y: workArea.y,
     width,
     height: workArea.height,
   });
+}
+
+function standChatWindowAtDisplayEdge(window: BrowserWindow): void {
+  const anchor =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : window.getBounds();
+  const workArea = screen.getDisplayMatching(anchor).workArea;
+  const anchorCentre = anchor.x + anchor.width / 2;
+  const side = anchorCentre <= workArea.x + workArea.width / 2 ? "right" : "left";
+  standChatWindowAt(window, workArea, side);
 }
 function lockLocalRendererNavigation(
   window: BrowserWindow,
@@ -904,6 +915,31 @@ async function createWindow(): Promise<void> {
 
 
 
+
+
+const chatWindowPlacementSchema = z.object({
+  displayId: z.number(),
+  side: z.enum(["left", "right"]),
+});
+
+handleTrusted("chat-window:get-displays", () => {
+  const primaryId = screen.getPrimaryDisplay().id;
+  return screen.getAllDisplays().map((display) => ({
+    id: display.id,
+    primary: display.id === primaryId,
+    bounds: display.bounds,
+    workArea: display.workArea,
+  }));
+});
+
+handleTrusted("chat-window:place", (_event, input: unknown) => {
+  const { displayId, side } = chatWindowPlacementSchema.parse(input);
+  const window = chatPopoutWindow;
+  if (!window || window.isDestroyed()) return;
+  const display = screen.getAllDisplays().find((candidate) => candidate.id === displayId);
+  if (!display) return;
+  standChatWindowAt(window, display.workArea, side);
+});
 
 handleTrusted(
   "player:open",

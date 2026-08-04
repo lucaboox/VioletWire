@@ -115,6 +115,7 @@ import {
 } from "../../shared/platform";
 import { NativeControls } from "./NativeControls";
 import { ChatMessageRow } from "./ChatMessageRow";
+import { ChatWindowPlacer } from "./ChatWindowPlacer";
 import { ChatWindowPortal } from "./ChatWindowPortal";
 import { useChatWindow } from "./use-chat-window";
 import { renderChatMessageText } from "./chat-message-text";
@@ -4661,7 +4662,7 @@ export function App() {
                     {/* Collapsing chat back into a layout it is not part of
                         means nothing while it has a window of its own. */}
                     {chatWindowTarget ? (
-                      <span className="chat-header-slot" />
+                      <ChatWindowPlacer />
                     ) : (
                       <button
                         aria-label="Collapse chat"

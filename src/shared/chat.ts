@@ -183,6 +183,14 @@ export interface TwitchChatAssets {
   emotes: TwitchPickerEmote[];
 }
 
+/** A display chat can be stood against, as the placement picker draws it. */
+export interface ChatWindowDisplay {
+  id: number;
+  primary: boolean;
+  bounds: { x: number; y: number; width: number; height: number };
+  workArea: { x: number; y: number; width: number; height: number };
+}
+
 export interface ChatApi {
   send(channel: string, message: string, replyParentMessageId?: string): Promise<void>;
   getAssets(channel: string): Promise<TwitchChatAssets>;
@@ -190,4 +198,7 @@ export interface ChatApi {
   onMessage(listener: (message: ChatMessage) => void): () => void;
   onState(listener: (state: ChatConnectionState) => void): () => void;
   onRestrictions(listener: (restrictions: ChatRestrictions) => void): () => void;
+  /** Displays chat's own window can be stood against, and how to do it. */
+  getDisplays(): Promise<ChatWindowDisplay[]>;
+  placeWindow(displayId: number, side: "left" | "right"): Promise<void>;
 }
