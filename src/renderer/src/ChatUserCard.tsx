@@ -176,9 +176,9 @@ export function ChatUserCard({
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+    view.addEventListener("keydown", closeOnEscape);
+    return () => view.removeEventListener("keydown", closeOnEscape);
+  }, [onClose, view]);
 
   useLayoutEffect(() => {
     if (!anchor || !cardRef.current) return;
@@ -218,16 +218,19 @@ export function ChatUserCard({
     };
     const observer = new ResizeObserver(keepCardOnScreen);
     observer.observe(card);
-    window.addEventListener("resize", keepCardOnScreen);
+    view.addEventListener("resize", keepCardOnScreen);
     return () => {
       observer.disconnect();
-      window.removeEventListener("resize", keepCardOnScreen);
+      view.removeEventListener("resize", keepCardOnScreen);
     };
-  }, []);
+  }, [view]);
 
   useEffect(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (event.target instanceof Node && !cardRef.current?.contains(event.target)) onClose();
+      const target = event.target as Node | null;
+      if (target && typeof target.nodeType === "number" && !cardRef.current?.contains(target)) {
+        onClose();
+      }
     };
     const moveCard = (event: PointerEvent) => {
       const offset = dragOffset.current;
@@ -246,15 +249,15 @@ export function ChatUserCard({
     const stopDrag = () => {
       dragOffset.current = null;
     };
-    window.addEventListener("pointerdown", closeOnOutsidePointer);
-    window.addEventListener("pointermove", moveCard);
-    window.addEventListener("pointerup", stopDrag);
+    view.addEventListener("pointerdown", closeOnOutsidePointer);
+    view.addEventListener("pointermove", moveCard);
+    view.addEventListener("pointerup", stopDrag);
     return () => {
-      window.removeEventListener("pointerdown", closeOnOutsidePointer);
-      window.removeEventListener("pointermove", moveCard);
-      window.removeEventListener("pointerup", stopDrag);
+      view.removeEventListener("pointerdown", closeOnOutsidePointer);
+      view.removeEventListener("pointermove", moveCard);
+      view.removeEventListener("pointerup", stopDrag);
     };
-  }, [onClose]);
+  }, [onClose, view]);
 
   const ivrSubscription = profile?.subage?.subscription;
   const subscription = profile?.relationship?.subscription;
@@ -273,7 +276,11 @@ export function ChatUserCard({
       : (badgeSubscription ?? "Unavailable");
 
   const beginDrag = (event: React.PointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || (event.target instanceof Element && event.target.closest("button"))) return;
+    const pressed = event.target as Element | null;
+    // Not `instanceof`: failing this in the chat window started a drag on every
+    // button, which then swallowed the click that should have followed.
+    const onButton = pressed?.nodeType === 1 && pressed.closest("button") !== null;
+    if (event.button !== 0 || onButton) return;
     const card = cardRef.current;
     if (!card) return;
     const rect = card.getBoundingClientRect();
