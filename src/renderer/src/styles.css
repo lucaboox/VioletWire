@@ -1304,3 +1304,11 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-window-placer-screen > button:hover { background: #7c3aed; }
 .oled-mode .chat-window-placer-menu { background: #000; }
 .oled-mode .chat-window-placer-screen { background: #000; }
+
+/* The player moved into a picture-in-picture window of its own. It fills that
+   window, where in the app it is a surface held over a rectangle. */
+.pip-window-root { height: 100%; background: #000; }
+.pip-window-body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+.pip-window-shell { width: 100%; height: 100%; }
+.pip-window-shell > .persistent-hls-surface { position: static; width: 100%; height: 100%; }
+.pip-window-shell .native-hls-video { width: 100%; height: 100%; object-fit: contain; }

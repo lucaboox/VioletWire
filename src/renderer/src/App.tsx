@@ -116,8 +116,9 @@ import {
 import { NativeControls } from "./NativeControls";
 import { ChatMessageRow } from "./ChatMessageRow";
 import { ChatWindowPlacer } from "./ChatWindowPlacer";
-import { ChatWindowPortal } from "./ChatWindowPortal";
+import { WindowPortal } from "./WindowPortal";
 import { useChatWindow } from "./use-chat-window";
+import { useDocumentPip } from "./use-document-pip";
 import { renderChatMessageText } from "./chat-message-text";
 import { HlsNativeVideo } from "./HlsNativeVideo";
 import { PinnedChatMessage } from "./PinnedChatMessage";
@@ -644,6 +645,8 @@ export function App() {
   const [chatVisible, setChatVisible] = useState(true);
   const { target: chatWindowTarget, open: openChatWindow, close: closeChatWindow } =
     useChatWindow();
+  const pictureInPicture = useDocumentPip();
+  const pictureInPictureTarget = pictureInPicture.target;
   const closeChatWindowRef = useRef(closeChatWindow);
   useEffect(() => {
     closeChatWindowRef.current = closeChatWindow;
@@ -1690,6 +1693,16 @@ export function App() {
     ) {
       return;
     }
+    // In its own window the player fills that window, so the measurements that
+    // hold it over a rectangle in this one are dropped rather than fought with.
+    if (pictureInPictureTarget) {
+      surface.style.left = "";
+      surface.style.top = "";
+      surface.style.width = "";
+      surface.style.height = "";
+      surface.style.visibility = "visible";
+      return;
+    }
     const host = miniPlayerActive ? miniPlayerRef.current : playerHost.current;
     if (!host) {
       surface.style.visibility = "hidden";
@@ -1730,6 +1743,7 @@ export function App() {
     chatVisible,
     chatWindowTarget,
     fullscreen,
+    pictureInPictureTarget,
     miniPlayerActive,
     miniPlayerPosition,
     miniPlayerWidth,
@@ -3394,6 +3408,7 @@ export function App() {
       </div>
 
       {activeChannel && activeMode === "native" && (
+        <WindowPortal className="pip-window-shell" target={pictureInPictureTarget}>
         <div
           aria-hidden="true"
           className={
@@ -3408,6 +3423,7 @@ export function App() {
             state={nativeState}
           />
         </div>
+        </WindowPortal>
       )}
 
       <div className="brand">
@@ -4532,6 +4548,15 @@ export function App() {
                           isFollowed: activeChannelFollowState ?? undefined,
                         }}
                         inlineVisible={nativeControlsVisible}
+                        onTogglePictureInPicture={
+                          pictureInPicture.supported
+                            ? () => {
+                                if (pictureInPictureTarget) pictureInPicture.close();
+                                else void pictureInPicture.open();
+                              }
+                            : undefined
+                        }
+                        pictureInPictureShown={pictureInPictureTarget !== null}
                         onOpenChatSettings={openFullChatSettings}
                       />
                     </>
@@ -4573,7 +4598,7 @@ export function App() {
                 </div>
               </div>
               {!(activeMode === "native" && chatPresentation === "overlay") && (
-                <ChatWindowPortal
+                <WindowPortal
                   className={oledMode ? "chat-window-shell oled-mode" : "chat-window-shell"}
                   target={chatWindowTarget}
                 >
@@ -5159,7 +5184,7 @@ export function App() {
                     </form>
                   </div>
                 </aside>
-                </ChatWindowPortal>
+                </WindowPortal>
               )}
             </div>
           </section>

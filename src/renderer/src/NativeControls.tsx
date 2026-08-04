@@ -197,6 +197,14 @@ interface NativeControlsProps {
   inlineContext: NativeControlsContext;
   inlineVisible?: boolean;
   onOpenChatSettings?: () => void;
+  /**
+   * Shows the player in a window of its own built from the app's own markup.
+   * Supplied by whoever owns the player surface, since putting it in another
+   * window means moving that surface rather than asking Chromium for its own
+   * picture in picture. Without it the browser's version is used.
+   */
+  onTogglePictureInPicture?: () => void;
+  pictureInPictureShown?: boolean;
 }
 
 function emptyProviderEmoteMaps(): Map<EmoteProvider, Map<string, ProviderEmote>> {
@@ -441,6 +449,8 @@ export function NativeControls({
   inlineContext,
   inlineVisible = true,
   onOpenChatSettings,
+  onTogglePictureInPicture,
+  pictureInPictureShown,
 }: NativeControlsProps) {
   const context = inlineContext;
   const [state, setState] = useState<NativePlayerState>(() => ({
@@ -457,7 +467,8 @@ export function NativeControls({
   const [statsHovered, setStatsHovered] = useState(false);
   const [stats, setStats] = useState<Record<string, string> | null>(null);
   const [fpsOverlay, setFpsOverlay] = useState(false);
-  const [pictureInPictureActive, setPictureInPictureActive] = useState(false);
+  const [browserPictureInPicture, setBrowserPictureInPicture] = useState(false);
+  const pictureInPictureActive = pictureInPictureShown ?? browserPictureInPicture;
   const [chatInput, setChatInput] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [openReplyThread, setOpenReplyThread] = useState<ChatMessage | null>(null);
@@ -626,7 +637,7 @@ export function NativeControls({
     const video = nativeVideoElement();
     if (!video) return;
     const updatePictureInPictureState = () => {
-      setPictureInPictureActive(document.pictureInPictureElement === video);
+      setBrowserPictureInPicture(document.pictureInPictureElement === video);
     };
     const initialStateTimer = window.setTimeout(updatePictureInPictureState, 0);
     video.addEventListener("enterpictureinpicture", updatePictureInPictureState);
@@ -1105,6 +1116,13 @@ export function NativeControls({
   }
 
   async function togglePictureInPicture() {
+    // Whoever owns the player surface shows it in its own window by moving that
+    // surface there, which is not something this can do from here. Chromium's
+    // own picture in picture is the fallback when that is not on offer.
+    if (onTogglePictureInPicture) {
+      onTogglePictureInPicture();
+      return;
+    }
     if (!document.pictureInPictureEnabled) return;
     const video = nativeVideoElement();
     if (!video) return;
