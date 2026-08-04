@@ -36,7 +36,8 @@ export interface DocumentPip {
   /** The window the player is showing in, or null while it is in the app. */
   target: Window | null;
   supported: boolean;
-  open: (size?: { width: number; height: number }) => Promise<void>;
+  /** Resolves false when the window could not be opened, so a caller can fall back. */
+  open: (size?: { width: number; height: number }) => Promise<boolean>;
   close: () => void;
 }
 
@@ -46,19 +47,28 @@ export function useDocumentPip(): DocumentPip {
 
   const open = useCallback(async (size?: { width: number; height: number }) => {
     const available = api();
-    if (!available) return;
+    if (!available) return false;
     if (available.window && !available.window.closed) {
       available.window.focus();
-      return;
+      return true;
     }
-    const opened = await available.requestWindow({
-      width: Math.round(size?.width ?? 640),
-      height: Math.round(size?.height ?? 360),
-    });
+    let opened: Window;
+    try {
+      opened = await available.requestWindow({
+        width: Math.round(size?.width ?? 640),
+        height: Math.round(size?.height ?? 360),
+      });
+    } catch (error) {
+      // Refused, most often because the request did not come from something the
+      // reader did. Saying so beats a button that appears to do nothing.
+      console.warn("Could not open the picture-in-picture window", error);
+      return false;
+    }
     opened.document.documentElement.className = "pip-window-root";
     opened.document.body.className = "pip-window-body";
     adoptStyles(opened);
     setTarget(opened);
+    return true;
   }, []);
 
   const close = useCallback(() => {

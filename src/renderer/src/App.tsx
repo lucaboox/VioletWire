@@ -4551,8 +4551,20 @@ export function App() {
                         onTogglePictureInPicture={
                           pictureInPicture.supported
                             ? () => {
-                                if (pictureInPictureTarget) pictureInPicture.close();
-                                else void pictureInPicture.open();
+                                if (pictureInPictureTarget) {
+                                  pictureInPicture.close();
+                                  return;
+                                }
+                                void pictureInPicture.open().then((opened) => {
+                                  // Chromium own picture in picture still works
+                                  // when a window of our own is refused.
+                                  if (!opened) {
+                                    void document
+                                      .querySelector<HTMLVideoElement>(".native-hls-video")
+                                      ?.requestPictureInPicture()
+                                      .catch(() => undefined);
+                                  }
+                                });
                               }
                             : undefined
                         }
