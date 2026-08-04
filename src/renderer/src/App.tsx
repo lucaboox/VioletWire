@@ -4246,7 +4246,9 @@ export function App() {
           >
             <div
               className={`player-toolbar ${
-                !chatVisible || chatPresentation === "overlay" ? "chat-collapsed" : ""
+                !chatVisible || chatWindow.target || chatPresentation === "overlay"
+                  ? "chat-collapsed"
+                  : ""
               }`}
             >
               <div className="player-toolbar-main">
@@ -4427,7 +4429,9 @@ export function App() {
             <div
               className={[
                 "viewer-layout",
-                !chatVisible || chatPresentation === "overlay" ? "chat-collapsed" : "",
+                !chatVisible || chatWindow.target || chatPresentation === "overlay"
+                  ? "chat-collapsed"
+                  : "",
                 chatPresentation === "overlay" ? "chat-overlay-mode" : "",
               ].join(" ")}
             >
@@ -4636,19 +4640,23 @@ export function App() {
                     </div>
                   )}
                   <div className="chat-panel-header">
-                    <button
-                      aria-label="Collapse chat"
-                      className="toolbar-icon chat-collapse-button"
-                      onClick={() => setChatLayout("hidden")}
-                      title="Collapse chat"
-                      type="button"
-                    >
-                      {chatOnLeft && chatPresentation === "side" ? (
-                        <ChevronLeft size={18} />
-                      ) : (
-                        <ChevronRight size={18} />
-                      )}
-                    </button>
+                    {/* Collapsing chat back into a layout it is not part of
+                        means nothing while it has a window of its own. */}
+                    {!chatWindow.target && (
+                      <button
+                        aria-label="Collapse chat"
+                        className="toolbar-icon chat-collapse-button"
+                        onClick={() => setChatLayout("hidden")}
+                        title="Collapse chat"
+                        type="button"
+                      >
+                        {chatOnLeft && chatPresentation === "side" ? (
+                          <ChevronLeft size={18} />
+                        ) : (
+                          <ChevronRight size={18} />
+                        )}
+                      </button>
+                    )}
                     <strong>Stream Chat</strong>
                     <div className="chat-header-actions">
                       <button
