@@ -190,6 +190,22 @@ function sendToWindow(window: BrowserWindow | null, channel: string, ...args: un
   window.webContents.send(channel, ...args);
 }
 
+
+/**
+ * Windows that render chat. The main window always does, and the pop-out
+ * window joins while it is open. Both have to see the same stream of events,
+ * because a message delivered to only one of them is a message the reader
+ * never sees.
+ */
+const chatSurfaces = new Set<BrowserWindow>();
+
+function sendToChatSurfaces(channel: string, ...args: unknown[]): void {
+  sendToWindow(mainWindow, channel, ...args);
+  for (const surface of chatSurfaces) {
+    if (surface === mainWindow) continue;
+    sendToWindow(surface, channel, ...args);
+  }
+}
 const updateService = new UpdateService(
   () => mainWindow,
   (status) => sendToWindow(mainWindow, "updates:status", status),
@@ -255,13 +271,13 @@ function lockLocalRendererNavigation(
 
 const twitchChatService = new TwitchChatService(
   (message) => {
-    sendToWindow(mainWindow, "chat:message", message);
+    sendToChatSurfaces("chat:message", message);
   },
   (state) => {
-    sendToWindow(mainWindow, "chat:state", state);
+    sendToChatSurfaces("chat:state", state);
   },
   (restrictions) => {
-    sendToWindow(mainWindow, "chat:restrictions", restrictions);
+    sendToChatSurfaces("chat:restrictions", restrictions);
   },
 );
 const kickService = new KickService();
@@ -270,13 +286,13 @@ const kickService = new KickService();
 const kickChatService = new KickChatService(
   () => kickService,
   (message) => {
-    sendToWindow(mainWindow, "chat:message", message);
+    sendToChatSurfaces("chat:message", message);
   },
   (state) => {
-    sendToWindow(mainWindow, "chat:state", state);
+    sendToChatSurfaces("chat:state", state);
   },
   (restrictions) => {
-    sendToWindow(mainWindow, "chat:restrictions", restrictions);
+    sendToChatSurfaces("chat:restrictions", restrictions);
   },
 );
 const streamPlaybackResolver = new StreamPlaybackResolver(
@@ -296,8 +312,8 @@ const multiStreamManager = new MultiStreamManager(
 );
 const multiChatService = new MultiChatService(
   (channel, message) =>
-    sendToWindow(mainWindow, "native-multi:chat-message", { channel, message }),
-  (channel, state) => sendToWindow(mainWindow, "native-multi:chat-state", { channel, state }),
+    sendToChatSurfaces("native-multi:chat-message", { channel, message }),
+  (channel, state) => sendToChatSurfaces("native-multi:chat-state", { channel, state }),
   () => kickService,
 );
 const twitchService = new TwitchService();
@@ -1249,7 +1265,7 @@ handleTrusted("chat:send", async (
     replyParentMessageId,
   );
   if (!sentMessage) return;
-  sendToWindow(mainWindow, "chat:message", sentMessage);
+  sendToChatSurfaces("chat:message", sentMessage);
   multiChatService.publishSentMessage(channel, sentMessage);
 });
 handleTrusted("chat:get-assets", (_event, rawChannel: unknown) => {
@@ -1302,7 +1318,7 @@ handleTrusted("preferences:update", async (_event, patch: unknown) => {
   // The caption buttons are drawn by the system, so OLED mode has to be pushed
   // to them explicitly or the top bar goes black around light grey buttons.
   applyTitleBarTheme(preferences.oledMode);
-  sendToWindow(mainWindow, "preferences:changed", preferences);
+  sendToChatSurfaces("preferences:changed", preferences);
   return preferences;
 });
 
