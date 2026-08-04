@@ -274,16 +274,27 @@ function standChatWindowAt(
   workArea: Rectangle,
   side: "left" | "right",
 ): void {
-  const width = Math.max(
-    320,
-    Math.min(window.getBounds().width, Math.round(workArea.width / 3)),
-  );
-  window.setBounds({
+  // Measured from the display being moved to, never from the window. A window
+  // reports its size in the units of the display it is currently on, so on a
+  // set of screens at different scale factors carrying that number across gives
+  // a window of the wrong size.
+  const width = Math.max(320, Math.min(560, Math.round(workArea.width / 4)));
+  const bounds = {
     x: side === "right" ? workArea.x + workArea.width - width : workArea.x,
     y: workArea.y,
     width,
     height: workArea.height,
-  });
+  };
+  if (window.isMaximized()) window.unmaximize();
+  if (window.isMinimized()) window.restore();
+  window.setBounds(bounds);
+  // Windows rescales a window as it crosses onto a display with a different
+  // scale factor, which undoes part of the move that put it there. Asking again
+  // once that has happened lands it where it was actually sent.
+  setTimeout(() => {
+    if (window.isDestroyed()) return;
+    window.setBounds(bounds);
+  }, 150);
 }
 
 function standChatWindowAtDisplayEdge(window: BrowserWindow): void {
