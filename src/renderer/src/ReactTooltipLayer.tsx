@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useMemo,
   useLayoutEffect,
   useRef,
   useState,
@@ -34,11 +35,11 @@ interface ReactTooltipLayerProps {
   genericLinkPreviewsEnabled: boolean;
   genericLinkPreviewActivation: "hover" | "ctrl" | "alt";
   /**
-   * The document this layer watches and draws into. Chat can be rendered into a
-   * window of its own, and a layer watching this window's document would never
-   * see anything over there, so that window is given a layer of its own.
+   * A second document to watch, for chat rendered into a window of its own.
+   * One layer serves both rather than each window running its own: a tooltip
+   * is drawn into whichever document holds the thing being pointed at.
    */
-  root?: Document;
+  extraRoot?: Document | null;
 }
 
 function convertNativeTitles(root: ParentNode): void {
@@ -97,9 +98,13 @@ function positionTooltip(tooltip: TooltipState, view: Window): CSSProperties {
 export function ReactTooltipLayer({
   genericLinkPreviewsEnabled,
   genericLinkPreviewActivation,
-  root = document,
+  extraRoot,
 }: ReactTooltipLayerProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const roots = useMemo(
+    () => (extraRoot ? [document, extraRoot] : [document]),
+    [extraRoot],
+  );
   const showTimer = useRef<number | null>(null);
   const refreshFrame = useRef<number | null>(null);
   const pointerPosition = useRef({ x: 0, y: 0 });
@@ -193,7 +198,8 @@ export function ReactTooltipLayer({
         if (!current?.target.isConnected) return null;
         if (current.trigger === "pointer") {
           const { x, y } = pointerPosition.current;
-          const elementAtPointer = root.elementFromPoint(x, y);
+          const owner = current.target.ownerDocument;
+          const elementAtPointer = owner.elementFromPoint(x, y);
           if (
             !elementAtPointer
             || (
@@ -208,10 +214,10 @@ export function ReactTooltipLayer({
         return { ...current };
       });
     });
-  }, [root]);
+  }, []);
 
   useLayoutEffect(() => {
-    convertNativeTitles(root);
+    for (const watched of roots) convertNativeTitles(watched);
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         if (record.type === "attributes") {
@@ -223,7 +229,7 @@ export function ReactTooltipLayer({
         }
       }
     });
-    observer.observe(root.documentElement, {
+    for (const watched of roots) observer.observe(watched.documentElement, {
       attributeFilter: ["title"],
       attributes: true,
       childList: true,
@@ -274,7 +280,10 @@ export function ReactTooltipLayer({
         return;
       }
       const { x, y } = pointerPosition.current;
-      const target = tooltipTarget(root.elementFromPoint(x, y));
+      const target = tooltipTarget(
+        (event.target instanceof Node ? event.target.ownerDocument : document)
+          ?.elementFromPoint(x, y) ?? null,
+      );
       if (target?.hasAttribute(LINK_PREVIEW_ATTRIBUTE)) {
         schedule(target, "pointer", true, true);
       }
@@ -292,13 +301,13 @@ export function ReactTooltipLayer({
       );
     };
 
-    root.addEventListener("pointerover", onPointerOver, true);
-    root.addEventListener("pointermove", onPointerMove, true);
-    root.addEventListener("pointerout", onPointerOut, true);
-    root.addEventListener("focusin", onFocusIn, true);
-    root.addEventListener("focusout", onFocusOut, true);
-    root.addEventListener("keydown", onKeyDown, true);
-    root.addEventListener("keyup", onKeyUp, true);
+    for (const watched of roots) watched.addEventListener("pointerover", onPointerOver, true);
+    for (const watched of roots) watched.addEventListener("pointermove", onPointerMove, true);
+    for (const watched of roots) watched.addEventListener("pointerout", onPointerOut, true);
+    for (const watched of roots) watched.addEventListener("focusin", onFocusIn, true);
+    for (const watched of roots) watched.addEventListener("focusout", onFocusOut, true);
+    for (const watched of roots) watched.addEventListener("keydown", onKeyDown, true);
+    for (const watched of roots) watched.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", hide);
     window.addEventListener("resize", refreshPosition);
     window.addEventListener("scroll", refreshPosition, true);
@@ -309,13 +318,13 @@ export function ReactTooltipLayer({
         window.cancelAnimationFrame(refreshFrame.current);
         refreshFrame.current = null;
       }
-      root.removeEventListener("pointerover", onPointerOver, true);
-      root.removeEventListener("pointermove", onPointerMove, true);
-      root.removeEventListener("pointerout", onPointerOut, true);
-      root.removeEventListener("focusin", onFocusIn, true);
-      root.removeEventListener("focusout", onFocusOut, true);
-      root.removeEventListener("keydown", onKeyDown, true);
-      root.removeEventListener("keyup", onKeyUp, true);
+      for (const watched of roots) watched.removeEventListener("pointerover", onPointerOver, true);
+      for (const watched of roots) watched.removeEventListener("pointermove", onPointerMove, true);
+      for (const watched of roots) watched.removeEventListener("pointerout", onPointerOut, true);
+      for (const watched of roots) watched.removeEventListener("focusin", onFocusIn, true);
+      for (const watched of roots) watched.removeEventListener("focusout", onFocusOut, true);
+      for (const watched of roots) watched.removeEventListener("keydown", onKeyDown, true);
+      for (const watched of roots) watched.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", hide);
       window.removeEventListener("resize", refreshPosition);
       window.removeEventListener("scroll", refreshPosition, true);
@@ -328,7 +337,7 @@ export function ReactTooltipLayer({
     hide,
     refreshPosition,
     schedule,
-    root,
+    roots,
   ]);
 
   return tooltip
@@ -340,7 +349,10 @@ export function ReactTooltipLayer({
               : "violetwire-react-tooltip"
           }
           role="tooltip"
-          style={positionTooltip(tooltip, root.defaultView ?? window)}
+          style={positionTooltip(
+            tooltip,
+            tooltip.target.ownerDocument.defaultView ?? window,
+          )}
         >
           {tooltip.linkPreview ? (
             <div className="violetwire-link-preview-card">
@@ -393,7 +405,7 @@ export function ReactTooltipLayer({
             </span>
           ) : tooltip.text}
         </div>,
-        root.body,
+        tooltip.target.ownerDocument.body,
       )
     : null;
 }

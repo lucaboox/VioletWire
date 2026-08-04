@@ -3365,22 +3365,14 @@ export function App() {
         "--chat-emote-size": `${chatEmoteSize}px`,
       } as CSSProperties}
     >
+      {/* One layer serves both windows: chat can be rendered into a window of
+          its own, and a tooltip is drawn into whichever document holds the
+          thing being pointed at. */}
       <ReactTooltipLayer
+        extraRoot={chatWindowTarget?.document ?? null}
         genericLinkPreviewActivation={genericLinkPreviewActivation}
         genericLinkPreviewsEnabled={genericLinkPreviewsEnabled}
       />
-      {/* A layer watching this document sees nothing in the window chat has
-          been moved into, so that window is given one of its own. */}
-      {chatWindowTarget && (
-        <ChatWindowPortal className="chat-window-tooltips" target={chatWindowTarget}>
-          <ReactTooltipLayer
-            genericLinkPreviewActivation={genericLinkPreviewActivation}
-            genericLinkPreviewsEnabled={genericLinkPreviewsEnabled}
-            key={"chat-window-tooltips"}
-            root={chatWindowTarget.document}
-          />
-        </ChatWindowPortal>
-      )}
       {channelMenu && (
         <div
           className="channel-context-menu"
