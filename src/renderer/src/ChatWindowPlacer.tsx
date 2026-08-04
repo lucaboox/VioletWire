@@ -23,8 +23,11 @@ export function ChatWindowPlacer() {
   useEffect(() => {
     if (!open) return;
     const closeOnOutside = (event: PointerEvent) => {
-      if (!(event.target instanceof Node)) return;
-      if (anchorRef.current?.contains(event.target)) return;
+      // Not `instanceof`: this listens on the chat window's document, and what
+      // that window builds is not built from this window's constructors.
+      const target = event.target as Node | null;
+      if (!target || typeof target.nodeType !== "number") return;
+      if (anchorRef.current?.contains(target)) return;
       setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {

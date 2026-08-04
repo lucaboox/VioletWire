@@ -42,9 +42,31 @@ interface ReactTooltipLayerProps {
   extraRoot?: Document | null;
 }
 
+/**
+ * Whether a node is an element, without asking which window built it.
+ * `instanceof` compares against this window's constructors, and chat can be
+ * rendered into a window of its own — everything created over there is built
+ * from that window's constructors and fails the comparison, so nothing there
+ * was ever recognised.
+ */
+function asElement(value: unknown): Element | null {
+  return value !== null &&
+    typeof value === "object" &&
+    (value as Node).nodeType === 1 /* Node.ELEMENT_NODE */
+    ? (value as Element)
+    : null;
+}
+
+function ownerDocumentOf(value: unknown): Document | null {
+  const node = value as Node | null;
+  return node && typeof node === "object" && typeof node.nodeType === "number"
+    ? node.ownerDocument ?? (node as unknown as Document)
+    : null;
+}
 function convertNativeTitles(root: ParentNode): void {
   const elements: Element[] = [];
-  if (root instanceof Element && root.hasAttribute("title")) elements.push(root);
+  const asOwnElement = asElement(root);
+  if (asOwnElement?.hasAttribute("title")) elements.push(asOwnElement);
   elements.push(...root.querySelectorAll("[title]"));
 
   for (const element of elements) {
@@ -55,7 +77,7 @@ function convertNativeTitles(root: ParentNode): void {
     if (
       !element.hasAttribute("aria-label") &&
       !element.textContent?.trim() &&
-      !(element instanceof HTMLImageElement && element.alt)
+      !(element.tagName === "IMG" && element.getAttribute("alt"))
     ) {
       element.setAttribute("aria-label", title);
     }
@@ -63,9 +85,7 @@ function convertNativeTitles(root: ParentNode): void {
 }
 
 function tooltipTarget(eventTarget: EventTarget | null): HTMLElement | null {
-  return eventTarget instanceof Element
-    ? eventTarget.closest<HTMLElement>(`[${TOOLTIP_ATTRIBUTE}]`)
-    : null;
+  return asElement(eventTarget)?.closest<HTMLElement>(`[${TOOLTIP_ATTRIBUTE}]`) ?? null;
 }
 
 // Measured against the window the tooltip is drawn in. Chat can be in a window
@@ -225,7 +245,8 @@ export function ReactTooltipLayer({
           continue;
         }
         for (const node of record.addedNodes) {
-          if (node instanceof Element) convertNativeTitles(node);
+          const element = asElement(node);
+          if (element) convertNativeTitles(element);
         }
       }
     });
@@ -281,7 +302,7 @@ export function ReactTooltipLayer({
       }
       const { x, y } = pointerPosition.current;
       const target = tooltipTarget(
-        (event.target instanceof Node ? event.target.ownerDocument : document)
+        (ownerDocumentOf(event.target) ?? document)
           ?.elementFromPoint(x, y) ?? null,
       );
       if (target?.hasAttribute(LINK_PREVIEW_ATTRIBUTE)) {
