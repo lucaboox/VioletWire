@@ -57,6 +57,7 @@ import {
 } from "./session-partitions";
 import { HLS_MEDIA_SCHEME, hlsMediaProtocol } from "./hls-media-protocol";
 import { APP_ORIGIN, appProtocolPrivileges, registerAppProtocol } from "./app-protocol";
+import { readCachedKickBadge } from "./kick-badge-cache";
 
 // Electron's development console can outlive the shell that launched it. A
 // later Chromium diagnostic would otherwise turn a harmless closed stdout or
@@ -810,7 +811,9 @@ function restoredMainWindowBounds(): Rectangle | null {
 /** The URL the trusted renderer is served from, with an optional view. */
 async function loadRendererView(window: BrowserWindow, view?: string): Promise<void> {
   const query = view ? `?view=${encodeURIComponent(view)}` : "";
-  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+  // electron-vite supplies this only while developing. Never let an inherited
+  // environment variable replace the packaged app's trusted renderer.
+  const rendererUrl = app.isPackaged ? undefined : process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl) {
     trustedRendererOrigin = rendererOriginOf(new URL(rendererUrl));
     lockLocalRendererNavigation(window);
@@ -821,6 +824,7 @@ async function loadRendererView(window: BrowserWindow, view?: string): Promise<v
     registerAppProtocol(
       session.fromPartition(APP_UI_PARTITION),
       path.join(currentDirectory, "../../dist/renderer"),
+      readCachedKickBadge,
     );
     appProtocolReady = true;
   }

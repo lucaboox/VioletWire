@@ -4,6 +4,19 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Improvements
+
+- Packaged VioletWire windows now load the interface from the stable
+  `violetwire://app` origin instead of a random localhost port, so Chromium
+  storage and window labels belong consistently to VioletWire.
+
+### Fixes
+
+- Hardened the app protocol against malformed paths, traversal, unsupported
+  request methods, directory requests, and packaged builds inheriting an
+  untrusted development-renderer address. Static assets also regain explicit
+  cache and content-type protections.
+
 ## [0.3.4-alpha.9] - 2026-08-03
 
 ### Additions

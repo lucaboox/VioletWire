@@ -49,9 +49,8 @@ export const appPreferencesSchema = z.object({
   windowWidth: z.number().int().min(960).max(10_000),
   windowHeight: z.number().int().min(640).max(10_000),
   windowMaximized: z.boolean(),
-  // These live here rather than in localStorage: the packaged renderer is
-  // served from a random localhost port, so its browser storage is a fresh
-  // origin on every launch and cannot remember anything across runs.
+  // These live in the main-process preferences store so they remain validated,
+  // centrally available, and independent of renderer storage resets.
   lastSeenChangelogVersion: z.string().max(64),
   emoteFavorites: z.array(z.string().max(200)).max(1_000),
   // Followed-channel logins pinned to a Favorites group above the live list.
