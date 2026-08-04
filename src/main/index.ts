@@ -324,6 +324,22 @@ function standChatWindowAtDisplayEdge(window: BrowserWindow): void {
   const side = anchorCentre <= workArea.x + workArea.width / 2 ? "right" : "left";
   standChatWindowAt(window, workArea, side);
 }
+
+/**
+ * The app hides the menu bar and supplies its own, which takes the accelerator
+ * that opens the developer tools with it. Windows are given it back directly,
+ * so there is a way to see what one is doing when something goes wrong in it.
+ */
+function enableDevToolsShortcut(window: BrowserWindow): void {
+  window.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const key = input.key.toLowerCase();
+    if (key === "f12" || (input.control && input.shift && key === "i")) {
+      event.preventDefault();
+      window.webContents.toggleDevTools();
+    }
+  });
+}
 function lockLocalRendererNavigation(
   window: BrowserWindow,
 ): void {
@@ -349,6 +365,7 @@ function lockLocalRendererNavigation(
   window.webContents.on("did-create-window", (created, { frameName }) => {
     if (frameName !== CHAT_WINDOW_NAME) return;
     chatPopoutWindow = created;
+    enableDevToolsShortcut(created);
     standChatWindowAtDisplayEdge(created);
     created.on("closed", () => {
       if (chatPopoutWindow === created) chatPopoutWindow = null;
@@ -868,6 +885,7 @@ async function createWindow(): Promise<void> {
     },
   });
   const createdWindow = mainWindow;
+  enableDevToolsShortcut(createdWindow);
   let windowStateTimer: NodeJS.Timeout | null = null;
   const persistWindowState = (immediate = false) => {
     if (windowStateTimer) clearTimeout(windowStateTimer);
