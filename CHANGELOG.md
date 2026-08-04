@@ -4,14 +4,33 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.10] - 2026-08-04
+
 ### Improvements
 
 - Packaged VioletWire windows now load the interface from the stable
-  `violetwire://app` origin instead of a random localhost port, so Chromium
-  storage and window labels belong consistently to VioletWire.
+  `violetwire://app` origin instead of a random localhost port. The address
+  used to change every launch, so anything the interface kept against it was
+  discarded each time the app opened; it now persists. Windows Chromium labels,
+  such as picture in picture, name VioletWire rather than a local port.
+- Kick badge artwork is downloaded once into VioletWire's own data and served
+  from there afterwards, rather than fetched from its publisher on every
+  launch. Badges keep working when that host does not, and it is re-checked
+  about weekly so new artwork still arrives.
+- F12 and Ctrl+Shift+I open the developer tools again, in the main window and
+  the pop-out chat window. VioletWire's own menu had replaced the one carrying
+  that shortcut.
 
 ### Fixes
 
+- Tooltips did nothing anywhere in popped-out chat, and messages arriving there
+  never gained one at all.
+- Clicking a name in popped-out chat opened the profile card back on the main
+  window. It now opens beside the name, and can be closed and dragged there —
+  previously nothing closed it, and pressing any of its buttons did nothing
+  because a drag began instead and swallowed the click.
+- The paused-chat notice lost the space beneath it when chat was popped out,
+  and kept the wrong spacing after docking until the channel changed.
 - Hardened the app protocol against malformed paths, traversal, unsupported
   request methods, directory requests, and packaged builds inheriting an
   untrusted development-renderer address. Static assets also regain explicit
