@@ -52,6 +52,7 @@ export function useChatWindow(): ChatWindow {
       const opened = window.open("", CHAT_WINDOW_NAME, "width=420,height=720");
       if (!opened) return current;
       opened.document.title = "VioletWire Chat";
+      opened.document.documentElement.className = "chat-window-root";
       opened.document.body.className = "chat-window-body";
       adoptStyles(opened);
       return opened;

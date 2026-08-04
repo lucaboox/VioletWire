@@ -641,7 +641,12 @@ export function App() {
     useState<ChannelNavigationIdentity>();
   const [error, setError] = useState<string | null>(null);
   const [chatVisible, setChatVisible] = useState(true);
-  const chatWindow = useChatWindow();
+  const { target: chatWindowTarget, open: openChatWindow, close: closeChatWindow } =
+    useChatWindow();
+  const closeChatWindowRef = useRef(closeChatWindow);
+  useEffect(() => {
+    closeChatWindowRef.current = closeChatWindow;
+  }, [closeChatWindow]);
   const [chatPresentation, setChatPresentation] = useState<ChatPresentation>("side");
   const [theaterMode, setTheaterMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -2680,6 +2685,10 @@ export function App() {
   }
 
   function setChatLayout(layout: ChatLayout) {
+    // Every one of these arranges chat inside the main window, which it cannot
+    // be while it is rendered into a window of its own. Bring it back first, or
+    // the choice would appear to do nothing and leave chat nowhere at all.
+    closeChatWindowRef.current();
     if (layout === "hidden") {
       setChatVisible(false);
       return;
@@ -4246,7 +4255,7 @@ export function App() {
           >
             <div
               className={`player-toolbar ${
-                !chatVisible || chatWindow.target || chatPresentation === "overlay"
+                !chatVisible || chatWindowTarget || chatPresentation === "overlay"
                   ? "chat-collapsed"
                   : ""
               }`}
@@ -4429,7 +4438,7 @@ export function App() {
             <div
               className={[
                 "viewer-layout",
-                !chatVisible || chatWindow.target || chatPresentation === "overlay"
+                !chatVisible || chatWindowTarget || chatPresentation === "overlay"
                   ? "chat-collapsed"
                   : "",
                 chatPresentation === "overlay" ? "chat-overlay-mode" : "",
@@ -4557,7 +4566,10 @@ export function App() {
                 </div>
               </div>
               {!(activeMode === "native" && chatPresentation === "overlay") && (
-                <ChatWindowPortal target={chatWindow.target}>
+                <ChatWindowPortal
+                  className={oledMode ? "chat-window-shell oled-mode" : "chat-window-shell"}
+                  target={chatWindowTarget}
+                >
                 <aside
                   className={[
                     "chat-panel",
@@ -4642,7 +4654,9 @@ export function App() {
                   <div className="chat-panel-header">
                     {/* Collapsing chat back into a layout it is not part of
                         means nothing while it has a window of its own. */}
-                    {!chatWindow.target && (
+                    {chatWindowTarget ? (
+                      <span className="chat-header-slot" />
+                    ) : (
                       <button
                         aria-label="Collapse chat"
                         className="toolbar-icon chat-collapse-button"
@@ -4659,15 +4673,17 @@ export function App() {
                     )}
                     <strong>Stream Chat</strong>
                     <div className="chat-header-actions">
-                      <button
-                        aria-label="Pop chat out into its own window"
-                        className="toolbar-icon"
-                        onClick={chatWindow.open}
-                        title="Pop out chat"
-                        type="button"
-                      >
-                        <ExternalLink size={16} />
-                      </button>
+                      {!chatWindowTarget && (
+                        <button
+                          aria-label="Pop chat out into its own window"
+                          className="toolbar-icon"
+                          onClick={openChatWindow}
+                          title="Pop out chat"
+                          type="button"
+                        >
+                          <ExternalLink size={16} />
+                        </button>
+                      )}
                       {pinnedChatMessageHidden && (
                         <button
                           aria-label="Show pinned message"
