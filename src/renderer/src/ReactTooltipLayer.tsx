@@ -67,7 +67,10 @@ function tooltipTarget(eventTarget: EventTarget | null): HTMLElement | null {
     : null;
 }
 
-function positionTooltip(tooltip: TooltipState): CSSProperties {
+// Measured against the window the tooltip is drawn in. Chat can be in a window
+// of its own, and clamping to this window's width would put a tooltip outside
+// a narrower one entirely.
+function positionTooltip(tooltip: TooltipState, view: Window): CSSProperties {
   const targetBounds = tooltip.target.getBoundingClientRect();
   const longestTextLine = Math.max(...tooltip.text.split("\n").map((line) => line.length));
   const estimatedWidth = tooltip.linkPreview
@@ -78,7 +81,7 @@ function positionTooltip(tooltip: TooltipState): CSSProperties {
       : 120
     : Math.min(320, Math.max(70, longestTextLine * 7.2 + 22));
   const left = Math.min(
-    window.innerWidth - VIEWPORT_MARGIN - estimatedWidth / 2,
+    view.innerWidth - VIEWPORT_MARGIN - estimatedWidth / 2,
     Math.max(VIEWPORT_MARGIN + estimatedWidth / 2, targetBounds.left + targetBounds.width / 2),
   );
   // Image tooltips are taller; flip below sooner so they stay on screen.
@@ -337,7 +340,7 @@ export function ReactTooltipLayer({
               : "violetwire-react-tooltip"
           }
           role="tooltip"
-          style={positionTooltip(tooltip)}
+          style={positionTooltip(tooltip, root.defaultView ?? window)}
         >
           {tooltip.linkPreview ? (
             <div className="violetwire-link-preview-card">

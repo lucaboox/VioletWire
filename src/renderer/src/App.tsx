@@ -1669,7 +1669,14 @@ export function App() {
     const observer = new ResizeObserver(syncComposerSpace);
     observer.observe(composer);
     syncComposerSpace();
-    return () => observer.disconnect();
+    // Measured again on the next frame as well: moving chat into another window
+    // runs this before that window has laid the composer out, and the height
+    // read then is short, which drops the room kept under the paused notice.
+    const settled = window.requestAnimationFrame(syncComposerSpace);
+    return () => {
+      window.cancelAnimationFrame(settled);
+      observer.disconnect();
+    };
     // Chat moving to a window of its own, and back, changes how much room the
     // composer takes without necessarily changing its size, and a resize
     // observer has nothing to say about that. Measured again either way, or the
