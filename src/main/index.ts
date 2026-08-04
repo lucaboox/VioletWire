@@ -279,11 +279,19 @@ function standChatWindowAt(
   // set of screens at different scale factors carrying that number across gives
   // a window of the wrong size.
   const width = Math.max(320, Math.min(560, Math.round(workArea.width / 4)));
+  // Windows keeps a band of resize grab area outside the visible frame, on the
+  // sides and the bottom but not the top, and a window is positioned by the
+  // outside of that. Placed on the work area exactly, the window therefore
+  // looks inset on three sides. The band is the distance from the window to
+  // the content inside it, so the placement grows by that much to sit flush.
+  const frame = window.getBounds();
+  const content = window.getContentBounds();
+  const edge = Math.max(0, content.x - frame.x);
   const bounds = {
-    x: side === "right" ? workArea.x + workArea.width - width : workArea.x,
+    x: (side === "right" ? workArea.x + workArea.width - width : workArea.x) - edge,
     y: workArea.y,
-    width,
-    height: workArea.height,
+    width: width + edge * 2,
+    height: workArea.height + edge,
   };
   if (window.isMaximized()) window.unmaximize();
   if (window.isMinimized()) window.restore();
