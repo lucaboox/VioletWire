@@ -4,6 +4,38 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.9] - 2026-08-03
+
+### Additions
+
+- Chat can be popped out into a window of its own, from the button beside the
+  other chat controls. It is the same chat, not a copy: history, replies, the
+  emote picker, the user list, and its scroll position all come with it, and
+  the player takes back the space it leaves behind. Closing the window docks
+  chat again.
+- The chat window stands itself against the side of a screen, filling its
+  height without covering the taskbar and without tiling anything else. A
+  control in its header shows the screens and moves it to either side of any
+  of them.
+
+### Improvements
+
+- Kick chat badges now render from Kick's own artwork, including badge types
+  VioletWire has never seen, instead of only the handful drawn in by hand.
+  Anything without artwork still falls back to the drawn badge or a chip.
+- Playback latency is now a single Low latency switch, on by default, rather
+  than a pair of buttons to choose between.
+
+### Fixes
+
+- Picture in picture did nothing when pressed. The player had moved to a
+  surface that follows the player, the mini player, and multistream tiles, and
+  the button was still looking for it where it used to be.
+- Moving chat to the other side of the window left the video at its old size
+  and position until the window was resized.
+- Hovering a Kick badge drawn from artwork showed nothing; it named itself
+  only to screen readers.
+
 ## [0.3.4-alpha.8] - 2026-08-02
 
 ### Improvements
