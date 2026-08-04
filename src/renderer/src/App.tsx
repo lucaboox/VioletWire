@@ -1716,12 +1716,18 @@ export function App() {
       observer.disconnect();
       window.removeEventListener("resize", syncSurface);
     };
+    // Moving chat to the other side leaves the player the same size and only
+    // changes where it sits, and a resize observer says nothing about that, so
+    // the surface has to be told to measure again itself. The same goes for
+    // chat leaving for a window of its own.
   }, [
     activeChannel,
     activeMode,
+    chatOnLeft,
     chatPresentation,
     chatSidebarWidth,
     chatVisible,
+    chatWindowTarget,
     fullscreen,
     miniPlayerActive,
     miniPlayerPosition,
