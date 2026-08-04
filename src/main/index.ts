@@ -44,7 +44,6 @@ import { TwitchChatService } from "./twitch-chat-service";
 import { UpdateService } from "./update-service";
 import { GitHubReleaseNotesService } from "./github-release-notes";
 import { LinkPreviewService } from "./link-preview-service";
-import { startRendererServer, type RendererServer } from "./renderer-server";
 import {
   chatHistoryLimitSchema,
   chatReplyParentIdSchema,
@@ -57,6 +56,7 @@ import {
   TWITCH_WEBSITE_PARTITION,
 } from "./session-partitions";
 import { HLS_MEDIA_SCHEME, hlsMediaProtocol } from "./hls-media-protocol";
+import { APP_ORIGIN, appProtocolPrivileges, registerAppProtocol } from "./app-protocol";
 
 // Electron's development console can outlive the shell that launched it. A
 // later Chromium diagnostic would otherwise turn a harmless closed stdout or
@@ -78,6 +78,7 @@ app.setPath("userData", path.join(app.getPath("appData"), "twitch-windows-viewer
 // Allow that trusted player to honor its autoplay option when a channel opens.
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 protocol.registerSchemesAsPrivileged([
+  appProtocolPrivileges,
   {
     scheme: HLS_MEDIA_SCHEME,
     privileges: {
@@ -101,7 +102,7 @@ let chatPopoutWindow: BrowserWindow | null = null;
 let activePlayerMode: PlayerMode | null = null;
 let activeChannelName: string | null = null;
 let playerOpenGeneration = 0;
-let rendererServer: RendererServer | null = null;
+let appProtocolReady = false;
 let trustedRendererOrigin: string | null = null;
 let latestNativePlayerState: NativePlayerState | null = null;
 
@@ -807,12 +808,13 @@ async function loadRendererView(window: BrowserWindow, view?: string): Promise<v
     await window.loadURL(`${rendererUrl}${query}`);
     return;
   }
-  rendererServer ??= await startRendererServer(
-    path.join(currentDirectory, "../../dist/renderer"),
-  );
-  trustedRendererOrigin = rendererServer.origin;
+  if (!appProtocolReady) {
+    registerAppProtocol(path.join(currentDirectory, "../../dist/renderer"));
+    appProtocolReady = true;
+  }
+  trustedRendererOrigin = APP_ORIGIN;
   lockLocalRendererNavigation(window);
-  await window.loadURL(`${rendererServer.origin}/index.html${query}`);
+  await window.loadURL(`${APP_ORIGIN}/index.html${query}`);
 }
 
 async function createWindow(): Promise<void> {
@@ -1468,6 +1470,4 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
   void hlsMediaProtocol.close();
-  if (rendererServer) void rendererServer.close();
-  rendererServer = null;
 });
