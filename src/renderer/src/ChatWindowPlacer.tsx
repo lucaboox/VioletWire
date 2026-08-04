@@ -43,13 +43,23 @@ export function ChatWindowPlacer() {
     };
   }, [open]);
 
+  // Sizes arrive already divided by each display's scaling, so a big screen at
+  // a high scaling reads as barely larger than a small one. Multiplying it back
+  // out draws the screens at the sizes they actually are.
+  const real = (display: ChatWindowDisplay) => ({
+    x: display.bounds.x * display.scaleFactor,
+    y: display.bounds.y * display.scaleFactor,
+    width: display.bounds.width * display.scaleFactor,
+    height: display.bounds.height * display.scaleFactor,
+  });
+
   // The rectangle every display fits inside, so the map can be drawn to scale.
   const extent = displays.reduce(
     (box, display) => ({
-      left: Math.min(box.left, display.bounds.x),
-      top: Math.min(box.top, display.bounds.y),
-      right: Math.max(box.right, display.bounds.x + display.bounds.width),
-      bottom: Math.max(box.bottom, display.bounds.y + display.bounds.height),
+      left: Math.min(box.left, real(display).x),
+      top: Math.min(box.top, real(display).y),
+      right: Math.max(box.right, real(display).x + real(display).width),
+      bottom: Math.max(box.bottom, real(display).y + real(display).height),
     }),
     {
       left: Number.POSITIVE_INFINITY,
@@ -94,10 +104,10 @@ export function ChatWindowPlacer() {
                 className="chat-window-placer-screen"
                 key={display.id}
                 style={{
-                  left: `${Math.round((display.bounds.x - extent.left) * scale)}px`,
-                  top: `${Math.round((display.bounds.y - extent.top) * scale)}px`,
-                  width: `${Math.round(display.bounds.width * scale)}px`,
-                  height: `${Math.round(display.bounds.height * scale)}px`,
+                  left: `${Math.round((real(display).x - extent.left) * scale)}px`,
+                  top: `${Math.round((real(display).y - extent.top) * scale)}px`,
+                  width: `${Math.round(real(display).width * scale)}px`,
+                  height: `${Math.round(real(display).height * scale)}px`,
                 }}
               >
                 <button

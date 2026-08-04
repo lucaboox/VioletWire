@@ -189,6 +189,8 @@ export interface ChatWindowDisplay {
   primary: boolean;
   bounds: { x: number; y: number; width: number; height: number };
   workArea: { x: number; y: number; width: number; height: number };
+  /** What its reported size was divided by, so real sizes can be recovered. */
+  scaleFactor: number;
 }
 
 export interface ChatApi {
