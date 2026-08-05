@@ -4,6 +4,14 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.11] - 2026-08-04
+
+### Fixes
+
+- Chat text size and emote size had no effect on chat popped out into its own
+  window, which drew at a fixed size regardless of either setting. Both now
+  apply there and update as they are changed.
+
 ## [0.3.4-alpha.10] - 2026-08-04
 
 ### Improvements
