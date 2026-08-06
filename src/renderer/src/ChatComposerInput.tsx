@@ -65,6 +65,74 @@ function placeCaretAtEnd(editor: HTMLElement): void {
   selection?.addRange(range);
 }
 
+/**
+ * Puts the caret back where it was, counted in the same characters
+ * `readEditorText` reads — an emote counts as the length of its name, so an
+ * offset taken before the contents were rebuilt still means the same place
+ * after a name has become an image.
+ */
+function placeCaretAtTextOffset(editor: HTMLElement, offset: number): void {
+  const root = editor.ownerDocument;
+  const range = root.createRange();
+  let remaining = offset;
+
+  const walk = (node: Node): boolean => {
+    if (node.nodeType === 3 /* Node.TEXT_NODE */) {
+      const length = (node.textContent ?? "").length;
+      if (remaining <= length) {
+        range.setStart(node, remaining);
+        return true;
+      }
+      remaining -= length;
+      return false;
+    }
+    if (node.nodeType === 1 /* Node.ELEMENT_NODE */) {
+      const element = node as HTMLElement;
+      if (element.tagName === "IMG") {
+        // Nothing sits inside an emote, so a caret landing within its name
+        // belongs against whichever edge it is nearer.
+        const length = (element.dataset.emoteName ?? "").length;
+        if (remaining < length) {
+          range.setStartBefore(element);
+          return true;
+        }
+        if (remaining === length) {
+          range.setStartAfter(element);
+          return true;
+        }
+        remaining -= length;
+        return false;
+      }
+      if (element.tagName === "BR") {
+        if (remaining < 1) {
+          range.setStartBefore(element);
+          return true;
+        }
+        remaining -= 1;
+        return false;
+      }
+    }
+    for (const child of [...node.childNodes]) if (walk(child)) return true;
+    return false;
+  };
+
+  let placed = false;
+  for (const child of [...editor.childNodes]) {
+    if (walk(child)) {
+      placed = true;
+      break;
+    }
+  }
+  if (placed) range.collapse(true);
+  else {
+    range.selectNodeContents(editor);
+    range.collapse(false);
+  }
+  const selection = root.defaultView?.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
 interface ActiveMention {
   end: number;
   query: string;
@@ -167,6 +235,10 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     const renderValue = useCallback(
       (editor: HTMLDivElement, nextValue: string) => {
         const root = editor.ownerDocument;
+        // Rebuilding the contents destroys the caret, and typing a space is
+        // what turns a finished name into an emote — so editing anything but
+        // the end of a line would otherwise throw the caret to the end of it.
+        const caret = getCaretTextOffset(editor);
         editor.replaceChildren();
         for (const token of nextValue.split(/(\s+)/)) {
           const emote = emoteImages.get(token);
@@ -183,7 +255,8 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
           image.title = `${token} · ${emote.provider}`;
           editor.append(image);
         }
-        placeCaretAtEnd(editor);
+        if (caret === null) placeCaretAtEnd(editor);
+        else placeCaretAtTextOffset(editor, caret);
       },
       [emoteImages],
     );
