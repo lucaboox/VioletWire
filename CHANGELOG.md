@@ -4,6 +4,32 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.12] - 2026-08-05
+
+### Additions
+
+- Pressing Enter on a highlighted name while typing @ now fills that name in
+  rather than sending the message half-written. The Enter after it sends.
+- Chat settings can now choose what Tab does while naming someone: fill in the
+  highlighted name as before, or step through the list and take one with Enter.
+
+### Improvements
+
+- Building from source no longer lets dependencies run code as they install.
+  The three that genuinely need to, all of which only fetch a platform binary,
+  are approved by name and version, so a package republished at another version
+  cannot inherit the permission.
+
+### Fixes
+
+- Hovering an emote in chat popped out into its own window showed the enlarged
+  preview back on the main window, positioned against the wrong screen.
+- The message box in popped-out chat could not complete an emote or a name,
+  could not paste, and dropped emotes from anything sent or copied — a message
+  typed with emotes in it arrived without them.
+- Typing a space anywhere but the end of a message moved the caret to the end
+  of it, in every chat.
+
 ## [0.3.4-alpha.11] - 2026-08-04
 
 ### Fixes
