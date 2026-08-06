@@ -193,6 +193,8 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     forwardedRef,
   ) {
     const localRef = useRef<HTMLDivElement | null>(null);
+    // Where a completion left the caret, for the render it causes.
+    const pendingCaret = useRef<number | undefined>(undefined);
     const [activeMention, setActiveMention] = useState<ActiveMention | null>(null);
     const [selectedMention, setSelectedMention] = useState(0);
     const [activeEmote, setActiveEmote] = useState<ActiveMention | null>(null);
@@ -233,12 +235,16 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     );
 
     const renderValue = useCallback(
-      (editor: HTMLDivElement, nextValue: string) => {
+      (editor: HTMLDivElement, nextValue: string, caretOffset?: number) => {
         const root = editor.ownerDocument;
         // Rebuilding the contents destroys the caret, and typing a space is
         // what turns a finished name into an emote — so editing anything but
         // the end of a line would otherwise throw the caret to the end of it.
-        const caret = getCaretTextOffset(editor);
+        //
+        // Where it was is only the right answer while the box still holds what
+        // the caret was measured against. A completion replaces a word before
+        // the box is told, so it says where the caret belongs itself.
+        const caret = caretOffset ?? getCaretTextOffset(editor);
         editor.replaceChildren();
         for (const token of nextValue.split(/(\s+)/)) {
           const emote = emoteImages.get(token);
@@ -264,7 +270,9 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     useLayoutEffect(() => {
       const editor = localRef.current;
       if (!editor || readEditorText(editor) === value) return;
-      renderValue(editor, value);
+      const completedCaret = pendingCaret.current;
+      pendingCaret.current = undefined;
+      renderValue(editor, value, completedCaret);
       setActiveMention(null);
       setActiveEmote(null);
       if (emoteCompletion) {
@@ -315,7 +323,9 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
       const editor = localRef.current;
       if (!editor || !activeMention) return;
       const currentValue = readEditorText(editor);
-      const nextValue = `${currentValue.slice(0, activeMention.start)}@${candidate.login} ${currentValue.slice(activeMention.end)}`;
+      const completed = `@${candidate.login} `;
+      const nextValue = `${currentValue.slice(0, activeMention.start)}${completed}${currentValue.slice(activeMention.end)}`;
+      pendingCaret.current = activeMention.start + completed.length;
       setActiveMention(null);
       onValueChange(nextValue.slice(0, maxLength));
     }
@@ -337,7 +347,9 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
       const editor = localRef.current;
       if (!editor || !activeEmote) return;
       const currentValue = readEditorText(editor);
-      const nextValue = `${currentValue.slice(0, activeEmote.start)}${candidate.name} ${currentValue.slice(activeEmote.end)}`;
+      const completed = `${candidate.name} `;
+      const nextValue = `${currentValue.slice(0, activeEmote.start)}${completed}${currentValue.slice(activeEmote.end)}`;
+      pendingCaret.current = activeEmote.start + completed.length;
       setActiveEmote(null);
       setEmoteCompletion(null);
       onValueChange(nextValue.slice(0, maxLength));
@@ -356,6 +368,7 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
       const candidate = matchingEmotes[nextIndex];
       const currentValue = readEditorText(editor);
       const nextValue = `${currentValue.slice(0, target.start)}${candidate.name}${currentValue.slice(target.end)}`;
+      pendingCaret.current = target.start + candidate.name.length;
       setSelectedEmote(nextIndex);
       setEmoteCompletion({
         start: target.start,
