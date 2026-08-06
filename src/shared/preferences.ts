@@ -70,6 +70,8 @@ export const appPreferencesSchema = z.object({
   // "prefix" only completes names starting with it, "substring" also finds it
   // anywhere in the name (so "ek" reaches "kekw").
   emoteAutocompleteMatch: z.enum(["prefix", "substring"]),
+  /** What Tab does to the highlighted name while @-mentioning someone. */
+  mentionTabBehavior: z.enum(["complete", "cycle"]),
 });
 
 export const appPreferencesPatchSchema = appPreferencesSchema.partial().strict();
@@ -123,6 +125,7 @@ export const defaultAppPreferences: AppPreferences = {
   emotePickerHeight: 500,
   emoteSearchAllProviders: false,
   emoteAutocompleteMatch: "prefix",
+  mentionTabBehavior: "complete",
 };
 
 export interface PreferencesApi {

@@ -764,6 +764,8 @@ export function App() {
   const [genericLinkPreviewsEnabled, setGenericLinkPreviewsEnabled] = useState(false);
   const [emoteAutocompleteMatch, setEmoteAutocompleteMatch] =
     useState<AppPreferences["emoteAutocompleteMatch"]>("prefix");
+  const [mentionTabBehavior, setMentionTabBehavior] =
+    useState<AppPreferences["mentionTabBehavior"]>("complete");
   const [genericLinkPreviewActivation, setGenericLinkPreviewActivation] =
     useState<AppPreferences["genericLinkPreviewActivation"]>("ctrl");
   const [oledMode, setOledMode] = useState(
@@ -1364,6 +1366,7 @@ export function App() {
       setMentionSoundId(preferences.mentionSoundId);
       setGenericLinkPreviewsEnabled(preferences.genericLinkPreviewsEnabled);
       setEmoteAutocompleteMatch(preferences.emoteAutocompleteMatch);
+      setMentionTabBehavior(preferences.mentionTabBehavior);
       setGenericLinkPreviewActivation(preferences.genericLinkPreviewActivation);
       setOledMode(preferences.oledMode);
       setLastSeenChangelogVersion(preferences.lastSeenChangelogVersion);
@@ -1404,6 +1407,7 @@ export function App() {
           genericLinkPreviewsEnabled,
           genericLinkPreviewActivation,
           emoteAutocompleteMatch,
+          mentionTabBehavior,
           oledMode,
         })
         .catch(() => undefined);
@@ -1426,6 +1430,7 @@ export function App() {
     genericLinkPreviewsEnabled,
     genericLinkPreviewActivation,
     emoteAutocompleteMatch,
+    mentionTabBehavior,
     oledMode,
     playbackLatencyMode,
     preferredMode,
@@ -4048,6 +4053,7 @@ export function App() {
                 <div className="chat-composer-box">
                   <ChatComposerInput
                     emoteMatch={emoteAutocompleteMatch}
+                    mentionTab={mentionTabBehavior}
                     aria-label="Send a chat message"
                     disabled={authState.status !== "signed-in" || !effectiveMultiChatChannel}
                     maxLength={500}
@@ -4906,6 +4912,7 @@ export function App() {
                       <div className="chat-composer-box">
                         <ChatComposerInput
                           emoteMatch={emoteAutocompleteMatch}
+                          mentionTab={mentionTabBehavior}
                           aria-label="Send a chat message"
                           disabled={singleChatDisabled}
                           maxLength={500}
@@ -6418,6 +6425,39 @@ export function App() {
                           {emoteAutocompleteMatch === "substring"
                             ? "Typing ek also finds kekw."
                             : "Typing kek finds kekw; ek does not."}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="settings-card settings-card-stack">
+                      <div className="settings-card-row">
+                        <div>
+                          <strong>Tab while naming someone</strong>
+                          <span>
+                            What Tab does to the highlighted name after typing @.
+                            Enter always takes the highlighted one, and does not
+                            send the message.
+                          </span>
+                        </div>
+                      </div>
+                      <div className="settings-link-preview-options">
+                        <label>
+                          <span>Pressing Tab</span>
+                          <select
+                            onChange={(event) =>
+                              setMentionTabBehavior(
+                                event.target.value as AppPreferences["mentionTabBehavior"],
+                              )
+                            }
+                            value={mentionTabBehavior}
+                          >
+                            <option value="complete">Fills in the name</option>
+                            <option value="cycle">Moves through the names</option>
+                          </select>
+                        </label>
+                        <p className="settings-hint">
+                          {mentionTabBehavior === "cycle"
+                            ? "Tab steps through the list; Enter fills in the one highlighted."
+                            : "Tab fills in the highlighted name; the arrow keys move the highlight."}
                         </p>
                       </div>
                     </div>

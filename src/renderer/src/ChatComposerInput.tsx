@@ -18,6 +18,8 @@ interface ChatComposerInputProps {
   disabled?: boolean;
   /** Whether a typed word must start the emote name or may appear anywhere. */
   emoteMatch?: EmoteMatchMode;
+  /** What Tab does to the highlighted name while @-mentioning someone. */
+  mentionTab?: "complete" | "cycle";
   maxLength: number;
   mentionCandidates: ChatMentionCandidate[];
   onValueChange(value: string): void;
@@ -182,6 +184,7 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
       "aria-label": ariaLabel,
       disabled = false,
       emoteMatch = "prefix",
+      mentionTab = "complete",
       maxLength,
       mentionCandidates,
       onValueChange,
@@ -437,8 +440,22 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
                 );
                 return;
               }
+              // Enter takes the highlighted name rather than sending: the
+              // list is open because a name is half typed, and sending it half
+              // typed is never what was meant.
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                insertMention(matchingMentions[selectedMention] ?? matchingMentions[0]);
+                return;
+              }
               if (event.key === "Tab") {
                 event.preventDefault();
+                if (mentionTab === "cycle") {
+                  setSelectedMention(
+                    (current) => (current + 1) % matchingMentions.length,
+                  );
+                  return;
+                }
                 insertMention(matchingMentions[selectedMention] ?? matchingMentions[0]);
                 return;
               }

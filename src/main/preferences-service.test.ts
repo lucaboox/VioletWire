@@ -115,6 +115,7 @@ describe("PreferencesService", () => {
       emotePickerHeight: 500,
       emoteSearchAllProviders: false,
       emoteAutocompleteMatch: "prefix",
+      mentionTabBehavior: "complete",
     });
   });
 
