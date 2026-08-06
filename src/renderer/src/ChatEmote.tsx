@@ -32,11 +32,17 @@ export function ChatEmote({
     left: number;
     top: number;
     imageHeight: number;
+    /** The document to draw in, noted when the preview is raised. */
+    root: Document;
   } | null>(null);
 
   function showTooltip() {
     const bounds = host.current?.getBoundingClientRect();
     if (!bounds) return;
+    // Measured against the window the emote is in. Chat can be rendered into a
+    // window of its own, and clamping to this window's width would place the
+    // preview outside a narrower one.
+    const view = host.current?.ownerDocument.defaultView ?? window;
     const above = bounds.top >= 155;
     // Preview the emote at ~2.2x its rendered size so details are readable;
     // measured live because the chat emote size is user-configurable.
@@ -44,9 +50,10 @@ export function ChatEmote({
       host.current?.querySelector("img")?.getBoundingClientRect().height ?? 27;
     setTooltip({
       above,
-      left: Math.min(Math.max(bounds.left + bounds.width / 2, 82), window.innerWidth - 82),
+      left: Math.min(Math.max(bounds.left + bounds.width / 2, 82), view.innerWidth - 82),
       top: above ? bounds.top - 8 : bounds.bottom + 8,
       imageHeight: Math.min(150, Math.round(renderedHeight * 2.2)),
+      root: host.current?.ownerDocument ?? document,
     });
   }
 
@@ -96,7 +103,7 @@ export function ChatEmote({
               {providerLabels[provider]}
             </span>
           </span>,
-          document.body,
+          tooltip.root.body,
         )}
     </span>
   );
