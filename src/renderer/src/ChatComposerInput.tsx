@@ -39,8 +39,14 @@ interface EmoteSuggestion extends EmoteImage {
 
 function readEditorText(editor: HTMLElement): string {
   const readNode = (node: Node): string => {
-    if (node instanceof HTMLImageElement) return node.dataset.emoteName ?? "";
-    if (node instanceof HTMLBRElement) return "\n";
+    // Not `instanceof`: that compares against this window's constructors, and
+    // an emote built in the chat window is not one of them — every emote would
+    // read as empty, which is what sending and copying saw.
+    if (node.nodeType === 1 /* Node.ELEMENT_NODE */) {
+      const element = node as HTMLElement;
+      if (element.tagName === "IMG") return element.dataset.emoteName ?? "";
+      if (element.tagName === "BR") return "\n";
+    }
     if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
     return [...node.childNodes].map(readNode).join("");
   };
@@ -48,10 +54,13 @@ function readEditorText(editor: HTMLElement): string {
 }
 
 function placeCaretAtEnd(editor: HTMLElement): void {
-  const range = document.createRange();
+  const root = editor.ownerDocument;
+  const range = root.createRange();
   range.selectNodeContents(editor);
   range.collapse(false);
-  const selection = window.getSelection();
+  // The selection belongs to the window the editor is in; this window's is a
+  // different one entirely, and empty.
+  const selection = root.defaultView?.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
 }
@@ -63,12 +72,13 @@ interface ActiveMention {
 }
 
 function getCaretTextOffset(editor: HTMLElement): number | null {
-  const selection = window.getSelection();
+  const root = editor.ownerDocument;
+  const selection = root.defaultView?.getSelection();
   if (!selection?.rangeCount || !editor.contains(selection.focusNode)) return null;
-  const range = document.createRange();
+  const range = root.createRange();
   range.selectNodeContents(editor);
   range.setEnd(selection.focusNode!, selection.focusOffset);
-  const fragment = document.createElement("div");
+  const fragment = root.createElement("div");
   fragment.append(range.cloneContents());
   return readEditorText(fragment).length;
 }
@@ -156,14 +166,15 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
 
     const renderValue = useCallback(
       (editor: HTMLDivElement, nextValue: string) => {
+        const root = editor.ownerDocument;
         editor.replaceChildren();
         for (const token of nextValue.split(/(\s+)/)) {
           const emote = emoteImages.get(token);
           if (!emote) {
-            editor.append(document.createTextNode(token));
+            editor.append(root.createTextNode(token));
             continue;
           }
-          const image = document.createElement("img");
+          const image = root.createElement("img");
           image.alt = token;
           image.className = "composer-emote";
           image.dataset.emoteName = token;
@@ -291,11 +302,12 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     function handlePaste(event: ClipboardEvent<HTMLDivElement>): void {
       event.preventDefault();
       const text = event.clipboardData.getData("text/plain");
-      const selection = window.getSelection();
+      const root = event.currentTarget.ownerDocument;
+      const selection = root.defaultView?.getSelection();
       if (!selection?.rangeCount) return;
       const range = selection.getRangeAt(0);
       range.deleteContents();
-      const node = document.createTextNode(text);
+      const node = root.createTextNode(text);
       range.insertNode(node);
       range.setStartAfter(node);
       range.collapse(true);
