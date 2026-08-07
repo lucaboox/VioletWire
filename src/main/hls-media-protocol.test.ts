@@ -54,6 +54,9 @@ describe("HlsMediaProtocol", () => {
       "https://video.example/segment.ts",
       expect.objectContaining({
         bypassCustomProtocolHandlers: true,
+        // Video shares a session with the interface. Cached, it evicts the
+        // emote and avatar images the interface is holding there.
+        cache: "no-store",
         headers: expect.objectContaining({ Range: "bytes=0-99" }),
       }),
     );

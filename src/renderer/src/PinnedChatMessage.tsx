@@ -48,8 +48,10 @@ function renderFragment(fragment: TwitchPinnedChatFragment, index: number) {
         alt={fragment.text}
         className="pinned-chat-emote"
         decoding="async"
+        // A pinned message is always on screen; it should never show a gap.
+        fetchPriority="high"
         key={`${fragment.emote.id}:${index}`}
-        loading="lazy"
+        loading="eager"
         src={
           fragment.emote.imageUrl ??
           `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(fragment.emote.id)}/${format}/dark/2.0`

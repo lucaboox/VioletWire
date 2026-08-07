@@ -9,6 +9,12 @@ export interface EmoteImageVariant {
   height: number;
   format: string;
   scale: number;
+  /**
+   * Bytes on the wire, when the service says. 7TV does; the others do not. An
+   * animated emote can be a hundred times the size of a still one, so knowing
+   * before fetching is what lets background warming stay within a budget.
+   */
+  bytes?: number;
 }
 
 export interface ProviderEmote {

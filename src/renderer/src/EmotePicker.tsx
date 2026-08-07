@@ -15,7 +15,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import type EmojiDatabase from "emoji-picker-element/database";
 import type { NativeEmoji, SkinTone } from "emoji-picker-element/shared";
 import type { TwitchPickerEmote } from "../../shared/chat";
 import type {
@@ -32,20 +31,15 @@ import {
   ProviderLogo,
   type ProviderLogoName,
 } from "./ProviderLogo";
+import {
+  loadedUnicodeEmoji,
+  preloadUnicodeEmoji,
+  rememberUnicodeSkinTone,
+  unicodeEmojiDatabase,
+  UNICODE_EMOJI_GROUPS,
+} from "./unicode-emoji";
 
 type Provider = "favorites" | "emoji" | "7tv" | "twitch" | "ffz" | "bttv";
-
-const UNICODE_EMOJI_GROUPS = [
-  { id: 0, label: "Smileys & emotion", icon: "😀" },
-  { id: 1, label: "People & body", icon: "👋" },
-  { id: 3, label: "Animals & nature", icon: "🐱" },
-  { id: 4, label: "Food & drink", icon: "🍎" },
-  { id: 5, label: "Travel & places", icon: "🏠" },
-  { id: 6, label: "Activities", icon: "⚽" },
-  { id: 7, label: "Objects", icon: "📝" },
-  { id: 8, label: "Symbols", icon: "⛔" },
-  { id: 9, label: "Flags", icon: "🏁" },
-] as const;
 
 // Windows updates its color emoji font independently from Chromium. Probe a
 // representative emoji from each Unicode release once, then avoid offering
@@ -206,14 +200,6 @@ let cachedPickerSize = {
   width: defaultAppPreferences.emotePickerWidth,
   height: defaultAppPreferences.emotePickerHeight,
 };
-let cachedUnicodeEmojiGroups = new Map<number, NativeEmoji[]>();
-let cachedUnicodeSkinTone: SkinTone = 0;
-let cachedUnicodeDatabase: EmojiDatabase | null = null;
-
-function rememberUnicodeSkinTone(skinTone: SkinTone) {
-  cachedUnicodeSkinTone = skinTone;
-}
-
 void window.desktop.preferences
   .getOrMigrate()
   .then((preferences) => {
@@ -295,11 +281,11 @@ export function EmotePicker({
   const [favorites, setFavorites] = useState(readFavorites);
   const [size, setSize] = useState(() => clampSize(cachedPickerSize));
   const [unicodeEmoji, setUnicodeEmoji] = useState<Map<number, NativeEmoji[]>>(
-    () => new Map(cachedUnicodeEmojiGroups),
+    () => new Map(loadedUnicodeEmoji().groups),
   );
   const [unicodeLoading, setUnicodeLoading] = useState(false);
   const [unicodeLoadFailed, setUnicodeLoadFailed] = useState(false);
-  const [skinTone, setSkinTone] = useState<SkinTone>(cachedUnicodeSkinTone);
+  const [skinTone, setSkinTone] = useState<SkinTone>(loadedUnicodeEmoji().skinTone);
   const [skinTonePickerOpen, setSkinTonePickerOpen] = useState(false);
   const [visibleEmojiSections, setVisibleEmojiSections] = useState<Set<string>>(new Set());
   const [emojiSectionHeights, setEmojiSectionHeights] = useState<Map<string, number>>(new Map());
@@ -307,7 +293,6 @@ export function EmotePicker({
   const scrollHost = useRef<HTMLDivElement>(null);
   const sectionHosts = useRef(new Map<string, HTMLElement>());
   const resizing = useRef(false);
-  const unicodeDatabase = useRef<EmojiDatabase | null>(cachedUnicodeDatabase);
   const unicodeLoadStarted = useRef(false);
   const pickerMounted = useRef(true);
 
@@ -378,29 +363,12 @@ export function EmotePicker({
       .then(() => {
         if (!pickerMounted.current) return null;
         setUnicodeLoading(true);
-        return import("emoji-picker-element/database");
+        return preloadUnicodeEmoji();
       })
-      .then(async (module) => {
-        if (!module) return;
-        const { default: Database } = module;
-        const database = new Database();
-        cachedUnicodeDatabase = database;
-        unicodeDatabase.current = database;
-        await database.ready();
-        const [storedSkinTone, groups] = await Promise.all([
-          database.getPreferredSkinTone(),
-          Promise.all(
-            UNICODE_EMOJI_GROUPS.map(async ({ id }) => [
-              id,
-              await database.getEmojiByGroup(id),
-            ] as const),
-          ),
-        ]);
-        cachedUnicodeSkinTone = storedSkinTone;
-        cachedUnicodeEmojiGroups = new Map(groups);
-        if (!pickerMounted.current) return;
-        setSkinTone(storedSkinTone);
-        setUnicodeEmoji(new Map(groups));
+      .then((loaded) => {
+        if (!loaded || !pickerMounted.current) return;
+        setSkinTone(loaded.skinTone);
+        setUnicodeEmoji(new Map(loaded.groups));
       })
       .catch(() => {
         unicodeLoadStarted.current = false;
@@ -663,7 +631,7 @@ export function EmotePicker({
       return;
     }
     if (emote.unicode) {
-      void unicodeDatabase.current?.incrementFavoriteEmojiCount(emote.unicode).catch(() => undefined);
+      void unicodeEmojiDatabase()?.incrementFavoriteEmojiCount(emote.unicode).catch(() => undefined);
     }
     onSelect(emote.unicode ?? emote.name);
     if (!emote.modifier && !event.ctrlKey) onClose();
@@ -719,7 +687,7 @@ export function EmotePicker({
     rememberUnicodeSkinTone(nextSkinTone);
     setSkinTone(nextSkinTone);
     setSkinTonePickerOpen(false);
-    void unicodeDatabase.current?.setPreferredSkinTone(nextSkinTone).catch(() => undefined);
+    void unicodeEmojiDatabase()?.setPreferredSkinTone(nextSkinTone).catch(() => undefined);
   }
 
   const providers: Array<{

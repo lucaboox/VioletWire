@@ -6,6 +6,7 @@ import {
   tokenizeChatMentions,
 } from "../../shared/chat-content";
 import { ChatEmote } from "./ChatEmote";
+import { chatEmoteVariant } from "./emote-scale";
 import {
   getEmoteEffectClasses,
   isPrefixEmoteModifier,
@@ -148,13 +149,12 @@ export function renderProviderText(
           ),
         );
       }
-      const variant =
-        segment.emote.variants.find((item) => item.scale === 2) ??
-        segment.emote.variants.at(-1);
+      const variant = chatEmoteVariant(segment.emote.variants);
       if (!variant) return segment.emote.name;
       const effectClasses = getEmoteEffectClasses(segment.modifiers);
       const rendered = (
         <ChatEmote
+          aspectRatio={variant.width / Math.max(variant.height, 1)}
           className={emoteClassName}
           imageUrl={variant.url}
           logicalHeight={variant.height / Math.max(variant.scale, 1)}

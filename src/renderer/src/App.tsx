@@ -99,6 +99,9 @@ import { useChatFeed } from "./chat-feed";
 import { ChatSendStatus } from "./ChatSendStatus";
 import { useChatSendQueue } from "./use-chat-send-queue";
 import { EmotePicker } from "./EmotePicker";
+import { forgetWarmedEmoteImages, warmEmoteImages } from "./emote-preload";
+import { setChatEmoteHeight } from "./emote-scale";
+import { preloadUnicodeEmoji } from "./unicode-emoji";
 import { MultiStreamView } from "./MultiStreamView";
 import { ReactTooltipLayer } from "./ReactTooltipLayer";
 import { ChatBadge } from "./ChatBadge";
@@ -1582,6 +1585,28 @@ export function App() {
       cancelled = true;
     };
   }, [chatChannel, authState.status, loadBadgeBundle]);
+
+  // Emotes are fetched at the size they will be drawn, so the chat emote
+  // setting and the display's pixel density decide which variant is asked for.
+  useEffect(() => {
+    setChatEmoteHeight(chatEmoteSize);
+  }, [chatEmoteSize]);
+
+  // A channel's emote lists are in memory the moment it loads, but the images
+  // are not fetched until something draws them. The light ones are pulled into
+  // the cache quietly afterwards — at the size chat uses, so chat is what
+  // benefits most — while everything heavier waits until it is actually shown.
+  // The emoji tab's database is a separate cost, a dynamic import and an
+  // IndexedDB read, and is warmed at the same time.
+  useEffect(() => {
+    if (!chatChannel) return;
+    warmEmoteImages({
+      providerEmotes: pickerProviderEmotes,
+      providerChannelNames: providerChannelNames,
+      platformEmotes: pickerEmotes,
+    });
+    void preloadUnicodeEmoji().catch(() => undefined);
+  }, [chatChannel, pickerEmotes, pickerProviderEmotes, providerChannelNames]);
 
   // Multistream keeps all tabs' chats up, so warm every tile channel's emotes
   // and badges into the cache in the background. Switching tabs is then instant
@@ -6545,6 +6570,7 @@ export function App() {
                         disabled={clearingEmoteCache}
                         onClick={() => {
                           setClearingEmoteCache(true);
+                          forgetWarmedEmoteImages();
                           void window.desktop.chat
                             .clearEmoteCache()
                             .then(() => window.desktop.chat.getCacheSize())

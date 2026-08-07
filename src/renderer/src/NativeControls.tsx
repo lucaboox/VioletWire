@@ -62,6 +62,7 @@ import { ChatComposerInput } from "./ChatComposerInput";
 import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
 import type { ChatRestrictions } from "../../shared/chat";
 import { EmotePicker } from "./EmotePicker";
+import { setChatEmoteHeight } from "./emote-scale";
 import { ChatBadge } from "./ChatBadge";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
@@ -590,6 +591,12 @@ export function NativeControls({
     }
     return combined;
   }, [providerEmoteMaps]);
+
+  // The overlay chat draws emotes at the same size the main window does, and
+  // this window keeps its own copy of that setting.
+  useEffect(() => {
+    setChatEmoteHeight(chatEmoteSize);
+  }, [chatEmoteSize]);
 
   useEffect(() => {
     if (!emotePickerOpen && !chatSettingsOpen) return;

@@ -12,6 +12,7 @@ import type { ProviderEmote } from "../../shared/emotes";
 import type { TwitchPickerEmote } from "../../shared/chat";
 import type { ChatMentionCandidate } from "../../shared/chat-content";
 import { matchEmoteNames, type EmoteMatchMode } from "./emote-autocomplete";
+import { chatEmoteVariant } from "./emote-scale";
 
 interface ChatComposerInputProps {
   "aria-label": string;
@@ -215,8 +216,9 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
       }
       for (const emote of sevenTvEmotes.values()) {
         if (emote.modifier) continue;
-        const variant =
-          emote.variants.find((item) => item.scale === 2) ?? emote.variants.at(-1);
+        // The composer and its suggestion list draw emotes at chat's size, so
+        // they ask for the same image chat does and share its cache entry.
+        const variant = chatEmoteVariant(emote.variants);
         const provider =
           emote.provider === "7tv"
             ? "7TV"

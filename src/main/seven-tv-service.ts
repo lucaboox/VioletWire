@@ -15,6 +15,7 @@ const sevenTvFileSchema = z.object({
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   format: z.string(),
+  size: z.number().int().nonnegative().optional(),
 });
 
 const sevenTvEmoteSchema = z.object({
@@ -201,6 +202,9 @@ export class SevenTvService {
       height: z.number().positive(),
       format: z.string(),
       scale: z.number().positive(),
+      // Absent in sets written by builds before sizes were kept; those simply
+      // fall back to an estimate until the set is fetched again.
+      bytes: z.number().nonnegative().optional(),
     });
     const emote = z.object({
       id: z.string(),
@@ -243,6 +247,7 @@ export class SevenTvService {
         height: file.height,
         format: file.format.toLowerCase(),
         scale: this.readScale(file.name),
+        ...(file.size === undefined ? {} : { bytes: file.size }),
       }))
       .sort((left, right) => left.scale - right.scale);
     return {

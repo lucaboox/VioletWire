@@ -79,6 +79,12 @@ app.setPath("userData", path.join(app.getPath("appData"), "twitch-windows-viewer
 // Twitch's official embedded player is created inside a dedicated local page.
 // Allow that trusted player to honor its autoplay option when a channel opens.
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+// Left to itself Chromium sizes the cache from the free space on the drive,
+// which on a large disk is gigabytes. Emote artwork is what fills it — a single
+// large channel's set runs past a hundred megabytes — so the ceiling is stated
+// outright: room for several channels' worth, and the oldest dropped after
+// that. Chat settings reports what is held and can empty it.
+app.commandLine.appendSwitch("disk-cache-size", String(400 * 1024 * 1024));
 protocol.registerSchemesAsPrivileged([
   appProtocolPrivileges,
   {

@@ -160,6 +160,13 @@ export class HlsMediaProtocol implements HlsMediaTransport {
         method: request.method,
         headers,
         bypassCustomProtocolHandlers: true,
+        // Playlists change every few seconds and a live segment is played once
+        // and never asked for again, so none of this is worth keeping — but it
+        // was being kept, in the very same cache the interface loads its images
+        // through. Megabytes of video a second pushed every emote back out
+        // almost as soon as it arrived, which is why chat kept showing holes
+        // where emotes should be. Video stays out of the cache entirely now.
+        cache: "no-store",
         signal: request.signal,
       });
       if (chromiumResponse.ok || chromiumResponse.status === 206) {
@@ -175,6 +182,7 @@ export class HlsMediaProtocol implements HlsMediaTransport {
     return fetch(resource.url, {
       method: request.method,
       headers,
+      cache: "no-store",
       signal: request.signal,
     });
   }
