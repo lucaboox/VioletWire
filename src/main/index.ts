@@ -56,6 +56,7 @@ import {
   TWITCH_WEBSITE_PARTITION,
 } from "./session-partitions";
 import { HLS_MEDIA_SCHEME, hlsMediaProtocol } from "./hls-media-protocol";
+import { applyEmoteCachePolicy } from "./emote-cache-policy";
 import { APP_ORIGIN, appProtocolPrivileges, registerAppProtocol } from "./app-protocol";
 import { readCachedKickBadge } from "./kick-badge-cache";
 
@@ -977,6 +978,11 @@ const chatWindowPlacementSchema = z.object({
   side: z.enum(["left", "right"]),
 });
 
+
+handleTrusted("chat:clear-emote-cache", async () => {
+  await session.fromPartition(APP_UI_PARTITION).clearCache();
+});
+
 handleTrusted("chat-window:get-displays", () => {
   const primaryId = screen.getPrimaryDisplay().id;
   return screen.getAllDisplays().map((display) => ({
@@ -1483,6 +1489,7 @@ app.whenReady().then(async () => {
   // for emote-picker shortcuts.
   Menu.setApplicationMenu(null);
   await preferencesService.initialize();
+  applyEmoteCachePolicy(session.fromPartition(APP_UI_PARTITION));
   try {
     await hlsMediaProtocol.initialize(session.fromPartition(APP_UI_PARTITION));
   } catch {

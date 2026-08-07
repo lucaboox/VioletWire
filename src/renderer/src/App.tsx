@@ -764,6 +764,7 @@ export function App() {
   const [genericLinkPreviewsEnabled, setGenericLinkPreviewsEnabled] = useState(false);
   const [emoteAutocompleteMatch, setEmoteAutocompleteMatch] =
     useState<AppPreferences["emoteAutocompleteMatch"]>("prefix");
+  const [clearingEmoteCache, setClearingEmoteCache] = useState(false);
   const [mentionTabBehavior, setMentionTabBehavior] =
     useState<AppPreferences["mentionTabBehavior"]>("complete");
   const [genericLinkPreviewActivation, setGenericLinkPreviewActivation] =
@@ -6427,6 +6428,31 @@ export function App() {
                             : "Typing kek finds kekw; ek does not."}
                         </p>
                       </div>
+                    </div>
+                    <div className="settings-card">
+                      <div>
+                        <strong>Cached emotes</strong>
+                        <span>
+                          Emote images are kept for a month rather than the ten
+                          seconds 7TV asks for, so a busy chat stops fetching the
+                          same ones over and over. Empty it if an emote has been
+                          redrawn and is still showing the old picture.
+                        </span>
+                      </div>
+                      <button
+                        className="secondary-button"
+                        disabled={clearingEmoteCache}
+                        onClick={() => {
+                          setClearingEmoteCache(true);
+                          void window.desktop.chat
+                            .clearEmoteCache()
+                            .catch(() => undefined)
+                            .finally(() => setClearingEmoteCache(false));
+                        }}
+                        type="button"
+                      >
+                        {clearingEmoteCache ? "Emptying…" : "Empty cache"}
+                      </button>
                     </div>
                     <div className="settings-card settings-card-stack">
                       <div className="settings-card-row">

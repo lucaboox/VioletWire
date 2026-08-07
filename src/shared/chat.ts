@@ -195,6 +195,8 @@ export interface ChatApi {
   send(channel: string, message: string, replyParentMessageId?: string): Promise<void>;
   getAssets(channel: string): Promise<TwitchChatAssets>;
   setHistoryLimit(limit: number): void;
+  /** Empties the cached emote images, so they are fetched again. */
+  clearEmoteCache(): Promise<void>;
   onMessage(listener: (message: ChatMessage) => void): () => void;
   onState(listener: (state: ChatConnectionState) => void): () => void;
   onRestrictions(listener: (restrictions: ChatRestrictions) => void): () => void;

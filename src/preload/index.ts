@@ -106,6 +106,7 @@ const api: DesktopApi = {
       ipcRenderer.invoke("chat:send", channel, message, replyParentMessageId),
     getAssets: (channel: string) => ipcRenderer.invoke("chat:get-assets", channel),
     setHistoryLimit: (limit: number) => ipcRenderer.send("chat:set-history-limit", limit),
+    clearEmoteCache: () => ipcRenderer.invoke("chat:clear-emote-cache"),
     getDisplays: () => ipcRenderer.invoke("chat-window:get-displays"),
     placeWindow: (displayId: number, side: "left" | "right") =>
       ipcRenderer.invoke("chat-window:place", { displayId, side }),
