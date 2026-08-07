@@ -5,6 +5,7 @@ import type {
   TwitchPinnedChatFragment,
   TwitchPinnedChatMessage as PinnedMessage,
 } from "../../shared/twitch";
+import { emoteImageUrl } from "./emote-image-url";
 
 function renderText(text: string, key: string) {
   return tokenizeChatLinks(text).map((content, index) => {
@@ -52,10 +53,10 @@ function renderFragment(fragment: TwitchPinnedChatFragment, index: number) {
         fetchPriority="high"
         key={`${fragment.emote.id}:${index}`}
         loading="eager"
-        src={
+        src={emoteImageUrl(
           fragment.emote.imageUrl ??
-          `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(fragment.emote.id)}/${format}/dark/2.0`
-        }
+            `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(fragment.emote.id)}/${format}/dark/2.0`,
+        )}
       />
     );
   }

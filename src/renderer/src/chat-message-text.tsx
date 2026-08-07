@@ -4,6 +4,7 @@ import type { ProviderEmote } from "../../shared/emotes";
 import { withoutRedundantReplyMention } from "./chat-display";
 import { renderProviderText } from "./ProviderEmoteText";
 import { ChatEmote } from "./ChatEmote";
+import { emoteImageUrl } from "./emote-image-url";
 
 /** A chat message's text, with Twitch and third-party emotes rendered in place. */
 export function renderChatMessageText(
@@ -39,10 +40,10 @@ export function renderChatMessageText(
     output.push(
       <ChatEmote
         className="chat-emote"
-        imageUrl={
+        imageUrl={emoteImageUrl(
           range.imageUrl ??
-          `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`
-        }
+            `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(range.id)}/default/dark/2.0`,
+        )}
         key={`${message.id}-twitch-${index}`}
         name={name}
         provider={range.provider ?? "twitch"}

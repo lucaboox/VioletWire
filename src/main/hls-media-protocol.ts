@@ -42,7 +42,13 @@ function responseHeaders(upstream: Response): Headers {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Expose-Headers":
       "Content-Length, Content-Range, Accept-Ranges",
-    "Cache-Control": "private, max-age=30",
+    // This is the header that was filling the disk. Each segment handed to the
+    // player was marked cacheable, so Chromium kept a copy in the interface's
+    // own cache — around two gigabytes an hour of video that is watched once
+    // and never asked for again, crowding out the emote and avatar images that
+    // share that cache. The player holds its own buffer; nothing needs a
+    // segment a second time.
+    "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
   });
   for (const name of [
@@ -64,15 +70,29 @@ export class HlsMediaProtocol implements HlsMediaTransport {
   readonly name = "chromium-protocol" as const;
   private readonly sessions = new Map<string, HlsMediaResourceResolver>();
   private browserSession: Session | null = null;
+  /**
+   * Where the upstream video is fetched from, which is deliberately not the
+   * session the interface runs in. Chromium stored every segment there — two
+   * gigabytes an hour of video nobody will ever ask for again — and pushed the
+   * emote and avatar images out to make room. Neither asking for `no-store` on
+   * the fetch nor rewriting the response headers stops it: the first is ignored
+   * by Electron, and the second happens after Chromium has already decided what
+   * to store. A session with its cache switched off does stop it.
+   */
+  private upstreamSession: Session | null = null;
   private initialized = false;
 
   get ready(): boolean {
     return this.initialized && this.browserSession !== null;
   }
 
-  async initialize(browserSession: Session): Promise<void> {
+  async initialize(
+    browserSession: Session,
+    upstreamSession: Session = browserSession,
+  ): Promise<void> {
     if (this.initialized) return;
     this.browserSession = browserSession;
+    this.upstreamSession = upstreamSession;
     try {
       await browserSession.protocol.handle(HLS_MEDIA_SCHEME, (request) =>
         this.handleRequest(request),
@@ -113,6 +133,7 @@ export class HlsMediaProtocol implements HlsMediaTransport {
     this.sessions.clear();
     const browserSession = this.browserSession;
     this.browserSession = null;
+    this.upstreamSession = null;
     this.initialized = false;
     if (browserSession) {
       try {
@@ -151,22 +172,15 @@ export class HlsMediaProtocol implements HlsMediaTransport {
     request: Request,
   ): Promise<Response> {
     const headers = playbackHeaders(resource.platform, request);
-    const browserSession = this.browserSession;
-    if (!browserSession)
+    const fetchSession = this.upstreamSession ?? this.browserSession;
+    if (!fetchSession)
       throw new Error("Chromium HLS transport is unavailable.");
 
     try {
-      const chromiumResponse = await browserSession.fetch(resource.url, {
+      const chromiumResponse = await fetchSession.fetch(resource.url, {
         method: request.method,
         headers,
         bypassCustomProtocolHandlers: true,
-        // Playlists change every few seconds and a live segment is played once
-        // and never asked for again, so none of this is worth keeping — but it
-        // was being kept, in the very same cache the interface loads its images
-        // through. Megabytes of video a second pushed every emote back out
-        // almost as soon as it arrived, which is why chat kept showing holes
-        // where emotes should be. Video stays out of the cache entirely now.
-        cache: "no-store",
         signal: request.signal,
       });
       if (chromiumResponse.ok || chromiumResponse.status === 206) {
@@ -182,7 +196,6 @@ export class HlsMediaProtocol implements HlsMediaTransport {
     return fetch(resource.url, {
       method: request.method,
       headers,
-      cache: "no-store",
       signal: request.signal,
     });
   }

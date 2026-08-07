@@ -41,11 +41,51 @@ describe("app protocol", () => {
         }),
       },
     } as unknown as Session;
-    registerAppProtocol(target, rendererDirectory, async () => null);
+    registerAppProtocol(
+      target,
+      rendererDirectory,
+      async () => null,
+      async (url) =>
+        url === "https://cdn.7tv.app/emote/kept/1x.webp"
+          ? { bytes: new Uint8Array([1, 2, 3]), contentType: "image/webp" }
+          : null,
+    );
   });
 
   afterEach(async () => {
     await rm(rendererDirectory, { force: true, recursive: true });
+  });
+
+  it("serves emote artwork from the app's own store", async () => {
+    const response = await handler(
+      new Request(
+        `violetwire://app/emote?src=${encodeURIComponent("https://cdn.7tv.app/emote/kept/1x.webp")}`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/webp");
+    expect(response.headers.get("cache-control")).toContain("immutable");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
+  it("does not serve an emote address the store refused", async () => {
+    const response = await handler(
+      new Request(
+        `violetwire://app/emote?src=${encodeURIComponent("https://example.test/evil.webp")}`,
+      ),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("does not treat a bare emote request as a file to read", async () => {
+    const response = await handler(new Request("violetwire://app/emote"));
+
+    expect(response.status).toBe(404);
+    expect(fetchFile).not.toHaveBeenCalled();
   });
 
   it("serves the root index with hardened no-cache headers", async () => {

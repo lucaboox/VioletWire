@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { PlaybackSessionState } from "../shared/twitch";
 import {
   APP_UI_PARTITION,
+  MEDIA_UPSTREAM_PARTITION,
   TWITCH_WEBSITE_PARTITION,
 } from "./session-partitions";
 
@@ -214,16 +215,24 @@ export class PlaybackSessionService {
   }
 
   private async syncAppUiCookie(token: string): Promise<void> {
-    await this.appUiSession.cookies.set({
-      url: "https://www.twitch.tv",
-      name: "auth-token",
-      value: token,
-      domain: ".twitch.tv",
-      path: "/",
-      secure: true,
-      httpOnly: false,
-      sameSite: "no_restriction",
-    });
+    // Video is fetched from a session of its own, so the cookie goes to both:
+    // the interface's, and the one the segments actually come through.
+    const targets = [
+      this.appUiSession,
+      session.fromPartition(MEDIA_UPSTREAM_PARTITION),
+    ];
+    for (const target of targets) {
+      await target.cookies.set({
+        url: "https://www.twitch.tv",
+        name: "auth-token",
+        value: token,
+        domain: ".twitch.tv",
+        path: "/",
+        secure: true,
+        httpOnly: false,
+        sameSite: "no_restriction",
+      });
+    }
   }
 
   private isTwitchHostname(rawHostname: string): boolean {

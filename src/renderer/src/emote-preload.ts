@@ -4,6 +4,7 @@ import type {
   EmoteProvider,
   ProviderEmote,
 } from "../../shared/emotes";
+import { emoteImageUrl } from "./emote-image-url";
 import { chatEmoteVariant, pickerEmoteVariant } from "./emote-scale";
 
 /**
@@ -173,13 +174,14 @@ function pump() {
     // actually showing right now.
     image.fetchPriority = "low";
     image.decoding = "async";
+    // Through the store, so warming fills the same place chat reads from.
     const done = () => {
       inFlight -= 1;
       pump();
     };
     image.addEventListener("load", done, { once: true });
     image.addEventListener("error", done, { once: true });
-    image.src = url;
+    image.src = emoteImageUrl(url);
   }
 }
 

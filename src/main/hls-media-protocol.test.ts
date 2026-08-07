@@ -27,11 +27,21 @@ describe("HlsMediaProtocol", () => {
         unhandle: vi.fn(),
       },
     } as unknown as Session;
+    // Video is fetched from a session of its own, whose cache is switched off,
+    // so segments never displace the interface's emote and avatar images.
+    const upstreamFetch = vi.fn(
+      async () =>
+        new Response("segment-bytes", {
+          status: 200,
+          headers: { "Content-Type": "video/mp2t" },
+        }),
+    );
+    const upstreamSession = { fetch: upstreamFetch } as unknown as Session;
     const transport = new HlsMediaProtocol();
     const sessionToken = "a".repeat(32);
     const resourceId = "b".repeat(32);
 
-    await transport.initialize(browserSession);
+    await transport.initialize(browserSession, upstreamSession);
     const unregister = transport.registerSession(sessionToken, (id) =>
       id === resourceId
         ? { platform: "twitch", url: "https://video.example/segment.ts" }
@@ -50,16 +60,15 @@ describe("HlsMediaProtocol", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("segment-bytes");
     expect(response.headers.get("access-control-allow-origin")).toBe("*");
-    expect(chromiumFetch).toHaveBeenCalledWith(
+    expect(upstreamFetch).toHaveBeenCalledWith(
       "https://video.example/segment.ts",
       expect.objectContaining({
         bypassCustomProtocolHandlers: true,
-        // Video shares a session with the interface. Cached, it evicts the
-        // emote and avatar images the interface is holding there.
-        cache: "no-store",
         headers: expect.objectContaining({ Range: "bytes=0-99" }),
       }),
     );
+    // Never through the interface's own session, which is the one with a cache.
+    expect(chromiumFetch).not.toHaveBeenCalled();
 
     unregister();
     expect(

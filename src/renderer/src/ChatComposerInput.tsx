@@ -12,6 +12,7 @@ import type { ProviderEmote } from "../../shared/emotes";
 import type { TwitchPickerEmote } from "../../shared/chat";
 import type { ChatMentionCandidate } from "../../shared/chat-content";
 import { matchEmoteNames, type EmoteMatchMode } from "./emote-autocomplete";
+import { emoteImageUrl } from "./emote-image-url";
 import { chatEmoteVariant } from "./emote-scale";
 
 interface ChatComposerInputProps {
@@ -212,7 +213,10 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
     const emoteImages = useMemo(() => {
       const images = new Map<string, EmoteImage>();
       for (const emote of twitchEmotes) {
-        images.set(emote.name, { imageUrl: emote.imageUrl, provider: "Twitch" });
+        images.set(emote.name, {
+          imageUrl: emoteImageUrl(emote.imageUrl),
+          provider: "Twitch",
+        });
       }
       for (const emote of sevenTvEmotes.values()) {
         if (emote.modifier) continue;
@@ -225,7 +229,12 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
             : emote.provider === "ffz"
               ? "FrankerFaceZ"
               : "BetterTTV";
-        if (variant) images.set(emote.name, { imageUrl: variant.url, provider });
+        if (variant) {
+          images.set(emote.name, {
+            imageUrl: emoteImageUrl(variant.url),
+            provider,
+          });
+        }
       }
       return images;
     }, [sevenTvEmotes, twitchEmotes]);

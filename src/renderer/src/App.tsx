@@ -71,6 +71,8 @@ import type {
   TwitchPinnedChatMessage,
 } from "../../shared/twitch";
 import type { EmoteSetResult } from "../../shared/emotes";
+import type { EmoteStoreUsage } from "../../shared/chat";
+import { EMOTE_STORE_LIMIT_BYTES } from "../../shared/http-cache";
 import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
 import type { EmoteProvider, ProviderEmote } from "../../shared/emotes";
 import type {
@@ -650,7 +652,7 @@ export function App() {
   const closeChatWindowRef = useRef(closeChatWindow);
   useEffect(() => {
     if (settingsSection !== "emotes" || !settingsOpen) return;
-    void window.desktop.chat.getCacheSize().then(setEmoteCacheBytes).catch(() => undefined);
+    void window.desktop.chat.getCacheSize().then(setEmoteStoreUsage).catch(() => undefined);
   }, [settingsOpen, settingsSection]);
   useEffect(() => {
     closeChatWindowRef.current = closeChatWindow;
@@ -772,15 +774,23 @@ export function App() {
   const [emoteAutocompleteMatch, setEmoteAutocompleteMatch] =
     useState<AppPreferences["emoteAutocompleteMatch"]>("prefix");
   const [clearingEmoteCache, setClearingEmoteCache] = useState(false);
-  const [emoteCacheBytes, setEmoteCacheBytes] = useState<number | null>(null);
-  // Chromium reports what it is holding in total and keeps no count per host,
-  // so this covers everything cached, emote images being the bulk of it.
-  const emoteCacheLabel =
-    emoteCacheBytes === null
-      ? "Measuring…"
-      : emoteCacheBytes < 1024 * 1024
-        ? `${Math.max(1, Math.round(emoteCacheBytes / 1024))} KB held`
-        : `${(emoteCacheBytes / (1024 * 1024)).toFixed(1)} MB held`;
+  const [emoteStoreUsage, setEmoteStoreUsage] = useState<EmoteStoreUsage | null>(null);
+  // Emote artwork is kept in a store of the app's own, so this figure is emotes
+  // and nothing else — countable, unlike Chromium's cache, which could only
+  // ever report one total for video, thumbnails and artwork together. The
+  // ceiling comes with it: past that, the emotes nobody has seen for longest
+  // are dropped, and fetched again if they ever appear.
+  const emoteStoreLabel = (() => {
+    if (!emoteStoreUsage) return "Measuring…";
+    const { bytes, emotes } = emoteStoreUsage;
+    if (emotes === 0) return "No emotes kept yet";
+    const held =
+      bytes < 1024 * 1024
+        ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+        : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    const ceiling = `${Math.round(EMOTE_STORE_LIMIT_BYTES / (1024 * 1024))} MB`;
+    return `${emotes.toLocaleString()} emote${emotes === 1 ? "" : "s"} · ${held} of ${ceiling}`;
+  })();
   const [mentionTabBehavior, setMentionTabBehavior] =
     useState<AppPreferences["mentionTabBehavior"]>("complete");
   const [genericLinkPreviewActivation, setGenericLinkPreviewActivation] =
@@ -6555,16 +6565,18 @@ export function App() {
                     </header>
                   <div className="settings-card">
                     <div>
-                      <strong>Cached emote images</strong>
+                      <strong>Kept emote images</strong>
                       <span>
-                        7TV asks for its emote images to be kept for ten seconds,
-                        so the same ones were fetched over and over. They are held
-                        for a month instead. Empty this if an emote has been redrawn
-                        and still shows the old picture.
+                        Emote artwork is kept in the app's own store, where the
+                        video the player is streaming cannot push it out. Each
+                        emote is fetched once and read from disk afterwards. Past
+                        the limit the least recently seen are dropped. Empty this
+                        if an emote has been redrawn and still shows the old
+                        picture.
                       </span>
                     </div>
                     <div className="settings-card-actions">
-                      <span className="status-pill">{emoteCacheLabel}</span>
+                      <span className="status-pill">{emoteStoreLabel}</span>
                       <button
                         className="secondary-button"
                         disabled={clearingEmoteCache}
@@ -6574,7 +6586,7 @@ export function App() {
                           void window.desktop.chat
                             .clearEmoteCache()
                             .then(() => window.desktop.chat.getCacheSize())
-                            .then(setEmoteCacheBytes)
+                            .then(setEmoteStoreUsage)
                             .catch(() => undefined)
                             .finally(() => setClearingEmoteCache(false));
                         }}

@@ -191,14 +191,24 @@ export interface ChatWindowDisplay {
   workArea: { x: number; y: number; width: number; height: number };
 }
 
+/**
+ * What the app is holding in its own emote store. Countable now that the
+ * artwork is kept there rather than mixed into Chromium's cache alongside video
+ * and thumbnails, which could only ever be reported as one total.
+ */
+export interface EmoteStoreUsage {
+  bytes: number;
+  emotes: number;
+}
+
 export interface ChatApi {
   send(channel: string, message: string, replyParentMessageId?: string): Promise<void>;
   getAssets(channel: string): Promise<TwitchChatAssets>;
   setHistoryLimit(limit: number): void;
-  /** Empties the cached emote images, so they are fetched again. */
+  /** Empties the kept emote images, so they are fetched again. */
   clearEmoteCache(): Promise<void>;
-  /** Bytes the browser is holding. There is no per-provider figure to ask for. */
-  getCacheSize(): Promise<number>;
+  /** How much emote artwork is kept, and how many images that is. */
+  getCacheSize(): Promise<EmoteStoreUsage>;
   onMessage(listener: (message: ChatMessage) => void): () => void;
   onState(listener: (state: ChatConnectionState) => void): () => void;
   onRestrictions(listener: (restrictions: ChatRestrictions) => void): () => void;

@@ -6,6 +6,7 @@ import {
   tokenizeChatMentions,
 } from "../../shared/chat-content";
 import { ChatEmote } from "./ChatEmote";
+import { emoteImageUrl } from "./emote-image-url";
 import { chatEmoteVariant } from "./emote-scale";
 import {
   getEmoteEffectClasses,
@@ -156,7 +157,7 @@ export function renderProviderText(
         <ChatEmote
           aspectRatio={variant.width / Math.max(variant.height, 1)}
           className={emoteClassName}
-          imageUrl={variant.url}
+          imageUrl={emoteImageUrl(variant.url)}
           logicalHeight={variant.height / Math.max(variant.scale, 1)}
           name={segment.emote.name}
           provider={segment.emote.provider}

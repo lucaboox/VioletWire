@@ -31,6 +31,8 @@ import {
   ProviderLogo,
   type ProviderLogoName,
 } from "./ProviderLogo";
+import { emoteImageUrl } from "./emote-image-url";
+import { pickerEmoteVariant } from "./emote-scale";
 import {
   loadedUnicodeEmoji,
   preloadUnicodeEmoji,
@@ -407,7 +409,7 @@ export function EmotePicker({
     const twitch: PickerEmote[] = twitchEmotes.map((emote) => ({
       key: `twitch:${emote.id}`,
       name: emote.name,
-      imageUrl: emote.imageUrl,
+      imageUrl: emoteImageUrl(emote.imageUrl),
       provider: platformLabel,
       providerId: "twitch",
       scope: emote.scope,
@@ -423,10 +425,8 @@ export function EmotePicker({
     const thirdParty: PickerEmote[] = (["7tv", "ffz", "bttv"] as const).map((providerId) => {
       const channelNames = providerChannelEmoteNames.get(providerId) ?? new Set<string>();
       return [...(providerEmotes.get(providerId)?.values() ?? [])].map((emote) => {
-        const imageUrl =
-          emote.variants.find((variant) => variant.scale === 2)?.url ??
-          emote.variants.at(-1)?.url ??
-          "";
+        const source = pickerEmoteVariant(emote.variants)?.url ?? "";
+        const imageUrl = source ? emoteImageUrl(source) : "";
         const largest = emote.variants.at(-1);
         return {
           key: `${providerId}:${emote.id}`,

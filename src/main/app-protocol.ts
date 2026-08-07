@@ -74,6 +74,9 @@ export function registerAppProtocol(
   target: Session,
   rendererDirectory: string,
   readKickBadge: (name: string) => Promise<Uint8Array | null>,
+  readEmoteImage: (
+    url: string,
+  ) => Promise<{ bytes: Uint8Array; contentType: string } | null>,
 ): void {
   target.protocol.handle(APP_SCHEME, async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -103,6 +106,31 @@ export function registerAppProtocol(
     } catch {
       return textResponse("Bad request", 400);
     }
+    // Emote artwork is kept in the app's own store rather than left to
+    // Chromium's cache, where the video the player fetches would evict it. The
+    // address wanted is carried as a parameter and checked against a list of
+    // hosts before anything is fetched.
+    if (requested === "/emote") {
+      const source = url.searchParams.get("src");
+      const image = source ? await readEmoteImage(source) : null;
+      if (!image) return textResponse("Not found", 404);
+      return new Response(
+        request.method === "HEAD" ? null : new Uint8Array(image.bytes),
+        {
+          headers: {
+            // Long-lived on purpose: an emote image is addressed by its id and
+            // size, so it never changes meaning. Chromium keeping its own copy
+            // saves reaching the store at all, and losing that copy costs only
+            // a local read.
+            "Cache-Control": "private, max-age=2592000, immutable",
+            "Content-Length": String(image.bytes.byteLength),
+            "Content-Type": image.contentType,
+            "X-Content-Type-Options": "nosniff",
+          },
+        },
+      );
+    }
+
     // Kick badge artwork is kept in the app's own data rather than fetched
     // from its publisher every time, so it is served from there.
     const badge = /^\/kick-badges\/([a-z0-9_]+)\.svg$/i.exec(requested);

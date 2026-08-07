@@ -53,10 +53,19 @@ import {
 import { PreferencesService } from "./preferences-service";
 import {
   APP_UI_PARTITION,
+  MEDIA_UPSTREAM_PARTITION,
   TWITCH_WEBSITE_PARTITION,
 } from "./session-partitions";
 import { HLS_MEDIA_SCHEME, hlsMediaProtocol } from "./hls-media-protocol";
-import { applyEmoteCachePolicy } from "./emote-cache-policy";
+import {
+  applyHttpCachePolicy,
+  enforceHttpCacheLimit,
+} from "./http-cache-policy";
+import {
+  clearEmoteStore,
+  emoteStoreUsage,
+  readEmoteImage,
+} from "./emote-image-store";
 import { APP_ORIGIN, appProtocolPrivileges, registerAppProtocol } from "./app-protocol";
 import { readCachedKickBadge } from "./kick-badge-cache";
 
@@ -79,12 +88,10 @@ app.setPath("userData", path.join(app.getPath("appData"), "twitch-windows-viewer
 // Twitch's official embedded player is created inside a dedicated local page.
 // Allow that trusted player to honor its autoplay option when a channel opens.
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
-// Left to itself Chromium sizes the cache from the free space on the drive,
-// which on a large disk is gigabytes. Emote artwork is what fills it — a single
-// large channel's set runs past a hundred megabytes — so the ceiling is stated
-// outright: room for several channels' worth, and the oldest dropped after
-// that. Chat settings reports what is held and can empty it.
-app.commandLine.appendSwitch("disk-cache-size", String(400 * 1024 * 1024));
+// Chromium's own --disk-cache-size is deliberately not used: set to 25 MB, the
+// interface session's cache was measured passing 240 MB and still climbing, so
+// it does not apply to a session made from a partition. The ceiling is kept in
+// http-cache-policy instead.
 protocol.registerSchemesAsPrivileged([
   appProtocolPrivileges,
   {
@@ -849,6 +856,7 @@ async function loadRendererView(window: BrowserWindow, view?: string): Promise<v
       session.fromPartition(APP_UI_PARTITION),
       path.join(currentDirectory, "../../dist/renderer"),
       readCachedKickBadge,
+      readEmoteImage,
     );
     appProtocolReady = true;
   }
@@ -985,11 +993,15 @@ const chatWindowPlacementSchema = z.object({
 });
 
 
-handleTrusted("chat:get-cache-size", () =>
-  session.fromPartition(APP_UI_PARTITION).getCacheSize(),
-);
+// The figure chat settings shows is the emote store, which is what the setting
+// is about. Chromium's own cache is reported nowhere: it is bounded by
+// enforceHttpCacheLimit and holds nothing a viewer chose to keep.
+handleTrusted("chat:get-cache-size", () => emoteStoreUsage());
 
 handleTrusted("chat:clear-emote-cache", async () => {
+  await clearEmoteStore();
+  // Chromium's copies of the same artwork go too, or they would be served from
+  // its cache and emptying would look as though it had done nothing.
   await session.fromPartition(APP_UI_PARTITION).clearCache();
 });
 
@@ -1499,9 +1511,15 @@ app.whenReady().then(async () => {
   // for emote-picker shortcuts.
   Menu.setApplicationMenu(null);
   await preferencesService.initialize();
-  applyEmoteCachePolicy(session.fromPartition(APP_UI_PARTITION));
+  applyHttpCachePolicy(session.fromPartition(APP_UI_PARTITION));
+  enforceHttpCacheLimit(session.fromPartition(APP_UI_PARTITION));
   try {
-    await hlsMediaProtocol.initialize(session.fromPartition(APP_UI_PARTITION));
+    await hlsMediaProtocol.initialize(
+      session.fromPartition(APP_UI_PARTITION),
+      // The options only apply the first time a partition is used, and nothing
+      // else ever touches this one, so its cache stays off for the app's life.
+      session.fromPartition(MEDIA_UPSTREAM_PARTITION, { cache: false }),
+    );
   } catch {
     // Playback remains functional through FilteredHlsRelay's localhost media
     // endpoint if a platform-specific Electron build cannot host the scheme.
