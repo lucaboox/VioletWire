@@ -6565,14 +6565,10 @@ export function App() {
                     </header>
                   <div className="settings-card">
                     <div>
-                      <strong>Kept emote images</strong>
+                      <strong>Emote Cache</strong>
                       <span>
-                        Emote artwork is kept in the app's own store, where the
-                        video the player is streaming cannot push it out. Each
-                        emote is fetched once and read from disk afterwards. Past
-                        the limit the least recently seen are dropped. Empty this
-                        if an emote has been redrawn and still shows the old
-                        picture.
+                        Emotes are saved after the first download so they appear
+                        instantly — empty this if one still shows an old picture.
                       </span>
                     </div>
                     <div className="settings-card-actions">
