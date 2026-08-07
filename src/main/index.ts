@@ -979,6 +979,10 @@ const chatWindowPlacementSchema = z.object({
 });
 
 
+handleTrusted("chat:get-cache-size", () =>
+  session.fromPartition(APP_UI_PARTITION).getCacheSize(),
+);
+
 handleTrusted("chat:clear-emote-cache", async () => {
   await session.fromPartition(APP_UI_PARTITION).clearCache();
 });

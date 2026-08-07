@@ -197,6 +197,8 @@ export interface ChatApi {
   setHistoryLimit(limit: number): void;
   /** Empties the cached emote images, so they are fetched again. */
   clearEmoteCache(): Promise<void>;
+  /** Bytes the browser is holding. There is no per-provider figure to ask for. */
+  getCacheSize(): Promise<number>;
   onMessage(listener: (message: ChatMessage) => void): () => void;
   onState(listener: (state: ChatConnectionState) => void): () => void;
   onRestrictions(listener: (restrictions: ChatRestrictions) => void): () => void;

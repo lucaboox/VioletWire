@@ -646,6 +646,10 @@ export function App() {
     useChatWindow();
   const closeChatWindowRef = useRef(closeChatWindow);
   useEffect(() => {
+    if (settingsSection !== "emotes" || !settingsOpen) return;
+    void window.desktop.chat.getCacheSize().then(setEmoteCacheBytes).catch(() => undefined);
+  }, [settingsOpen, settingsSection]);
+  useEffect(() => {
     closeChatWindowRef.current = closeChatWindow;
   }, [closeChatWindow]);
   const [chatPresentation, setChatPresentation] = useState<ChatPresentation>("side");
@@ -765,6 +769,15 @@ export function App() {
   const [emoteAutocompleteMatch, setEmoteAutocompleteMatch] =
     useState<AppPreferences["emoteAutocompleteMatch"]>("prefix");
   const [clearingEmoteCache, setClearingEmoteCache] = useState(false);
+  const [emoteCacheBytes, setEmoteCacheBytes] = useState<number | null>(null);
+  // Chromium reports what it is holding in total and keeps no count per host,
+  // so this covers everything cached, emote images being the bulk of it.
+  const emoteCacheLabel =
+    emoteCacheBytes === null
+      ? "Measuring…"
+      : emoteCacheBytes < 1024 * 1024
+        ? `${Math.max(1, Math.round(emoteCacheBytes / 1024))} KB held`
+        : `${(emoteCacheBytes / (1024 * 1024)).toFixed(1)} MB held`;
   const [mentionTabBehavior, setMentionTabBehavior] =
     useState<AppPreferences["mentionTabBehavior"]>("complete");
   const [genericLinkPreviewActivation, setGenericLinkPreviewActivation] =
@@ -6429,31 +6442,6 @@ export function App() {
                         </p>
                       </div>
                     </div>
-                    <div className="settings-card">
-                      <div>
-                        <strong>Cached emotes</strong>
-                        <span>
-                          Emote images are kept for a month rather than the ten
-                          seconds 7TV asks for, so a busy chat stops fetching the
-                          same ones over and over. Empty it if an emote has been
-                          redrawn and is still showing the old picture.
-                        </span>
-                      </div>
-                      <button
-                        className="secondary-button"
-                        disabled={clearingEmoteCache}
-                        onClick={() => {
-                          setClearingEmoteCache(true);
-                          void window.desktop.chat
-                            .clearEmoteCache()
-                            .catch(() => undefined)
-                            .finally(() => setClearingEmoteCache(false));
-                        }}
-                        type="button"
-                      >
-                        {clearingEmoteCache ? "Emptying…" : "Empty cache"}
-                      </button>
-                    </div>
                     <div className="settings-card settings-card-stack">
                       <div className="settings-card-row">
                         <div>
@@ -6540,6 +6528,36 @@ export function App() {
                       <h3>Emote providers</h3>
                       <p>Provider sets are cached and refreshed as channels change.</p>
                     </header>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Cached emote images</strong>
+                      <span>
+                        7TV asks for its emote images to be kept for ten seconds,
+                        so the same ones were fetched over and over. They are held
+                        for a month instead. Empty this if an emote has been redrawn
+                        and still shows the old picture.
+                      </span>
+                    </div>
+                    <div className="settings-card-actions">
+                      <span className="status-pill">{emoteCacheLabel}</span>
+                      <button
+                        className="secondary-button"
+                        disabled={clearingEmoteCache}
+                        onClick={() => {
+                          setClearingEmoteCache(true);
+                          void window.desktop.chat
+                            .clearEmoteCache()
+                            .then(() => window.desktop.chat.getCacheSize())
+                            .then(setEmoteCacheBytes)
+                            .catch(() => undefined)
+                            .finally(() => setClearingEmoteCache(false));
+                        }}
+                        type="button"
+                      >
+                        {clearingEmoteCache ? "Emptying…" : "Empty cache"}
+                      </button>
+                    </div>
+                  </div>
                   <div className="settings-card">
                     <div>
                       <strong>Third-party emotes</strong>
