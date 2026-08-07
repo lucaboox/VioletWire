@@ -1550,7 +1550,7 @@ export function NativeControls({
                             alt=""
                             decoding="async"
                             fetchPriority={index < 24 ? "high" : "auto"}
-                            loading="eager"
+                            loading="lazy"
                             src={emote.imageUrl}
                           />
                         </button>
@@ -1601,7 +1601,7 @@ export function NativeControls({
                                   alt=""
                                   decoding="async"
                                   fetchPriority={index < 24 ? "high" : "auto"}
-                                  loading="eager"
+                                  loading="lazy"
                                   src={emote.imageUrl}
                                 />
                               </button>

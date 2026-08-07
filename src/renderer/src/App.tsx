@@ -5025,7 +5025,7 @@ export function App() {
                                       alt=""
                                       decoding="async"
                                       fetchPriority={index < 24 ? "high" : "auto"}
-                                      loading="eager"
+                                      loading="lazy"
                                       src={emote.imageUrl}
                                     />
                                   </button>
@@ -5076,7 +5076,7 @@ export function App() {
                                             alt=""
                                             decoding="async"
                                             fetchPriority={index < 24 ? "high" : "auto"}
-                                            loading="eager"
+                                            loading="lazy"
                                             src={emote.imageUrl}
                                           />
                                         </button>
