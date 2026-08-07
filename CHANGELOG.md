@@ -4,6 +4,45 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.13] - 2026-08-07
+
+### Additions
+
+- Emotes are now kept in a cache of VioletWire's own, holding up to 512 MB of
+  artwork. Chat settings, under Emotes, shows how many emotes are held and how
+  much space they take, and can empty them. Past the limit the emotes nobody has
+  seen for longest are dropped.
+
+### Improvements
+
+- Emotes appear with the message that uses them rather than trailing in
+  afterwards. Each is downloaded once and read from disk from then on, including
+  after a restart — where before every emote was fetched again from the internet
+  on each launch, and repeatedly during a session.
+- Emote images are fetched at the size they are drawn rather than at twice it: an
+  animated emote is 66 KB instead of 158 KB, and a large channel's whole set 44
+  MB rather than 104 MB.
+- A channel's lighter emotes are fetched quietly a little after it opens, so they
+  are already there when a message uses one or a picker is opened. The heavy
+  animated ones are left until something actually draws them.
+- Opening an emote picker asks only for the emotes on screen; the rest arrive as
+  they are scrolled to, and not at all if they never are.
+
+### Fixes
+
+- Emotes in a busy chat could take tens of seconds to appear, and a message of
+  nothing but emotes drew as an empty line while they were on their way, which
+  read as a message that had failed.
+- An emote whose download failed stayed blank for as long as the message was on
+  screen. It is retried now, and shown as its name if it cannot be fetched.
+- The video being streamed filled the same cache as the emotes — around two
+  gigabytes an hour — and pushed them out within minutes, so chat fetched the
+  same emotes again and again. Emote artwork is kept apart from it, and what the
+  video does cache no longer grows without limit.
+- The cache figure in settings counted everything the browser was holding, video
+  and thumbnails included, so it bore little relation to emotes. It reports
+  emotes and nothing else.
+
 ## [0.3.4-alpha.12] - 2026-08-05
 
 ### Additions
