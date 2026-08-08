@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TwitchPickerEmote } from "../../shared/chat";
 import type { EmoteProvider, ProviderEmote } from "../../shared/emotes";
-import { planEmoteWarmUrls } from "./emote-preload";
+import {
+  forgetWarmedEmoteImages,
+  planEmoteWarmUrls,
+  warmEmoteImages,
+} from "./emote-preload";
 
 interface EmoteOptions {
   animated?: boolean;
@@ -57,7 +61,16 @@ describe("planEmoteWarmUrls", () => {
   it("warms the size chat draws first, then the picker's larger one", () => {
     const urls = planEmoteWarmUrls({
       providerEmotes: providerEmotes([
-        ["7tv", [emote("KEKW", [[1, "one"], [2, "two"], [4, "four"]])]],
+        [
+          "7tv",
+          [
+            emote("KEKW", [
+              [1, "one"],
+              [2, "two"],
+              [4, "four"],
+            ]),
+          ],
+        ],
       ]),
       providerChannelNames: new Map(),
       platformEmotes: [],
@@ -72,7 +85,16 @@ describe("planEmoteWarmUrls", () => {
       providerEmotes: providerEmotes([
         [
           "7tv",
-          [emote("dance", [[1, "one"], [2, "two"]], { animated: true, bytes: 9 * 1024 })],
+          [
+            emote(
+              "dance",
+              [
+                [1, "one"],
+                [2, "two"],
+              ],
+              { animated: true, bytes: 9 * 1024 },
+            ),
+          ],
         ],
       ]),
       providerChannelNames: new Map(),
@@ -84,7 +106,15 @@ describe("planEmoteWarmUrls", () => {
   it("falls back to the largest variant when there is no 2x", () => {
     const urls = planEmoteWarmUrls({
       providerEmotes: providerEmotes([
-        ["7tv", [emote("KEKW", [[1, "one"], [3, "three"]])]],
+        [
+          "7tv",
+          [
+            emote("KEKW", [
+              [1, "one"],
+              [3, "three"],
+            ]),
+          ],
+        ],
       ]),
       providerChannelNames: new Map(),
       platformEmotes: [],
@@ -104,14 +134,20 @@ describe("planEmoteWarmUrls", () => {
   it("puts channel emotes ahead of global ones, across providers", () => {
     const urls = planEmoteWarmUrls({
       providerEmotes: providerEmotes([
-        ["7tv", [emote("global7", [[2, "g7"]]), emote("channel7", [[2, "c7"]])]],
+        [
+          "7tv",
+          [emote("global7", [[2, "g7"]]), emote("channel7", [[2, "c7"]])],
+        ],
         ["bttv", [emote("channelB", [[2, "cB"]])]],
       ]),
       providerChannelNames: new Map([
         ["7tv", new Set(["channel7"])],
         ["bttv", new Set(["channelB"])],
       ]),
-      platformEmotes: [platformEmote("sub", "channel"), platformEmote("Kappa", "global")],
+      platformEmotes: [
+        platformEmote("sub", "channel"),
+        platformEmote("Kappa", "global"),
+      ],
     });
     expect(urls).toEqual([
       "c7",
@@ -129,9 +165,18 @@ describe("planEmoteWarmUrls", () => {
           "7tv",
           [
             emote("still", [[2, "still-url"]], { bytes: 5 * 1024 }),
-            emote("light", [[2, "light-url"]], { animated: true, bytes: 9 * 1024 }),
-            emote("middling", [[2, "middling-url"]], { animated: true, bytes: 40 * 1024 }),
-            emote("wide", [[2, "wide-url"]], { animated: true, bytes: 900 * 1024 }),
+            emote("light", [[2, "light-url"]], {
+              animated: true,
+              bytes: 9 * 1024,
+            }),
+            emote("middling", [[2, "middling-url"]], {
+              animated: true,
+              bytes: 40 * 1024,
+            }),
+            emote("wide", [[2, "wide-url"]], {
+              animated: true,
+              bytes: 900 * 1024,
+            }),
           ],
         ],
       ]),
@@ -222,5 +267,36 @@ describe("planEmoteWarmUrls", () => {
       platformEmotes: [],
     });
     expect(urls).toEqual(["same"]);
+  });
+});
+
+describe("warmEmoteImages", () => {
+  afterEach(() => {
+    forgetWarmedEmoteImages();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("cancels a previous channel's delayed queue when the next has no emotes", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    const image = vi.fn();
+    vi.stubGlobal("Image", image);
+
+    warmEmoteImages({
+      providerEmotes: providerEmotes([
+        ["7tv", [emote("old", [[1, "old-url"]])]],
+      ]),
+      providerChannelNames: new Map(),
+      platformEmotes: [],
+    });
+    warmEmoteImages({
+      providerEmotes: new Map(),
+      providerChannelNames: new Map(),
+      platformEmotes: [],
+    });
+    vi.advanceTimersByTime(60_000);
+
+    expect(image).not.toHaveBeenCalled();
   });
 });

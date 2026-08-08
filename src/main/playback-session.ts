@@ -1,4 +1,10 @@
-import { app, BrowserWindow, safeStorage, session, type Session } from "electron";
+import {
+  app,
+  BrowserWindow,
+  safeStorage,
+  session,
+  type Session,
+} from "electron";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -79,7 +85,9 @@ export class PlaybackSessionService {
     const owner = this.getMainWindow();
     const authSession = this.twitchSession;
     if (!this.sessionConfigured) {
-      authSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+      authSession.setPermissionRequestHandler(
+        (_contents, _permission, callback) => callback(false),
+      );
       authSession.on("will-download", (event) => event.preventDefault());
       this.sessionConfigured = true;
     }
@@ -165,9 +173,11 @@ export class PlaybackSessionService {
         this.loginWindow = null;
         finish(this.getState());
       });
-      void loginWindow.loadURL("https://www.twitch.tv/login").catch((error: unknown) => {
-        fail(error);
-      });
+      void loginWindow
+        .loadURL("https://www.twitch.tv/login")
+        .catch((error: unknown) => {
+          fail(error);
+        });
     });
   }
 
@@ -177,18 +187,36 @@ export class PlaybackSessionService {
     try {
       await fs.unlink(this.storagePath);
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      if (!(
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ))
+        throw error;
     }
     await this.twitchSession.clearStorageData({
-      storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
+      storages: [
+        "cookies",
+        "localstorage",
+        "indexdb",
+        "serviceworkers",
+        "cachestorage",
+      ],
     });
-    await this.appUiSession.cookies.remove("https://www.twitch.tv", "auth-token");
+    for (const target of [
+      this.appUiSession,
+      session.fromPartition(MEDIA_UPSTREAM_PARTITION),
+    ]) {
+      await target.cookies.remove("https://www.twitch.tv", "auth-token");
+    }
     return this.getState();
   }
 
   private async acceptToken(token: string): Promise<PlaybackSessionState> {
     if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Windows protected storage is unavailable; the playback session was not saved.");
+      throw new Error(
+        "Windows protected storage is unavailable; the playback session was not saved.",
+      );
     }
     let login: string | undefined;
     try {
@@ -196,7 +224,9 @@ export class PlaybackSessionService {
         headers: { Authorization: `OAuth ${token}` },
       });
       if (response.ok) {
-        const payload = z.object({ login: z.string().optional() }).parse(await response.json());
+        const payload = z
+          .object({ login: z.string().optional() })
+          .parse(await response.json());
         login = payload.login;
       }
     } catch {

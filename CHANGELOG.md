@@ -4,6 +4,18 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Emote downloads now stop at a safe size and timeout, including across CDN
+  redirects, instead of reading an unexpectedly large or stalled response into
+  memory. Redirects are rechecked against the approved emote hosts.
+- Emptying the emote cache now cancels active downloads, and cache writes and
+  pruning are serialized so simultaneous emotes cannot corrupt its size count.
+- Switching channels no longer lets the previous channel's delayed emote warmup
+  continue or skip the new channel's startup grace period.
+- Signing out of the Twitch website session now removes its playback cookie from
+  the media relay session as well as the visible app session.
+
 ## [0.3.4-alpha.13] - 2026-08-07
 
 ### Additions

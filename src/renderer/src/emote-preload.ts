@@ -80,12 +80,14 @@ export function planEmoteWarmUrls({
   ) => {
     if (!variant?.url) return;
     const bytes =
-      variant.bytes ?? (animated ? ASSUMED_ANIMATED_BYTES : ASSUMED_STILL_BYTES);
+      variant.bytes ??
+      (animated ? ASSUMED_ANIMATED_BYTES : ASSUMED_STILL_BYTES);
     if (bytes > HEAVY_EMOTE_BYTES) return;
     into.push({ url: variant.url, bytes });
   };
   for (const [provider, emotes] of providerEmotes) {
-    const channelNames = providerChannelNames.get(provider) ?? new Set<string>();
+    const channelNames =
+      providerChannelNames.get(provider) ?? new Set<string>();
     for (const emote of emotes.values()) {
       const into = channelNames.has(emote.name) ? channel : global;
       // What chat will ask for, which is the whole point of warming.
@@ -153,6 +155,9 @@ export function holdEmoteWarming(): void {
 }
 
 function pump() {
+  // A newly selected channel keeps its full startup grace period even if an
+  // image from the previous channel finishes and calls pump in the meantime.
+  if (startTimer !== null) return;
   const quietFor = quietUntil - Date.now();
   if (quietFor > 0 && pending.length > 0) {
     if (resumeTimer === null) {
@@ -191,10 +196,16 @@ function pump() {
  * more than the ones from a channel that was left.
  */
 export function warmEmoteImages(source: EmoteWarmSource): void {
+  pending = [];
+  for (const timer of [resumeTimer, startTimer]) {
+    if (timer !== null) window.clearTimeout(timer);
+  }
+  resumeTimer = null;
+  startTimer = null;
+
   const urls = planEmoteWarmUrls(source).filter((url) => !warmedUrls.has(url));
   if (urls.length === 0) return;
   pending = urls;
-  if (startTimer !== null) window.clearTimeout(startTimer);
   // The seconds right after a channel opens are the worst possible time for
   // this: the player is filling its buffer and chat is drawing its first
   // screenful, both on the same connection. Warming waits until that has

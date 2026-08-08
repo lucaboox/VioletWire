@@ -1,12 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const electronState = vi.hoisted(() => ({ userData: "" }));
 
 vi.mock("electron", () => ({
-  app: { getPath: () => "/tmp/violetwire-test" },
+  app: { getPath: () => electronState.userData },
 }));
 
-const { allowedEmoteUrl, imageContentType, storeKeyFor } = await import(
-  "./emote-image-store"
-);
+const { allowedEmoteUrl, imageContentType, storeKeyFor } =
+  await import("./emote-image-store");
 
 describe("allowedEmoteUrl", () => {
   it("accepts the services that publish emote artwork", () => {
@@ -75,9 +79,13 @@ describe("imageContentType", () => {
     webp.write("RIFF", 0, "ascii");
     webp.write("WEBP", 8, "ascii");
     expect(imageContentType(webp)).toBe("image/webp");
-    expect(imageContentType(withHeader([0x89, 0x50, 0x4e, 0x47]))).toBe("image/png");
+    expect(imageContentType(withHeader([0x89, 0x50, 0x4e, 0x47]))).toBe(
+      "image/png",
+    );
     expect(imageContentType(ascii("GIF89a"))).toBe("image/gif");
-    expect(imageContentType(withHeader([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
+    expect(imageContentType(withHeader([0xff, 0xd8, 0xff, 0xe0]))).toBe(
+      "image/jpeg",
+    );
   });
 
   it("recognises AVIF by the brand in its ftyp box", () => {
@@ -89,7 +97,133 @@ describe("imageContentType", () => {
 
   it("refuses anything that is not an image, so an error page is never served", () => {
     expect(imageContentType(ascii("<!doctype html><html>"))).toBeNull();
-    expect(imageContentType(ascii("{\"error\":\"not found\"}"))).toBeNull();
+    expect(imageContentType(ascii('{"error":"not found"}'))).toBeNull();
     expect(imageContentType(Buffer.alloc(4))).toBeNull();
+  });
+});
+
+describe("emote image store lifecycle", () => {
+  let userData: string;
+  let store: typeof import("./emote-image-store");
+
+  const png = (length = 32): Buffer => {
+    const bytes = Buffer.alloc(length);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47]).copy(bytes);
+    return bytes;
+  };
+
+  beforeEach(async () => {
+    userData = await mkdtemp(path.join(tmpdir(), "violetwire-emotes-"));
+    electronState.userData = userData;
+    vi.resetModules();
+    store = await import("./emote-image-store");
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await rm(userData, { recursive: true, force: true });
+  });
+
+  it("downloads an image once and serves later reads from disk", async () => {
+    const bytes = png();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength,
+          ) as ArrayBuffer,
+          {
+            status: 200,
+            headers: { "content-length": String(bytes.length) },
+          },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const url = "https://cdn.7tv.app/emote/test/1x.webp";
+
+    expect(await store.readEmoteImage(url)).toMatchObject({
+      contentType: "image/png",
+    });
+    expect(await store.readEmoteImage(url)).toMatchObject({
+      contentType: "image/png",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(store.emoteStoreUsage()).resolves.toEqual({
+      bytes: bytes.length,
+      emotes: 1,
+    });
+  });
+
+  it("refuses a redirect that leaves the emote CDN allowlist", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://example.test/not-an-emote.png" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      store.readEmoteImage("https://cdn.7tv.app/emote/test/1x.webp"),
+    ).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops reading a response once it exceeds the per-image limit", async () => {
+    let chunksSent = 0;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (chunksSent === 5) {
+                controller.close();
+                return;
+              }
+              const chunk = png(1024 * 1024);
+              chunksSent += 1;
+              controller.enqueue(chunk);
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      store.readEmoteImage("https://cdn.7tv.app/emote/too-large/4x.webp"),
+    ).resolves.toBeNull();
+    await expect(store.emoteStoreUsage()).resolves.toEqual({
+      bytes: 0,
+      emotes: 0,
+    });
+  });
+
+  it("cancels active downloads and prevents them from repopulating a cleared store", async () => {
+    const fetchMock = vi.fn(
+      async (_url: URL, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = store.readEmoteImage(
+      "https://cdn.7tv.app/emote/still-loading/1x.webp",
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await store.clearEmoteStore();
+
+    await expect(pending).resolves.toBeNull();
+    await expect(store.emoteStoreUsage()).resolves.toEqual({
+      bytes: 0,
+      emotes: 0,
+    });
   });
 });
