@@ -4,6 +4,11 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Twitch messages marked as a chatter's first in the channel now show a compact
+  **New Chatter** label and subtle purple highlight in every chat layout.
+
 ### Fixes
 
 - Emote downloads now stop at a safe size and timeout, including across CDN

@@ -69,6 +69,20 @@ describe("TwitchChatService action messages", () => {
     expect(message?.action).toBeUndefined();
     expect(message?.text).toBe("hello");
   });
+
+  it("keeps Twitch's first-message marker for a new chatter", () => {
+    const service = new TwitchChatService(vi.fn(), vi.fn(), vi.fn());
+    const internals = service as unknown as TwitchChatServiceInternals;
+    const first = internals.parseMessageLine(
+      "@color=#9147FF;display-name=NewViewer;first-msg=1;id=71d6bd60-6c94-4f43-b78f-1c125fb51694 :newviewer!newviewer@newviewer.tmi.twitch.tv PRIVMSG #channel :hello chat",
+    );
+    const later = internals.parseMessageLine(
+      "@color=#9147FF;display-name=Regular;first-msg=0;id=81d6bd60-6c94-4f43-b78f-1c125fb51694 :regular!regular@regular.tmi.twitch.tv PRIVMSG #channel :hello again",
+    );
+
+    expect(first?.firstMessage).toBe(true);
+    expect(later?.firstMessage).toBeUndefined();
+  });
 });
 
 describe("TwitchChatService connection watchdog", () => {

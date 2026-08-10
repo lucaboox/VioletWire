@@ -388,6 +388,7 @@ export class TwitchChatService {
       color: /^#[0-9a-f]{6}$/i.test(tags.color ?? "") ? tags.color : "#a1a1aa",
       text,
       ...(action ? { action: true } : {}),
+      ...(tags["first-msg"] === "1" ? { firstMessage: true } : {}),
       badges: (tags.badges ?? "").split(",").filter(Boolean),
       sentAt: Number(tags["tmi-sent-ts"]) || Date.now(),
       twitchEmotes: this.parseEmotes(tags.emotes ?? ""),

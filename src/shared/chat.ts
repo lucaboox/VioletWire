@@ -68,6 +68,8 @@ export interface ChatMessage {
   pending?: boolean;
   /** IRC "/me" message: rendered in the sender's color, Twitch-style. */
   action?: boolean;
+  /** Twitch marks the user's first message in this channel with `first-msg=1`. */
+  firstMessage?: boolean;
 }
 
 export function formatChatTimestamp(sentAt: number): string {

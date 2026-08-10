@@ -243,6 +243,33 @@ input {
   background: #9147ff40;
 }
 
+.native-video-chat-message.first-message {
+  margin: 1px 0;
+  padding-left: 8px;
+  background: #7c3aed26;
+  box-shadow: inset 3px 0 0 #a970ff;
+}
+
+.native-video-chat-message.first-message:hover {
+  background: #7c3aed3d;
+}
+
+.controls-surface.oled-mode .native-video-chat-message.first-message {
+  background: #7c3aed33;
+}
+
+.native-video-chat-message .chat-new-chatter-label {
+  display: block;
+  width: max-content;
+  margin: 0 0 1px;
+  color: #d0b8ff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.35px;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
 .native-chat-reply-parent {
   display: block;
   width: 100%;

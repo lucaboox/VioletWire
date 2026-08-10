@@ -116,11 +116,15 @@ export const ChatMessageRow = memo(function ChatMessageRow({
     <div
       className={[
         "native-chat-message",
+        message.firstMessage ? "first-message" : "",
         mentioned ? "mentioned" : "",
         message.deleted && deletedMessageStyle === "dimmed" ? "deleted-dimmed" : "",
       ].filter(Boolean).join(" ")}
       data-chat-message-id={message.id}
     >
+      {message.firstMessage && (
+        <span className="chat-new-chatter-label">New Chatter</span>
+      )}
       {message.reply && (
         <button
           className="chat-reply-parent"
