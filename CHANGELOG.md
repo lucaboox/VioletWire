@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.14] - 2026-08-09
+
 ### Additions
 
 - Twitch messages marked as a chatter's first in the channel now show a compact
