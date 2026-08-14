@@ -161,6 +161,57 @@ advertisement.mp4
     }
   });
 
+  it("keeps media sequences stable when Twitch renews signed segment URLs", async () => {
+    let playlistRequest = 0;
+    const upstream = createServer((request, response) => {
+      if (request.url?.startsWith("/index.m3u8")) {
+        const generation = playlistRequest++;
+        const firstSegment = Math.min(generation, 1);
+        response.writeHead(200, {
+          "Content-Type": "application/vnd.apple.mpegurl",
+        });
+        response.end(`#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:1
+${Array.from({ length: 29 }, (_, offset) => {
+  const segment = firstSegment + offset;
+  return `#EXT-X-PROGRAM-DATE-TIME:2026-08-14T17:45:${String(segment).padStart(2, "0")}.000Z
+#EXTINF:1.000,live
+segment-${segment}.ts?signature=${generation}`;
+}).join("\n")}
+`);
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "video/mp2t" });
+      response.end("media");
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Missing test port");
+    const relay = new FilteredHlsRelay(() => "http://localhost:5173");
+
+    try {
+      const playlistUrl = await relay.start(
+        `http://127.0.0.1:${address.port}/index.m3u8`,
+      );
+      const first = await (
+        await fetch(playlistUrl, { headers: { Origin: "http://localhost:5173" } })
+      ).text();
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      const second = await (
+        await fetch(playlistUrl, { headers: { Origin: "http://localhost:5173" } })
+      ).text();
+
+      expect(first).toContain("#EXT-X-MEDIA-SEQUENCE:11");
+      expect(second).toContain("#EXT-X-MEDIA-SEQUENCE:12");
+      expect(second.match(/#EXTINF:/g)).toHaveLength(18);
+      expect(second).toContain("2026-08-14T17:45:29.000Z");
+    } finally {
+      await relay.close();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+
   it("uses Kick's player origin when fetching a Kick playlist", async () => {
     let receivedOrigin: string | undefined;
     let receivedReferer: string | undefined;

@@ -24,7 +24,7 @@ interface RelaySegment {
   sequence: number;
   duration: number;
   lines: string[];
-  sourceUri: string;
+  sourceKey: string;
   uri: string;
   prefetch: boolean;
 }
@@ -46,6 +46,7 @@ interface ParsedPlaylist {
 const PLAYLIST_CACHE_MS = 300;
 const RESOURCE_TTL_MS = 2 * 60_000;
 const MAX_RELAY_SEGMENTS = 18;
+const MAX_SEEN_SEGMENTS = 512;
 
 export function isDirectTwitchMediaUrl(rawUrl: string): boolean {
   try {
@@ -265,6 +266,21 @@ function rewriteTagUri(
     const absolute = new URL(uri, playlistUrl).toString();
     return `URI="${registerResource(absolute)}"`;
   });
+}
+
+function getSegmentKey(segment: ParsedSegment): string {
+  const byteRange = segment.tags.find((line) => line.startsWith("#EXT-X-BYTERANGE:"));
+  if (segment.date !== undefined) {
+    // Twitch's PROGRAM-DATE-TIME is stable across playlist reloads even when
+    // both the CDN path and signed query are rotated for an existing segment.
+    return `pdt:${segment.date}|${byteRange ?? ""}`;
+  }
+  const url = new URL(segment.uri);
+  // Without a program date, retain the stable CDN path while ignoring renewed
+  // query authorization for an existing segment.
+  url.search = "";
+  url.hash = "";
+  return `${url.toString()}|${byteRange ?? ""}`;
 }
 
 function writeText(
@@ -574,29 +590,35 @@ export class FilteredHlsRelay {
       );
       let filteredAd = false;
       for (const segment of parsed.segments) {
+        const segmentKey = getSegmentKey(segment);
         if (segment.ad) {
-          const existingSequence = this.segmentSequences.get(segment.uri);
+          const existingSequence = this.segmentSequences.get(segmentKey);
           if (existingSequence !== undefined) {
             const existingIndex = this.relaySegments.findIndex(
-              (candidate) => candidate.sourceUri === segment.uri,
+              (candidate) => candidate.sourceKey === segmentKey,
             );
             if (existingIndex >= 0) this.relaySegments.splice(existingIndex, 1);
-            this.segmentSequences.delete(segment.uri);
+            this.segmentSequences.delete(segmentKey);
           }
           filteredAd = true;
           this.pendingDiscontinuity = true;
           continue;
         }
-        const existingSequence = this.segmentSequences.get(segment.uri);
+        const existingSequence = this.segmentSequences.get(segmentKey);
         if (existingSequence !== undefined) {
+          const existing = this.relaySegments.find(
+            (candidate) => candidate.sourceKey === segmentKey,
+          );
+          // Keep the local media sequence stable, but use the newest signed
+          // CDN URL so a long-running session does not retain an expired URL.
+          if (existing) {
+            existing.uri = this.registerResource(segment.uri);
+          }
           // Twitch exposes an in-progress segment as PREFETCH before the same
           // URI appears as a completed EXTINF entry. Keep its local sequence
           // stable, then replace the inferred metadata with the authoritative
           // completed tags when they arrive.
           if (!segment.prefetch) {
-            const existing = this.relaySegments.find(
-              (candidate) => candidate.sourceUri === segment.uri,
-            );
             if (existing?.prefetch) {
               const completedLines = segment.tags.map((line) =>
                 rewriteTagUri(line, sourceUrl, (url) => this.registerResource(url)),
@@ -615,7 +637,7 @@ export class FilteredHlsRelay {
           continue;
         }
         const sequence = this.nextSequence++;
-        this.segmentSequences.set(segment.uri, sequence);
+        this.segmentSequences.set(segmentKey, sequence);
         const discontinuity =
           segment.discontinuity || filteredAd || this.pendingDiscontinuity;
         filteredAd = false;
@@ -628,14 +650,22 @@ export class FilteredHlsRelay {
           sequence,
           duration: segment.duration,
           lines,
-          sourceUri: segment.uri,
+          sourceKey: segmentKey,
           uri: this.registerResource(segment.uri),
           prefetch: segment.prefetch,
         });
       }
       while (this.relaySegments.length > MAX_RELAY_SEGMENTS) {
-        const removed = this.relaySegments.shift();
-        if (removed) this.segmentSequences.delete(removed.sourceUri);
+        this.relaySegments.shift();
+      }
+      // Keep recently pruned identities around. Twitch's upstream playlist can
+      // contain more entries than VioletWire's shorter relay window (notably
+      // channels using one-second fragments). Forgetting a pruned entry makes
+      // the next refresh append that old upstream segment as if it were new.
+      while (this.segmentSequences.size > MAX_SEEN_SEGMENTS) {
+        const oldestKey = this.segmentSequences.keys().next().value;
+        if (!oldestKey) break;
+        this.segmentSequences.delete(oldestKey);
       }
       this.pruneResources();
       if (this.relaySegments.length === 0) {

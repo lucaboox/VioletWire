@@ -4,6 +4,12 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Streams that publish one-second HLS fragments no longer freeze shortly after
+  starting when Twitch renews their signed segment URLs. The filtered relay now
+  keeps a stable media timeline across those playlist refreshes.
+
 ## [0.3.4-alpha.14] - 2026-08-09
 
 ### Additions
