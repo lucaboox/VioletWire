@@ -9,6 +9,8 @@ All notable changes to VioletWire are documented in this file.
 - Streams that publish one-second HLS fragments no longer freeze shortly after
   starting when Twitch renews their signed segment URLs. The filtered relay now
   keeps a stable media timeline across those playlist refreshes.
+- 7TV zero-width emotes now stack over the preceding Twitch or provider emote
+  instead of appearing beside it, including in the fullscreen chat overlay.
 
 ## [0.3.4-alpha.14] - 2026-08-09
 

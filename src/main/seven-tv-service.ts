@@ -21,7 +21,12 @@ const sevenTvFileSchema = z.object({
 const sevenTvEmoteSchema = z.object({
   id: z.string(),
   name: z.string(),
+  // Per-set flags are authoritative. Bit 0 marks this emote as zero-width in
+  // the particular set, even when its global default differs.
+  flags: z.number().int().nonnegative().optional(),
   data: z.object({
+    // 7TV's default ZERO_WIDTH emote flag is bit 8.
+    flags: z.number().int().nonnegative().optional().default(0),
     animated: z.boolean().default(false),
     host: z.object({
       url: z.string(),
@@ -211,6 +216,9 @@ export class SevenTvService {
       name: z.string(),
       provider: z.literal("7tv"),
       animated: z.boolean(),
+      // Requiring the field deliberately invalidates metadata cached by older
+      // builds, which did not retain 7TV's zero-width classification.
+      zeroWidth: z.boolean(),
       variants: z.array(variant),
     });
     return z.object({
@@ -255,6 +263,10 @@ export class SevenTvService {
       name: emote.name,
       provider: "7tv",
       animated: emote.data.animated,
+      zeroWidth:
+        emote.flags === undefined
+          ? Boolean(emote.data.flags & 256)
+          : Boolean(emote.flags & 1),
       variants,
     };
   }

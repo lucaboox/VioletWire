@@ -796,6 +796,9 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
    gap it filled. */
 .chat-emote:not(.loaded):not(.failed) { aspect-ratio: var(--emote-ratio, 1); }
 .chat-emote-hover { position: relative; display: inline-block; outline: 0; vertical-align: middle; }
+.chat-emote-zero-width { position: relative; display: inline-block; width: 0; height: var(--chat-emote-size, 27px); vertical-align: middle; }
+.chat-emote-zero-width > .chat-emote-hover,
+.chat-emote-zero-width > .chat-emote-effect { position: absolute; z-index: 1; top: 50%; right: 0; transform: translateY(-50%); }
 /* An emote that could not be fetched after retrying: the alt text is its name,
    so let it read as the word the sender typed instead of a broken picture. */
 .chat-emote.failed { height: auto; color: #d8d4e0; font-size: inherit; font-style: italic; }

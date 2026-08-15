@@ -9,7 +9,9 @@ const sevenTvPayload = {
     {
       id: "01TEST",
       name: "Wave",
+      flags: 1,
       data: {
+        flags: 256,
         animated: true,
         host: {
           url: "//cdn.7tv.app/emote/01TEST",
@@ -47,6 +49,7 @@ describe("SevenTvService", () => {
       name: "Wave",
       provider: "7tv",
       animated: true,
+      zeroWidth: true,
     });
     expect(result.emotes[0].variants).toEqual([
       {

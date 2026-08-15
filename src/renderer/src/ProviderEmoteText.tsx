@@ -22,6 +22,7 @@ interface EmoteSegment {
   kind: "emote";
   emote: ProviderEmote;
   modifiers: ProviderEmote[];
+  zeroWidth: boolean;
 }
 
 type Segment = TextSegment | EmoteSegment;
@@ -33,7 +34,7 @@ function appendText(segments: Segment[], text: string): void {
   else segments.push({ kind: "text", text });
 }
 
-function plainTextSegments(
+export function plainTextSegments(
   text: string,
   emotes: Map<string, ProviderEmote>,
 ): Segment[] {
@@ -55,6 +56,22 @@ function plainTextSegments(
     }
 
     const emote = emotes.get(token);
+    if (emote?.zeroWidth) {
+      // A zero-width emote is authored after its base emote with whitespace in
+      // between. Remove only that separating whitespace, then leave the
+      // overlay as its own zero-width inline item. Keeping it independent also
+      // lets it stack over a native Twitch emote rendered by the caller.
+      const previous = segments.at(-1);
+      if (previous?.kind === "text" && /^\s+$/.test(previous.text)) segments.pop();
+      segments.push({
+        kind: "emote",
+        emote,
+        modifiers: pendingModifiers,
+        zeroWidth: true,
+      });
+      pendingModifiers = [];
+      return;
+    }
     if (emote?.modifier) {
       const nextToken = tokens.slice(index + 1).find((item) => item && !/^\s+$/.test(item));
       const nextEmote = nextToken ? emotes.get(nextToken) : undefined;
@@ -89,7 +106,12 @@ function plainTextSegments(
     }
 
     if (emote) {
-      segments.push({ kind: "emote", emote, modifiers: pendingModifiers });
+      segments.push({
+        kind: "emote",
+        emote,
+        modifiers: pendingModifiers,
+        zeroWidth: false,
+      });
       pendingModifiers = [];
       return;
     }
@@ -163,15 +185,24 @@ export function renderProviderText(
           provider={segment.emote.provider}
         />
       );
-      return effectClasses.length > 0 ? (
+      const effected = effectClasses.length > 0 ? (
         <span
           className={`chat-emote-effect ${effectClasses.join(" ")}`}
-          key={`${key}-${contentIndex}-${segmentIndex}`}
         >
           {rendered}
         </span>
       ) : (
-        <span key={`${key}-${contentIndex}-${segmentIndex}`}>{rendered}</span>
+        rendered
+      );
+      return segment.zeroWidth ? (
+        <span
+          className="chat-emote-zero-width"
+          key={`${key}-${contentIndex}-${segmentIndex}`}
+        >
+          {effected}
+        </span>
+      ) : (
+        <span key={`${key}-${contentIndex}-${segmentIndex}`}>{effected}</span>
       );
     });
   });

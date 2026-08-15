@@ -22,6 +22,8 @@ export interface ProviderEmote {
   name: string;
   provider: EmoteProvider;
   animated: boolean;
+  /** Drawn over the preceding emote without consuming chat-line width. */
+  zeroWidth?: boolean;
   modifier?: boolean;
   modifierFlags?: number;
   variants: EmoteImageVariant[];
