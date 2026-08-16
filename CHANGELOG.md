@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.15] - 2026-08-16
+
 ### Fixes
 
 - Streams that publish one-second HLS fragments no longer freeze shortly after
