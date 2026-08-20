@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchEmoteNames } from "./emote-autocomplete";
+import { completeEmoteWord, matchEmoteNames } from "./emote-autocomplete";
 
 const names = ["KEKW", "kekwait", "PogKEKW", "LULW", "omE", "ome0", "Kappa"];
 
@@ -38,5 +38,45 @@ describe("matchEmoteNames", () => {
 
   it("returns everything for an empty word", () => {
     expect(matchEmoteNames(names, "", "prefix")).toHaveLength(names.length);
+  });
+});
+
+describe("completeEmoteWord", () => {
+  it("replaces the half-typed word with the emote's name", () => {
+    expect(completeEmoteWord("hello KEK", { start: 6, end: 9 }, "KEKW")).toEqual({
+      value: "hello KEKW",
+      caret: 10,
+      redraw: false,
+    });
+  });
+
+  it("completes a word in the middle of a message", () => {
+    expect(
+      completeEmoteWord("KEK and more", { start: 0, end: 3 }, "KEKW"),
+    ).toEqual({ value: "KEKW and more", caret: 4, redraw: false });
+  });
+
+  it("asks for a redraw when the name was already typed in full", () => {
+    // Nothing about the message changes, so nothing downstream would redraw the
+    // box and the word would stay as letters instead of becoming the emote.
+    expect(completeEmoteWord("KEKW", { start: 0, end: 4 }, "KEKW")).toEqual({
+      value: "KEKW",
+      caret: 4,
+      redraw: true,
+    });
+  });
+
+  it("still changes the message when only the capitals differ", () => {
+    expect(completeEmoteWord("kekw", { start: 0, end: 4 }, "KEKW")).toEqual({
+      value: "KEKW",
+      caret: 4,
+      redraw: false,
+    });
+  });
+
+  it("keeps what follows the word", () => {
+    expect(
+      completeEmoteWord("say KEK now", { start: 4, end: 7 }, "KEKWait"),
+    ).toEqual({ value: "say KEKWait now", caret: 11, redraw: false });
   });
 });

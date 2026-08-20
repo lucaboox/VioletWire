@@ -97,6 +97,7 @@ import {
 } from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { ChatComposerInput } from "./ChatComposerInput";
+import { fitComposerHeight } from "./composer-height";
 import { useChatFeed } from "./chat-feed";
 import { ChatSendStatus } from "./ChatSendStatus";
 import { useChatSendQueue } from "./use-chat-send-queue";
@@ -1702,12 +1703,7 @@ export function App() {
   );
 
   useEffect(() => {
-    const input = chatInputHost.current;
-    if (!input) return;
-    input.style.height = "0px";
-    const nextHeight = Math.min(Math.max(input.scrollHeight, 43), 130);
-    input.style.height = `${nextHeight}px`;
-    input.style.overflowY = input.scrollHeight > 130 ? "auto" : "hidden";
+    fitComposerHeight(chatInputHost.current);
   }, [chatInput]);
 
   useEffect(() => {

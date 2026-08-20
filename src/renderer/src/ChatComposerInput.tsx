@@ -11,7 +11,12 @@ import {
 import type { ProviderEmote } from "../../shared/emotes";
 import type { TwitchPickerEmote } from "../../shared/chat";
 import type { ChatMentionCandidate } from "../../shared/chat-content";
-import { matchEmoteNames, type EmoteMatchMode } from "./emote-autocomplete";
+import { fitComposerHeight } from "./composer-height";
+import {
+  completeEmoteWord,
+  matchEmoteNames,
+  type EmoteMatchMode,
+} from "./emote-autocomplete";
 import { emoteImageUrl } from "./emote-image-url";
 import { chatEmoteVariant } from "./emote-scale";
 
@@ -271,12 +276,18 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
           image.className = "composer-emote";
           image.dataset.emoteName = token;
           image.draggable = false;
+          // An emote arriving is what makes the line taller, and it can arrive
+          // after the box has already been sized for the word it replaced.
+          image.addEventListener("load", () => fitComposerHeight(editor), {
+            once: true,
+          });
           image.src = emote.imageUrl;
           image.title = `${token} · ${emote.provider}`;
           editor.append(image);
         }
         if (caret === null) placeCaretAtEnd(editor);
         else placeCaretAtTextOffset(editor, caret);
+        fitComposerHeight(editor);
       },
       [emoteImages],
     );
@@ -381,15 +392,26 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
         : Math.min(selectedEmote, matchingEmotes.length - 1);
       const candidate = matchingEmotes[nextIndex];
       const currentValue = readEditorText(editor);
-      const nextValue = `${currentValue.slice(0, target.start)}${candidate.name}${currentValue.slice(target.end)}`;
-      pendingCaret.current = target.start + candidate.name.length;
+      const { value, caret, redraw } = completeEmoteWord(
+        currentValue,
+        target,
+        candidate.name,
+      );
+      const nextValue = value.slice(0, maxLength);
+      pendingCaret.current = caret;
       setSelectedEmote(nextIndex);
       setEmoteCompletion({
         start: target.start,
-        end: target.start + candidate.name.length,
+        end: caret,
         query: target.query,
       });
-      onValueChange(nextValue.slice(0, maxLength));
+      onValueChange(nextValue);
+      if (redraw) {
+        // The name was already typed in full, so the message is unchanged and
+        // nothing will redraw the box. Turn the word into its emote here.
+        pendingCaret.current = undefined;
+        renderValue(editor, nextValue, caret);
+      }
     }
 
     function moveEmoteSelection(direction: number): void {

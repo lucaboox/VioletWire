@@ -59,6 +59,7 @@ import { filterChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { parseChannelKey } from "../../shared/platform";
 import { ChatComposerInput } from "./ChatComposerInput";
+import { fitComposerHeight } from "./composer-height";
 import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
 import type { ChatRestrictions } from "../../shared/chat";
 import { EmotePicker } from "./EmotePicker";
@@ -741,12 +742,7 @@ export function NativeControls({
   ]);
 
   useEffect(() => {
-    const input = chatInputHost.current;
-    if (!input) return;
-    input.style.height = "0px";
-    const nextHeight = Math.min(Math.max(input.scrollHeight, 43), 130);
-    input.style.height = `${nextHeight}px`;
-    input.style.overflowY = input.scrollHeight > 130 ? "auto" : "hidden";
+    fitComposerHeight(chatInputHost.current);
   }, [chatInput]);
 
   useEffect(() => {
