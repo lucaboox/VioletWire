@@ -4,6 +4,28 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.16] - 2026-08-21
+
+### Additions
+
+- Chatters can be blocked. A **Block** button sits on a chatter's card, and the
+  whole list lives in Chat settings, where a name can be added by hand or let
+  back in. A blocked person is hidden everywhere chat appears — the side panel,
+  the overlay over the player, chat in its own window, and every multistream
+  tab — and their messages no longer sound a mention or take up room in a busy
+  chat. The list is VioletWire's own and changes nothing on your Twitch or Kick
+  account.
+
+### Fixes
+
+- Typing an emote's name in full and pressing Tab appeared to do nothing: the
+  word stayed as letters, and the next Tab moved to a different emote rather
+  than confirming the one already typed. It now becomes the emote.
+- An emote in the message box could have a sliver cut off its top, because the
+  box was measured only when the text changed and was short by the width of its
+  own border. It now fits the emote, including when the image arrives a moment
+  after the word it replaced.
+
 ## [0.3.4-alpha.15] - 2026-08-16
 
 ### Fixes
