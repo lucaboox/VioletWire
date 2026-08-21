@@ -8,10 +8,15 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { ExternalLink, MessageSquare, X } from "lucide-react";
+import { Ban, ExternalLink, MessageSquare, Undo2, X } from "lucide-react";
 import type { ChatBadgeAsset, ChatMessage } from "../../shared/chat";
 import type { ChatUserProfile } from "../../shared/twitch";
 import { channelUrl, parseChannelKey } from "../../shared/platform";
+import {
+  blockChatter,
+  unblockChatter,
+  useBlockedChatters,
+} from "./blocked-chatters";
 import { ChatBadge } from "./ChatBadge";
 import "./chat-user-card.css";
 
@@ -146,6 +151,8 @@ export function ChatUserCard({
   }, [selected.badgeAssets, userMessages]);
   const badgeSubscription = badgeSubscriptionLabel(badgeKeys);
   const target = useMemo(() => parseChannelKey(channel), [channel]);
+  const login = (profile?.login ?? selected.login).toLowerCase();
+  const blocked = useBlockedChatters().has(login);
 
   useEffect(() => {
     let cancelled = false;
@@ -368,6 +375,28 @@ export function ChatUserCard({
         </dl>
 
         {error && <p className="chat-user-error">{error}</p>}
+
+        <div className="chat-user-actions">
+          <button
+            aria-pressed={blocked}
+            className={blocked ? "chat-user-block blocked" : "chat-user-block"}
+            onClick={() => {
+              void (blocked ? unblockChatter(login) : blockChatter(login));
+            }}
+            title={
+              blocked
+                ? `Show @${login}'s messages again`
+                : `Hide @${login}'s messages in VioletWire`
+            }
+            type="button"
+          >
+            {blocked ? <Undo2 size={14} /> : <Ban size={14} />}
+            {blocked ? "Unblock" : "Block"}
+          </button>
+          {/* Said plainly, because a viewer could reasonably expect this to
+              reach their Twitch account, and it does not. */}
+          <small>Hides their messages in VioletWire only.</small>
+        </div>
 
         <div className="chat-user-message-heading">
           <span>

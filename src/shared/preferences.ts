@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BLOCKED_CHATTER_LIMIT } from "./blocked-chatters";
 import { chatHistoryLimitSchema } from "./chat";
 import { playerModeSchema } from "./player";
 
@@ -72,6 +73,11 @@ export const appPreferencesSchema = z.object({
   emoteAutocompleteMatch: z.enum(["prefix", "substring"]),
   /** What Tab does to the highlighted name while @-mentioning someone. */
   mentionTabBehavior: z.enum(["complete", "cycle"]),
+  /**
+   * Logins whose messages chat does not show. VioletWire's own list — see
+   * `blocked-chatters` for why the hiding cannot be left to either service.
+   */
+  blockedChatUsers: z.array(z.string().max(40)).max(BLOCKED_CHATTER_LIMIT),
 });
 
 export const appPreferencesPatchSchema = appPreferencesSchema.partial().strict();
@@ -126,6 +132,7 @@ export const defaultAppPreferences: AppPreferences = {
   emoteSearchAllProviders: false,
   emoteAutocompleteMatch: "prefix",
   mentionTabBehavior: "complete",
+  blockedChatUsers: [],
 };
 
 export interface PreferencesApi {

@@ -1,0 +1,99 @@
+.blocked-chatters {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.blocked-chatters-add {
+  display: flex;
+  gap: 8px;
+}
+
+.blocked-chatters-add input {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  border: 1px solid #3a3a44;
+  border-radius: 7px;
+  color: #f4f4f5;
+  background: #0e0e10;
+  font: inherit;
+  font-size: 13px;
+}
+
+.blocked-chatters-add input:focus {
+  border-color: #8b5cf6;
+  outline: 0;
+}
+
+.blocked-chatters-add button {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.blocked-chatters-add button:disabled {
+  cursor: default;
+  opacity: .5;
+}
+
+.blocked-chatters-empty {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: #8f8a97;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.blocked-chatters-list {
+  display: flex;
+  max-height: 220px;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.blocked-chatters-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid #46414f;
+  border-radius: 999px;
+  background: #23202a;
+  font-size: 12px;
+}
+
+.blocked-chatters-list li > span {
+  max-width: 190px;
+  overflow: hidden;
+  color: #e8e4ee;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.blocked-chatters-list li > button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  /* Without this the button keeps the border every button is given by default,
+     which the rounding turns into a ring drawn around the cross. */
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #b3adbd;
+  background: transparent;
+  cursor: pointer;
+}
+
+.blocked-chatters-list li > button:hover {
+  color: #fff;
+  background: #6f3050;
+}

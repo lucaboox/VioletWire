@@ -96,6 +96,8 @@ import {
   parseChangelog,
 } from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
+import { isChatterBlocked, useBlockedChatters } from "./blocked-chatters";
+import { BlockedChattersSettings } from "./BlockedChattersSettings";
 import { ChatComposerInput } from "./ChatComposerInput";
 import { fitComposerHeight } from "./composer-height";
 import { useChatFeed } from "./chat-feed";
@@ -405,6 +407,12 @@ const settingsSearchEntries: {
     title: "Chat timestamps",
     description: "Show the sent time beside chat messages.",
     keywords: "time messages",
+  },
+  {
+    section: "chat",
+    title: "Blocked chatters",
+    description: "Hide a viewer's messages everywhere chat appears.",
+    keywords: "block ignore mute hide user unblock blocklist",
   },
   {
     section: "chat",
@@ -961,11 +969,17 @@ export function App() {
     };
   }, [authState.status, chatBroadcasterId, chatChannel]);
 
-  const multiDisplayMessages = useMemo(
-    () =>
-      effectiveMultiChatChannel ? (multiChatBuffers.get(effectiveMultiChatChannel) ?? []) : [],
-    [effectiveMultiChatChannel, multiChatBuffers],
-  );
+  // Multistream keeps a buffer per tab rather than going through the chat feed
+  // engine, so the blocked list is applied to it here as well.
+  const blockedChatters = useBlockedChatters();
+  const multiDisplayMessages = useMemo(() => {
+    const buffered = effectiveMultiChatChannel
+      ? (multiChatBuffers.get(effectiveMultiChatChannel) ?? [])
+      : [];
+    return blockedChatters.size === 0
+      ? buffered
+      : buffered.filter((message) => !isChatterBlocked(message.login));
+  }, [blockedChatters, effectiveMultiChatChannel, multiChatBuffers]);
   const chatProviderEmotes = useMemo(() => {
     const combined = new Map<string, ProviderEmote>();
     // Channel sets win over global sets in each service; provider priority
@@ -6549,6 +6563,24 @@ export function App() {
                           <input aria-label="Chat overlay opacity" max="100" min="25" onChange={(event) => setChatOpacity(Number(event.target.value))} type="range" value={chatOpacity} />
                         </span>
                       </label>
+                    </div>
+                    <div className="settings-card settings-card-stack">
+                      <div className="settings-card-row">
+                        <div>
+                          <strong>Blocked chatters</strong>
+                          <span>
+                            Their messages are hidden everywhere chat appears.
+                            This list is VioletWire's own — it changes nothing on
+                            your Twitch or Kick account.
+                          </span>
+                        </div>
+                        <span className="status-pill">
+                          {blockedChatters.size === 0
+                            ? "None blocked"
+                            : `${blockedChatters.size} blocked`}
+                        </span>
+                      </div>
+                      <BlockedChattersSettings />
                     </div>
                   </section>
                 )}

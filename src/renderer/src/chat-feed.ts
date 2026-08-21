@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { MutableRefObject, RefObject } from "react";
 import type { ChatMessage } from "../../shared/chat";
 import {
@@ -11,6 +18,7 @@ import {
   CHAT_PAUSED_HARD_LIMIT,
   CHAT_PAUSED_TRIM_TO,
 } from "../../shared/chat-messages";
+import { isChatterBlocked, useBlockedChatters } from "./blocked-chatters";
 import {
   captureChatScrollAnchor,
   restoreChatScrollAnchor,
@@ -122,12 +130,27 @@ export function useChatFeed(
   useEffect(() => {
     channelRef.current = channelKey;
   }, [channelKey]);
-  const recentChatters =
-    recentChatterState.channel === channelKey
-      ? recentChatterState.items
-      : channelKey
-        ? (recentChattersByChannel.get(channelKey)?.allNewestFirst() ?? [])
-        : [];
+  const blockedChatters = useBlockedChatters();
+  // Blocking somebody takes away what they have already said as well, so it is
+  // applied again here rather than only to messages still to come.
+  const visibleMessages = useMemo(
+    () =>
+      blockedChatters.size === 0
+        ? messages
+        : messages.filter((message) => !isChatterBlocked(message.login)),
+    [blockedChatters, messages],
+  );
+  const recentChatters = useMemo(() => {
+    const known =
+      recentChatterState.channel === channelKey
+        ? recentChatterState.items
+        : channelKey
+          ? (recentChattersByChannel.get(channelKey)?.allNewestFirst() ?? [])
+          : [];
+    return blockedChatters.size === 0
+      ? known
+      : known.filter((chatter) => !isChatterBlocked(chatter.login));
+  }, [blockedChatters, channelKey, recentChatterState]);
 
   const flushBatch = useCallback(() => {
     if (batchTimer.current !== null) {
@@ -180,6 +203,10 @@ export function useChatFeed(
 
   useEffect(() => {
     const removeListener = window.desktop.chat.onMessage((message) => {
+      // A blocked chatter is dropped on arrival, so their messages never take a
+      // place in the buffer, never sound a mention, and never push somebody
+      // else's message out of a busy chat.
+      if (isChatterBlocked(message.login)) return;
       if (message.deleted) {
         setRevealedDeleted((revealed) => {
           if (!revealed.has(message.id)) return revealed;
@@ -303,7 +330,7 @@ export function useChatFeed(
   }, []);
 
   return {
-    messages,
+    messages: visibleMessages,
     recentChatters,
     autoScroll,
     pausedNewCount,
