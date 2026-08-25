@@ -4,13 +4,36 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.17] - 2026-08-24
+
+### Additions
+
+- Twitch subscriber GIFs now appear directly in chat as bounded, lazy-loaded
+  media with a readable text fallback. Chat settings can turn them off without
+  hiding the message that carried them.
+
+### Improvements
+
+- Kick sign-in now waits until both the account and chat-writing session are
+  ready, so an account is not shown as connected while sending is unavailable.
+- Kick authentication checks distinguish an expired login from a temporary
+  service or network outage, avoiding false sign-outs when Kick cannot be
+  reached.
+
 ### Fixes
 
+- Signing out of Kick now removes the complete isolated Kick and Kick Identity
+  session, so restarting VioletWire cannot silently sign the account back in.
+- Expired Kick sessions are cleared with a startup warning, and trying to send
+  while signed out reports the problem immediately instead of waiting on a
+  hidden session-repair attempt.
 - Country flag emoji now display as flags in the emoji picker, message box,
   regular chat, and fullscreen chat overlay instead of Windows showing their
   two-letter regional codes.
 - Hovering a live stream card now reveals its complete stream title rather than
   only saying which channel the card opens.
+- Twitch emotes and subscriber GIFs no longer shift onto the wrong text when a
+  reply mention is hidden after Unicode emoji earlier in the message.
 
 ## [0.3.4-alpha.16] - 2026-08-21
 
