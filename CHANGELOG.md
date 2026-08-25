@@ -4,6 +4,16 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.18] - 2026-08-24
+
+### Fixes
+
+- Kick sign-in through Google and other social providers now returns through
+  Kick correctly, allowing VioletWire to recognize the completed login.
+- Kick chat messages and username-color changes now use Kick's current
+  bearer-and-session authentication flow instead of rejecting a valid account
+  because an obsolete XSRF cookie is absent.
+
 ## [0.3.4-alpha.17] - 2026-08-24
 
 ### Additions
