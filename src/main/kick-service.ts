@@ -876,8 +876,7 @@ export class KickService {
     return { items, cursor: next && items.length > 0 ? next : undefined };
   }
 
-  /** The signed-in Kick account, or null when signed out. */
-  async getUser(): Promise<KickUser | null> {
+  private async requestUser(): Promise<KickUser | null> {
     const payload = await this.requestJson("/api/v1/user");
     // Signed out this route answers 200 with an empty array, so the shape
     // itself is the signal rather than the status code.
@@ -888,6 +887,16 @@ export class KickService {
       username: parsed.data.username,
       profileImageUrl: parsed.data.profile_pic ?? "",
     };
+  }
+
+  /**
+   * The usable signed-in Kick account. A read-only website identity without
+   * chat-write cookies is treated as signed out so the renderer never offers a
+   * composer that can only fail later.
+   */
+  async getUser(): Promise<KickUser | null> {
+    if ((await this.readWriteCredentials()) === null) return null;
+    return this.requestUser();
   }
 
   /**
@@ -987,7 +996,7 @@ export class KickService {
   }
 
   async updateChatColor(color: string): Promise<KickChatColorState> {
-    const credentials = await this.repairWriteCredentials();
+    const credentials = await this.readWriteCredentials();
     if (credentials === null) throw new Error("Sign in to Kick to change your color.");
 
     const path = "/api/internal/v1/chatroom/identity";
@@ -1161,7 +1170,7 @@ export class KickService {
     content: string,
     replyTarget?: KickChatReplyTarget,
   ): Promise<void> {
-    const credentials = await this.repairWriteCredentials();
+    const credentials = await this.readWriteCredentials();
     if (credentials === null) throw new Error("Not signed in to Kick.");
 
     const response = await this.kickSession().fetch(
@@ -1391,7 +1400,7 @@ export class KickService {
   }
 
   private async refreshWriteCredentials(): Promise<KickWriteCredentials | null> {
-    if ((await this.getUser()) === null) return null;
+    if ((await this.requestUser()) === null) return null;
 
     const window = new BrowserWindow({
       show: false,
@@ -1565,7 +1574,7 @@ export class KickService {
       // the read-only account endpoint answers: chat sends also require the
       // kick.com bearer and CSRF cookies, which can arrive slightly later.
       const poll = setInterval(() => {
-        void Promise.all([this.getUser(), this.readWriteCredentials()]).then(
+        void Promise.all([this.requestUser(), this.readWriteCredentials()]).then(
           ([user, credentials]) => {
             if (user === null) return;
             if (credentials !== null) {
@@ -1585,7 +1594,7 @@ export class KickService {
 
       window.on("closed", () => {
         // Closing the window without signing in is a cancellation, not an error.
-        void Promise.all([this.getUser(), this.readWriteCredentials()]).then(
+        void Promise.all([this.requestUser(), this.readWriteCredentials()]).then(
           ([user, credentials]) => finish(credentials === null ? null : user),
         );
       });
