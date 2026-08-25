@@ -2192,12 +2192,20 @@ export function App() {
 
     const load = () => {
       void window.desktop.kick
-        .getUser()
-        .then((account) => {
+        .getAuthState()
+        .then(async (state) => {
           if (cancelled) return;
+          if (state.status === "unavailable") return;
+          const account = state.account;
           setKickAccount(account);
           if (account === null) {
             setKickFollowedChannels([]);
+            if (state.reason === "expired") {
+              await window.desktop.kick.signOut();
+              if (!cancelled) {
+                setNotice("Your Kick session expired. Sign in again to use account features.");
+              }
+            }
             return;
           }
           if (platformFilter === "twitch") return;

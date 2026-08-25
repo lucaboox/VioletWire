@@ -15,6 +15,7 @@ import type {
   KickChannelDetails,
   KickChannelResult,
   KickEmoteGroup,
+  KickApi,
   KickUserAccount,
 } from "../shared/platform";
 import type { EmoteApi } from "../shared/emotes";
@@ -82,6 +83,8 @@ const api: DesktopApi = {
     getChannel: (slug: string): Promise<KickChannelDetails | null> =>
       ipcRenderer.invoke("kick:get-channel", slug),
     getUser: (): Promise<KickUserAccount | null> => ipcRenderer.invoke("kick:get-user"),
+    getAuthState: (): ReturnType<KickApi["getAuthState"]> =>
+      ipcRenderer.invoke("kick:get-auth-state"),
     signIn: (): Promise<KickUserAccount | null> => ipcRenderer.invoke("kick:sign-in"),
     signOut: (): Promise<void> => ipcRenderer.invoke("kick:sign-out"),
     getFollowedChannels: (): Promise<KickChannelDetails[]> =>

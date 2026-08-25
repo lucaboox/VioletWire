@@ -152,6 +152,11 @@ export interface KickEmoteGroup {
   emotes: KickEmoteAsset[];
 }
 
+export type KickAuthState =
+  | { status: "signed-in"; account: KickUserAccount }
+  | { status: "signed-out"; account: null; reason?: "expired" }
+  | { status: "unavailable"; account: null };
+
 export interface KickChatColorState {
   color: string;
   canUpdate: boolean;
@@ -161,6 +166,7 @@ export interface KickApi {
   search(query: string): Promise<KickChannelResult[]>;
   getChannel(slug: string): Promise<KickChannelDetails | null>;
   getUser(): Promise<KickUserAccount | null>;
+  getAuthState(): Promise<KickAuthState>;
   signIn(): Promise<KickUserAccount | null>;
   signOut(): Promise<void>;
   getFollowedChannels(): Promise<KickChannelDetails[]>;

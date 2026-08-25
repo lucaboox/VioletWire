@@ -54,6 +54,44 @@ describe("KickService authentication", () => {
     expect(electronState.fetch).not.toHaveBeenCalled();
   });
 
+  it("reports a server-rejected stored session as expired", async () => {
+    electronState.cookiesGet.mockImplementation(async () => [{ value: "test" }]);
+    electronState.fetch.mockResolvedValue(new Response(null, { status: 401 }));
+    const service = new KickService();
+
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "signed-out",
+      account: null,
+      reason: "expired",
+    });
+  });
+
+  it("reports a partially expired local session without waiting on Kick", async () => {
+    electronState.cookiesGet.mockImplementation(
+      async (filter: { name?: string }) =>
+        filter.name === "session_token" ? [{ value: "test" }] : [],
+    );
+    const service = new KickService();
+
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "signed-out",
+      account: null,
+      reason: "expired",
+    });
+    expect(electronState.fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not call a temporary Kick outage an expired session", async () => {
+    electronState.cookiesGet.mockImplementation(async () => [{ value: "test" }]);
+    electronState.fetch.mockRejectedValue(new Error("offline"));
+    const service = new KickService();
+
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "unavailable",
+      account: null,
+    });
+  });
+
   it("rejects a chat send immediately when write credentials are absent", async () => {
     const service = new KickService();
 

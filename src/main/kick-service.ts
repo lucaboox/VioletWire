@@ -7,7 +7,7 @@ import type {
   ChatUserProfile,
   TwitchPinnedChatMessage,
 } from "../shared/twitch";
-import type { KickChatColorState } from "../shared/platform";
+import type { KickAuthState, KickChatColorState } from "../shared/platform";
 
 /**
  * Kick's public API does not expose enough to run a viewer: there is no
@@ -878,6 +878,10 @@ export class KickService {
 
   private async requestUser(): Promise<KickUser | null> {
     const payload = await this.requestJson("/api/v1/user");
+    return this.parseUser(payload);
+  }
+
+  private parseUser(payload: unknown): KickUser | null {
     // Signed out this route answers 200 with an empty array, so the shape
     // itself is the signal rather than the status code.
     const parsed = kickUserSchema.safeParse(payload);
@@ -897,6 +901,49 @@ export class KickService {
   async getUser(): Promise<KickUser | null> {
     if ((await this.readWriteCredentials()) === null) return null;
     return this.requestUser();
+  }
+
+  /**
+   * Checks a stored login without confusing a network/Kick outage with an
+   * expired account. The renderer uses the reason once at startup, then clears
+   * the rejected local session so the warning cannot repeat every minute.
+   */
+  async getAuthState(): Promise<KickAuthState> {
+    const [bearer, xsrf] = await Promise.all([
+      this.readSessionToken(),
+      this.readXsrfToken(),
+    ]);
+    if (bearer === null && xsrf === null) {
+      return { status: "signed-out", account: null };
+    }
+    if (bearer === null || xsrf === null) {
+      return { status: "signed-out", account: null, reason: "expired" };
+    }
+
+    try {
+      const response = await this.kickSession().fetch(`${KICK_ORIGIN}/api/v1/user`, {
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          "Accept-Language": "en-US,en;q=0.9",
+          "User-Agent": this.userAgent(),
+          Referer: `${KICK_ORIGIN}/`,
+          Authorization: `Bearer ${bearer}`,
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (response.status === 401) {
+        return { status: "signed-out", account: null, reason: "expired" };
+      }
+      // A 403 can be Kick's edge challenge rather than an invalid account.
+      if (!response.ok) return { status: "unavailable", account: null };
+
+      const account = this.parseUser(await response.json());
+      return account === null
+        ? { status: "signed-out", account: null, reason: "expired" }
+        : { status: "signed-in", account };
+    } catch {
+      return { status: "unavailable", account: null };
+    }
   }
 
   /**

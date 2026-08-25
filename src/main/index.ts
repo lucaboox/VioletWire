@@ -1272,6 +1272,7 @@ handleTrusted(
   },
 );
 handleTrusted("kick:get-user", () => kickService.getUser());
+handleTrusted("kick:get-auth-state", () => kickService.getAuthState());
 handleTrusted("kick:sign-in", () => kickService.signIn());
 handleTrusted("kick:sign-out", () => kickService.signOut());
 handleTrusted("kick:get-followed", () => kickService.getFollowedChannels());
