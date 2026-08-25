@@ -763,6 +763,8 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .oled-mode .native-chat-message.first-message:hover { background: #7c3aed40; }
 .chat-new-chatter-label { display: block; width: max-content; margin: 0 0 1px; color: #c4a7ff; font-size: 10px; font-weight: 800; letter-spacing: .35px; line-height: 1.35; text-transform: uppercase; }
 .chat-text-mention { font-weight: 750; }
+.unicode-country-flag { overflow: hidden; border-radius: 2px; box-shadow: 0 0 0 1px #ffffff1c; }
+.chat-country-flag { height: .92em; margin: 0 1px; vertical-align: -.05em; }
 .native-chat-message strong { font-weight: 750; }
 .chat-reply-parent { display: block; width: 100%; overflow: hidden; margin: 2px 0 4px; padding: 0 0 0 8px; border: 0; border-left: 2px solid #8b5cf6; color: #aaaab4; background: transparent; cursor: pointer; font: inherit; font-size: 12px; line-height: 18px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .chat-reply-parent:hover { color: #ded5e9; background: #ffffff08; }
@@ -851,6 +853,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-composer-editor[data-empty="true"]::before { color: #92929d; content: attr(data-placeholder); pointer-events: none; }
 .chat-composer-editor[aria-disabled="true"] { cursor: default; opacity: .65; }
 .chat-composer-editor .composer-emote { display: inline-block; width: auto; height: var(--chat-emote-size, 27px); max-width: calc(var(--chat-emote-size, 27px) * 6); margin: 1px; vertical-align: middle; object-fit: contain; }
+.chat-composer-editor .composer-country-flag { height: 1em; margin: 0 2px; vertical-align: -.05em; }
 .native-chat-input textarea { display: block; width: 100%; min-width: 0; min-height: 43px; max-height: 130px; padding: 10px 53px 9px 11px; border: 2px solid #45454d; border-radius: 8px; outline: 0; resize: none; color: #f4f4f5; background: #0e0e10; font: inherit; font-size: 13px; line-height: 19px; overflow-wrap: anywhere; transition: border-color 120ms ease; }
 .native-chat-input .emote-aware-input textarea { background: transparent; }
 .native-chat-input textarea:focus { border-color: #8b5cf6; }

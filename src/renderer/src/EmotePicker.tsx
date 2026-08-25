@@ -33,6 +33,7 @@ import {
 } from "./ProviderLogo";
 import { emoteImageUrl } from "./emote-image-url";
 import { pickerEmoteVariant } from "./emote-scale";
+import { CountryFlagEmoji } from "./CountryFlagEmoji";
 import {
   loadedUnicodeEmoji,
   preloadUnicodeEmoji,
@@ -781,7 +782,7 @@ export function EmotePicker({
                           <small>{emote.name}</small>
                         </span>
                       ) : emote.unicode ? (
-                        <span aria-hidden="true" className="native-emoji">{emote.unicode}</span>
+                        <CountryFlagEmoji className="native-emoji" unicode={emote.unicode} />
                       ) : (
                         <img
                           alt=""

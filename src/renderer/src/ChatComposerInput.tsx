@@ -19,6 +19,7 @@ import {
 } from "./emote-autocomplete";
 import { emoteImageUrl } from "./emote-image-url";
 import { chatEmoteVariant } from "./emote-scale";
+import { splitCountryFlagText } from "./country-flag";
 
 interface ChatComposerInputProps {
   "aria-label": string;
@@ -53,6 +54,7 @@ function readEditorText(editor: HTMLElement): string {
     // read as empty, which is what sending and copying saw.
     if (node.nodeType === 1 /* Node.ELEMENT_NODE */) {
       const element = node as HTMLElement;
+      if (element.dataset.emojiUnicode) return element.dataset.emojiUnicode;
       if (element.tagName === "IMG") return element.dataset.emoteName ?? "";
       if (element.tagName === "BR") return "\n";
     }
@@ -97,6 +99,19 @@ function placeCaretAtTextOffset(editor: HTMLElement, offset: number): void {
     }
     if (node.nodeType === 1 /* Node.ELEMENT_NODE */) {
       const element = node as HTMLElement;
+      if (element.dataset.emojiUnicode) {
+        const length = element.dataset.emojiUnicode.length;
+        if (remaining < length) {
+          range.setStartBefore(element);
+          return true;
+        }
+        if (remaining === length) {
+          range.setStartAfter(element);
+          return true;
+        }
+        remaining -= length;
+        return false;
+      }
       if (element.tagName === "IMG") {
         // Nothing sits inside an emote, so a caret landing within its name
         // belongs against whichever edge it is nearer.
@@ -265,25 +280,37 @@ export const ChatComposerInput = forwardRef<HTMLDivElement, ChatComposerInputPro
         // the box is told, so it says where the caret belongs itself.
         const caret = caretOffset ?? getCaretTextOffset(editor);
         editor.replaceChildren();
-        for (const token of nextValue.split(/(\s+)/)) {
-          const emote = emoteImages.get(token);
-          if (!emote) {
-            editor.append(root.createTextNode(token));
+        for (const part of splitCountryFlagText(nextValue)) {
+          if (part.kind === "flag" && part.countryCode) {
+            const flag = root.createElement("span");
+            flag.ariaLabel = `${part.countryCode.toUpperCase()} flag`;
+            flag.className = `fi fi-${part.countryCode} unicode-country-flag composer-country-flag`;
+            flag.contentEditable = "false";
+            flag.dataset.emojiUnicode = part.text;
+            flag.setAttribute("role", "img");
+            editor.append(flag);
             continue;
           }
-          const image = root.createElement("img");
-          image.alt = token;
-          image.className = "composer-emote";
-          image.dataset.emoteName = token;
-          image.draggable = false;
-          // An emote arriving is what makes the line taller, and it can arrive
-          // after the box has already been sized for the word it replaced.
-          image.addEventListener("load", () => fitComposerHeight(editor), {
-            once: true,
-          });
-          image.src = emote.imageUrl;
-          image.title = `${token} · ${emote.provider}`;
-          editor.append(image);
+          for (const token of part.text.split(/(\s+)/)) {
+            const emote = emoteImages.get(token);
+            if (!emote) {
+              editor.append(root.createTextNode(token));
+              continue;
+            }
+            const image = root.createElement("img");
+            image.alt = token;
+            image.className = "composer-emote";
+            image.dataset.emoteName = token;
+            image.draggable = false;
+            // An emote arriving is what makes the line taller, and it can arrive
+            // after the box has already been sized for the word it replaced.
+            image.addEventListener("load", () => fitComposerHeight(editor), {
+              once: true,
+            });
+            image.src = emote.imageUrl;
+            image.title = `${token} · ${emote.provider}`;
+            editor.append(image);
+          }
         }
         if (caret === null) placeCaretAtEnd(editor);
         else placeCaretAtTextOffset(editor, caret);

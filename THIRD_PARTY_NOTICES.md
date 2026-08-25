@@ -48,6 +48,15 @@ VioletWire uses hls.js to play Streamlink-resolved HLS streams through
 Chromium's Media Source Extensions pipeline. The bundled package retains its
 license and copyright notice.
 
+## flag-icons
+
+Project: <https://github.com/lipis/flag-icons>
+
+License: MIT
+
+VioletWire uses the bundled flag-icons SVG artwork to display country flag
+emoji on Windows, which otherwise renders regional indicators as letters.
+
 ## npm and Electron dependencies
 
 The packaged application includes production dependencies declared in

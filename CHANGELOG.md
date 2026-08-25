@@ -4,6 +4,14 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Country flag emoji now display as flags in the emoji picker, message box,
+  regular chat, and fullscreen chat overlay instead of Windows showing their
+  two-letter regional codes.
+- Hovering a live stream card now reveals its complete stream title rather than
+  only saying which channel the card opens.
+
 ## [0.3.4-alpha.16] - 2026-08-21
 
 ### Additions

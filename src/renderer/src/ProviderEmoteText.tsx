@@ -8,6 +8,7 @@ import {
 import { ChatEmote } from "./ChatEmote";
 import { emoteImageUrl } from "./emote-image-url";
 import { chatEmoteVariant } from "./emote-scale";
+import { CountryFlagText } from "./CountryFlagEmoji";
 import {
   getEmoteEffectClasses,
   isPrefixEmoteModifier,
@@ -168,7 +169,10 @@ export function renderProviderText(
               {token.text}
             </strong>
           ) : (
-            token.text
+            <CountryFlagText
+              key={`${key}-${contentIndex}-${segmentIndex}-text-${tokenIndex}`}
+              text={token.text}
+            />
           ),
         );
       }

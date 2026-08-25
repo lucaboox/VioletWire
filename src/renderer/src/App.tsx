@@ -5321,7 +5321,7 @@ export function App() {
                             : undefined
                         }
                         onMouseLeave={browsePlatform === "twitch" ? cancelPreresolve : undefined}
-                        title={`Watch ${stream.displayName}`}
+                        title={stream.title || `Watch ${stream.displayName}`}
                         type="button"
                       >
                         <span className="stream-card-media">
@@ -5944,7 +5944,7 @@ export function App() {
                     onClick={() => void watchChannel(channel.login, channel)}
                     onMouseEnter={() => schedulePreresolve(channel.login)}
                     onMouseLeave={cancelPreresolve}
-                    title={`Watch ${channel.displayName}`}
+                    title={channel.title || `Watch ${channel.displayName}`}
                     type="button"
                   >
                     <span className="stream-card-media">
