@@ -48,6 +48,11 @@ const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type UnknownRecord = Record<string, unknown>;
 
+interface KickWriteCredentials {
+  bearer: string;
+  xsrf: string;
+}
+
 function record(value: unknown): UnknownRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as UnknownRecord)
@@ -534,6 +539,8 @@ export class KickService {
   private sessionRequest: Promise<string | null> | null = null;
   private challengeFailedAt = 0;
   private loginWindow: BrowserWindow | null = null;
+  private writeCredentialRepairRequest: Promise<KickWriteCredentials | null> | null = null;
+  private writeCredentialRepairWindow: BrowserWindow | null = null;
   private readonly detailCache = new Map<
     string,
     { expiresAt: number; thumbnailUrl?: string; startedAt?: string }
@@ -980,9 +987,8 @@ export class KickService {
   }
 
   async updateChatColor(color: string): Promise<KickChatColorState> {
-    const token = await this.readXsrfToken();
-    const bearer = await this.readSessionToken();
-    if (token === null || bearer === null) throw new Error("Sign in to Kick to change your color.");
+    const credentials = await this.repairWriteCredentials();
+    if (credentials === null) throw new Error("Sign in to Kick to change your color.");
 
     const path = "/api/internal/v1/chatroom/identity";
     const body = { color };
@@ -993,15 +999,15 @@ export class KickService {
         "Content-Type": "application/json",
         "User-Agent": this.userAgent(),
         Referer: `${KICK_ORIGIN}/`,
-        "X-XSRF-TOKEN": token,
-        Authorization: `Bearer ${bearer}`,
+        "X-XSRF-TOKEN": credentials.xsrf,
+        Authorization: `Bearer ${credentials.bearer}`,
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     let status = response.status;
     if (status === 401 || status === 403 || status === 419) {
-      status = await this.pageFetch(path, "PUT", bearer, body);
+      status = await this.pageFetch(path, "PUT", credentials.bearer, body);
     }
     if (status === 401 || status === 403 || status === 419) {
       throw new Error("Kick rejected the session. Sign in again.");
@@ -1155,9 +1161,8 @@ export class KickService {
     content: string,
     replyTarget?: KickChatReplyTarget,
   ): Promise<void> {
-    const token = await this.readXsrfToken();
-    const bearer = await this.readSessionToken();
-    if (token === null || bearer === null) throw new Error("Not signed in to Kick.");
+    const credentials = await this.repairWriteCredentials();
+    if (credentials === null) throw new Error("Not signed in to Kick.");
 
     const response = await this.kickSession().fetch(
       `${KICK_ORIGIN}/api/v2/messages/send/${encodeURIComponent(chatroomId)}`,
@@ -1168,8 +1173,8 @@ export class KickService {
           "Content-Type": "application/json",
           "User-Agent": this.userAgent(),
           Referer: `${KICK_ORIGIN}/`,
-          "X-XSRF-TOKEN": token,
-          Authorization: `Bearer ${bearer}`,
+          "X-XSRF-TOKEN": credentials.xsrf,
+          Authorization: `Bearer ${credentials.bearer}`,
         },
         body: JSON.stringify(
           replyTarget
@@ -1361,6 +1366,67 @@ export class KickService {
     return parsed.data.data?.messages ?? [];
   }
 
+  private async readWriteCredentials(): Promise<KickWriteCredentials | null> {
+    const [bearer, xsrf] = await Promise.all([
+      this.readSessionToken(),
+      this.readXsrfToken(),
+    ]);
+    return bearer === null || xsrf === null ? null : { bearer, xsrf };
+  }
+
+  /**
+   * A completed id.kick.com login can briefly exist before kick.com has
+   * initialized its own bearer and CSRF cookies. Visiting the site in the same
+   * isolated partition finishes that hand-off without exposing either token to
+   * the renderer. This is only attempted for an account the user endpoint
+   * already recognizes, so an anonymous send does not open a hidden login.
+   */
+  private async repairWriteCredentials(): Promise<KickWriteCredentials | null> {
+    const existing = await this.readWriteCredentials();
+    if (existing !== null) return existing;
+    this.writeCredentialRepairRequest ??= this.refreshWriteCredentials().finally(() => {
+      this.writeCredentialRepairRequest = null;
+    });
+    return this.writeCredentialRepairRequest;
+  }
+
+  private async refreshWriteCredentials(): Promise<KickWriteCredentials | null> {
+    if ((await this.getUser()) === null) return null;
+
+    const window = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        partition: KICK_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        images: false,
+      },
+    });
+    this.writeCredentialRepairWindow = window;
+    window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+    try {
+      await Promise.race([
+        window.loadURL(`${KICK_ORIGIN}/`),
+        new Promise((resolve) => setTimeout(resolve, CHALLENGE_TIMEOUT_MS)),
+      ]);
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const credentials = await this.readWriteCredentials();
+        if (credentials !== null) return credentials;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      if (!window.isDestroyed()) window.destroy();
+      if (this.writeCredentialRepairWindow === window) {
+        this.writeCredentialRepairWindow = null;
+      }
+    }
+  }
+
   /**
    * Kick includes the current pin beside its recent-message response. This is
    * an undocumented website surface, so malformed or changed payloads degrade
@@ -1485,6 +1551,7 @@ export class KickService {
 
     return new Promise<KickUser | null>((resolve) => {
       let settled = false;
+      let repairingCredentials = false;
       const finish = (user: KickUser | null) => {
         if (settled) return;
         settled = true;
@@ -1494,31 +1561,59 @@ export class KickService {
         resolve(user);
       };
 
-      // Kick's sign-in has no redirect to intercept, so completion is detected
-      // by the account endpoint starting to answer.
+      // Kick's sign-in has no redirect to intercept. Do not finish merely when
+      // the read-only account endpoint answers: chat sends also require the
+      // kick.com bearer and CSRF cookies, which can arrive slightly later.
       const poll = setInterval(() => {
-        void this.getUser().then((user) => {
-          if (user !== null) finish(user);
-        });
+        void Promise.all([this.getUser(), this.readWriteCredentials()]).then(
+          ([user, credentials]) => {
+            if (user === null) return;
+            if (credentials !== null) {
+              finish(user);
+              return;
+            }
+            if (repairingCredentials) return;
+            repairingCredentials = true;
+            void this.repairWriteCredentials().then((repaired) => {
+              repairingCredentials = false;
+              if (repaired !== null) finish(user);
+            });
+          },
+        );
       }, 1_500);
       poll.unref();
 
       window.on("closed", () => {
         // Closing the window without signing in is a cancellation, not an error.
-        void this.getUser().then((user) => finish(user));
+        void Promise.all([this.getUser(), this.readWriteCredentials()]).then(
+          ([user, credentials]) => finish(credentials === null ? null : user),
+        );
       });
     });
   }
 
-  /** Clears the Kick session, leaving the anonymous cookie to be re-fetched. */
+  /** Clears every Kick login surface; anonymous playback state is re-fetched. */
   async signOut(): Promise<void> {
+    if (this.loginWindow && !this.loginWindow.isDestroyed()) this.loginWindow.destroy();
+    if (this.writeCredentialRepairWindow && !this.writeCredentialRepairWindow.isDestroyed()) {
+      this.writeCredentialRepairWindow.destroy();
+    }
+    this.loginWindow = null;
+    this.writeCredentialRepairWindow = null;
+    this.writeCredentialRepairRequest = null;
     this.sessionCookie = null;
     this.sessionFetchedAt = 0;
+    this.sessionRequest = null;
+    this.challengeFailedAt = 0;
+    const kickSession = this.kickSession();
     try {
-      await this.kickSession().clearStorageData({
-        origin: KICK_ORIGIN,
-        storages: ["cookies", "localstorage", "indexdb"],
-      });
+      // The dedicated partition contains both kick.com and id.kick.com. An
+      // origin-scoped clear left the identity-provider cookies behind, so the
+      // next launch silently recreated the website login. Nothing except Kick
+      // is stored here, making a full partition clear both safe and complete.
+      await kickSession.clearStorageData();
+      await kickSession.clearCache();
+      await kickSession.flushStorageData();
     } catch {
       // Nothing stored.
     }
