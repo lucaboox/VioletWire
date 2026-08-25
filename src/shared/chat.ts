@@ -15,6 +15,12 @@ export interface TwitchChatEmoteRange {
    */
   imageUrl?: string;
   provider?: "twitch" | "kick";
+  /**
+   * A GIF sent by a higher-tier subscriber, which stands in the message where
+   * its description does — "[Happy Lets Go GIF by NHL]" — and is drawn far
+   * larger than an emote. Absent means an emote.
+   */
+  kind?: "gif";
 }
 
 export interface ChatMessage {

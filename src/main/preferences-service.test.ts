@@ -117,6 +117,7 @@ describe("PreferencesService", () => {
       emoteAutocompleteMatch: "prefix",
       mentionTabBehavior: "complete",
       blockedChatUsers: [],
+      chatShowGifs: true,
     });
   });
 

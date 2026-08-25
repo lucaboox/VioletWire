@@ -97,6 +97,7 @@ import {
 } from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { isChatterBlocked, useBlockedChatters } from "./blocked-chatters";
+import { usePreference } from "./use-preference";
 import { BlockedChattersSettings } from "./BlockedChattersSettings";
 import { ChatComposerInput } from "./ChatComposerInput";
 import { fitComposerHeight } from "./composer-height";
@@ -413,6 +414,12 @@ const settingsSearchEntries: {
     title: "Blocked chatters",
     description: "Hide a viewer's messages everywhere chat appears.",
     keywords: "block ignore mute hide user unblock blocklist",
+  },
+  {
+    section: "chat",
+    title: "Subscriber GIFs",
+    description: "Draw the GIFs higher-tier subscribers send in chat.",
+    keywords: "gif giphy animated tier 2 3 subscriber",
   },
   {
     section: "chat",
@@ -972,6 +979,7 @@ export function App() {
   // Multistream keeps a buffer per tab rather than going through the chat feed
   // engine, so the blocked list is applied to it here as well.
   const blockedChatters = useBlockedChatters();
+  const chatShowGifs = usePreference((preferences) => preferences.chatShowGifs);
   const multiDisplayMessages = useMemo(() => {
     const buffered = effectiveMultiChatChannel
       ? (multiChatBuffers.get(effectiveMultiChatChannel) ?? [])
@@ -6367,6 +6375,28 @@ export function App() {
                         aria-pressed={chatTimestamps}
                         className={chatTimestamps ? "settings-switch active" : "settings-switch"}
                         onClick={() => setChatTimestamps((current) => !current)}
+                        type="button"
+                      >
+                        <span />
+                      </button>
+                    </div>
+                    <div className="settings-card">
+                      <div>
+                        <strong>Subscriber GIFs</strong>
+                        <span>
+                          Draw the GIFs higher-tier subscribers send. Turned off,
+                          a message shows the description Twitch sends in the
+                          GIF's place instead.
+                        </span>
+                      </div>
+                      <button
+                        aria-pressed={chatShowGifs}
+                        className={chatShowGifs ? "settings-switch active" : "settings-switch"}
+                        onClick={() => {
+                          void window.desktop.preferences
+                            .update({ chatShowGifs: !chatShowGifs })
+                            .catch(() => undefined);
+                        }}
                         type="button"
                       >
                         <span />

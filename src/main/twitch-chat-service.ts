@@ -391,7 +391,10 @@ export class TwitchChatService {
       ...(tags["first-msg"] === "1" ? { firstMessage: true } : {}),
       badges: (tags.badges ?? "").split(",").filter(Boolean),
       sentAt: Number(tags["tmi-sent-ts"]) || Date.now(),
-      twitchEmotes: this.parseEmotes(tags.emotes ?? ""),
+      twitchEmotes: [
+        ...this.parseEmotes(tags.emotes ?? ""),
+        ...this.parseGifs(tags.gifs ?? ""),
+      ],
       reply: tags["reply-parent-msg-id"]
         ? {
             parentMessageId: tags["reply-parent-msg-id"],
@@ -526,5 +529,43 @@ export class TwitchChatService {
       }
     }
     return ranges;
+  }
+
+  /**
+   * GIFs sent by higher-tier subscribers, which Twitch sends as
+   * `<start>-<end>|<id>|<url>` entries beside the message. The message itself
+   * carries a description in their place — "[Happy Lets Go GIF by NHL]" — which
+   * is what a client that ignores this tag shows, and which the range covers.
+   *
+   * The address is used exactly as it arrives: Twitch asks that it not be
+   * modified, so nothing is appended, resized, or rewritten.
+   */
+  private parseGifs(raw: string): TwitchChatEmoteRange[] {
+    if (!raw) return [];
+    const ranges: TwitchChatEmoteRange[] = [];
+    for (const entry of raw.split(",")) {
+      const [positions, id, url] = entry.split("|");
+      if (!positions || !id || !url) continue;
+      const [start, end] = positions.split("-").map(Number);
+      if (!Number.isInteger(start) || !Number.isInteger(end)) continue;
+      if (!this.isGiphyUrl(url)) continue;
+      ranges.push({ id, start, end, imageUrl: url, kind: "gif" });
+    }
+    return ranges;
+  }
+
+  /** Only the service Twitch sends these from, and only over https. */
+  private isGiphyUrl(raw: string): boolean {
+    try {
+      const url = new URL(raw);
+      return (
+        url.protocol === "https:" &&
+        url.username === "" &&
+        url.password === "" &&
+        (url.hostname === "giphy.com" || url.hostname.endsWith(".giphy.com"))
+      );
+    } catch {
+      return false;
+    }
   }
 }

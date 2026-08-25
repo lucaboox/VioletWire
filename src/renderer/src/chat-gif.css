@@ -1,0 +1,37 @@
+/* A GIF is the message rather than a word inside one, so it sits on its own
+   line and is bounded: chat is narrow, and one of these should never push a
+   conversation off the screen. */
+.chat-gif {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 4px 0 2px;
+  overflow: hidden;
+  border: 1px solid #ffffff1a;
+  border-radius: 8px;
+  background: #ffffff08;
+  line-height: 0;
+}
+
+/* An image has no size until it arrives, and these arrive a good deal later
+   than an emote does, so the space is held open until then — otherwise every
+   GIF that lands shoves the conversation as it appears. The height is what
+   matters: it is capped below, so nearly every GIF ends up exactly this tall. */
+.chat-gif:not(.loaded) {
+  min-width: 120px;
+  min-height: 160px;
+}
+
+.chat-gif > img {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+}
+
+/* Shown instead when the picture cannot be fetched: the description Twitch
+   sends is already a readable stand-in, so it is left as written. */
+.chat-gif-fallback {
+  color: #b9b3c2;
+  font-style: italic;
+}

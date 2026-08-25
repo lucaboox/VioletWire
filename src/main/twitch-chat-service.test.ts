@@ -85,6 +85,87 @@ describe("TwitchChatService action messages", () => {
   });
 });
 
+describe("TwitchChatService subscriber GIFs", () => {
+  function parse(line: string) {
+    const service = new TwitchChatService(vi.fn(), vi.fn(), vi.fn());
+    return (service as unknown as TwitchChatServiceInternals).parseMessageLine(line);
+  }
+
+  const giphy =
+    "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=095d7a5d&ep=v1_gifs_trending&rid=giphy.gif&ct=g";
+
+  it("reads the GIF's address and the span it stands for", () => {
+    const message = parse(
+      `@display-name=Someone;gifs=0-33|joSNxeswxuc74Juo8X|${giphy};id=91d6bd60-6c94-4f43-b78f-1c125fb51694 :someone!someone@someone.tmi.twitch.tv PRIVMSG #channel :[Y A Y Yes GIF by Djemilah Birnie]`,
+    );
+
+    expect(message?.twitchEmotes).toEqual([
+      {
+        id: "joSNxeswxuc74Juo8X",
+        start: 0,
+        end: 33,
+        imageUrl: giphy,
+        kind: "gif",
+      },
+    ]);
+    // The address is passed on exactly as it arrived; Twitch asks for that.
+    expect(message?.twitchEmotes[0]?.imageUrl).toBe(giphy);
+    // And the span covers the description the message carries in its place.
+    expect(message?.text.slice(0, 34)).toBe("[Y A Y Yes GIF by Djemilah Birnie]");
+  });
+
+  it("keeps emotes and GIFs in the same message", () => {
+    const message = parse(
+      `@display-name=Someone;emotes=25:0-4;gifs=6-14|abc123|${giphy};id=a1d6bd60-6c94-4f43-b78f-1c125fb51694 :someone!someone@someone.tmi.twitch.tv PRIVMSG #channel :Kappa [a GIF]`,
+    );
+
+    expect(message?.twitchEmotes).toEqual([
+      { id: "25", start: 0, end: 4 },
+      { id: "abc123", start: 6, end: 14, imageUrl: giphy, kind: "gif" },
+    ]);
+  });
+
+  it("reads several GIFs from one message", () => {
+    const second = giphy.replace("joSNxeswxuc74Juo8X", "second");
+    const message = parse(
+      `@display-name=Someone;gifs=0-4|one|${giphy},6-10|two|${second};id=b1d6bd60-6c94-4f43-b78f-1c125fb51694 :someone!someone@someone.tmi.twitch.tv PRIVMSG #channel :[one] [two]`,
+    );
+
+    expect(message?.twitchEmotes.map((range) => range.id)).toEqual(["one", "two"]);
+  });
+
+  it("refuses an address that is not Giphy's, or is not https", () => {
+    for (const url of [
+      "https://example.test/not-a-gif.gif",
+      "http://media4.giphy.com/media/x/giphy.gif",
+      "https://giphy.com.example.test/x.gif",
+      "javascript:alert(1)",
+      "notaurl",
+    ]) {
+      const message = parse(
+        `@display-name=Someone;gifs=0-4|abc|${url};id=c1d6bd60-6c94-4f43-b78f-1c125fb51694 :someone!someone@someone.tmi.twitch.tv PRIVMSG #channel :[gif]`,
+      );
+      expect(message?.twitchEmotes, url).toEqual([]);
+    }
+  });
+
+  it("ignores an entry that is missing a part", () => {
+    const message = parse(
+      `@display-name=Someone;gifs=0-4|abc;id=d1d6bd60-6c94-4f43-b78f-1c125fb51694 :someone!someone@someone.tmi.twitch.tv PRIVMSG #channel :[gif]`,
+    );
+
+    expect(message?.twitchEmotes).toEqual([]);
+  });
+
+  it("leaves a message without the tag alone", () => {
+    const message = parse(
+      "@display-name=Someone;id=e1d6bd60-6c94-4f43-b78f-1c125fb51694 :someone!someone@someone.tmi.twitch.tv PRIVMSG #channel :no gif here",
+    );
+
+    expect(message?.twitchEmotes).toEqual([]);
+  });
+});
+
 describe("TwitchChatService connection watchdog", () => {
   function createConnectedService() {
     vi.useFakeTimers();

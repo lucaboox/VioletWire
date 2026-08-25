@@ -78,6 +78,12 @@ export const appPreferencesSchema = z.object({
    * `blocked-chatters` for why the hiding cannot be left to either service.
    */
   blockedChatUsers: z.array(z.string().max(40)).max(BLOCKED_CHATTER_LIMIT),
+  /**
+   * Whether GIFs sent by higher-tier subscribers are drawn. Turned off, the
+   * message shows the description Twitch sends in the GIF's place, which is
+   * what chat looked like before they were understood at all.
+   */
+  chatShowGifs: z.boolean(),
 });
 
 export const appPreferencesPatchSchema = appPreferencesSchema.partial().strict();
@@ -133,6 +139,7 @@ export const defaultAppPreferences: AppPreferences = {
   emoteAutocompleteMatch: "prefix",
   mentionTabBehavior: "complete",
   blockedChatUsers: [],
+  chatShowGifs: true,
 };
 
 export interface PreferencesApi {

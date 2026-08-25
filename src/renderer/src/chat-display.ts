@@ -8,10 +8,14 @@ export function withoutRedundantReplyMention(message: ChatMessage): ChatMessage 
     .map((name) => `@${name.toLowerCase()}`)
     .find((candidate) => normalized.startsWith(`${candidate} `) || normalized === candidate);
   if (!prefix) return message;
-  const removedLength = prefix.length + (message.text[prefix.length] === " " ? 1 : 0);
+  // Counted in characters as Twitch counts them, so the emote and GIF
+  // positions this shifts stay lined up with the text they point at.
+  const points = [...message.text];
+  const prefixLength = [...prefix].length;
+  const removedLength = prefixLength + (points[prefixLength] === " " ? 1 : 0);
   return {
     ...message,
-    text: message.text.slice(removedLength),
+    text: points.slice(removedLength).join(""),
     twitchEmotes: message.twitchEmotes
       .filter((range) => range.end >= removedLength)
       .map((range) => ({
