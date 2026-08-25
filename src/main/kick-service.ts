@@ -61,11 +61,6 @@ export function getKickLoginUrl(): string {
   return loginUrl.toString();
 }
 
-interface KickWriteCredentials {
-  bearer: string;
-  xsrf: string;
-}
-
 function record(value: unknown): UnknownRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as UnknownRecord)
@@ -552,8 +547,6 @@ export class KickService {
   private sessionRequest: Promise<string | null> | null = null;
   private challengeFailedAt = 0;
   private loginWindow: BrowserWindow | null = null;
-  private writeCredentialRepairRequest: Promise<KickWriteCredentials | null> | null = null;
-  private writeCredentialRepairWindow: BrowserWindow | null = null;
   private readonly detailCache = new Map<
     string,
     { expiresAt: number; thumbnailUrl?: string; startedAt?: string }
@@ -906,11 +899,10 @@ export class KickService {
     };
   }
 
-  /** The signed-in Kick account. Write-only CSRF state is repaired separately. */
+  /** The signed-in Kick account. */
   async getUser(): Promise<KickUser | null> {
-    // The bearer identifies the account. XSRF-TOKEN is intentionally not a
-    // prerequisite here: Google login can issue it after the account session,
-    // and treating that brief/repairable state as signed out broke sign-in.
+    // The bearer identifies the account. Kick's current site carries its
+    // remaining session state as cookies on the same partition.
     if ((await this.readSessionToken()) === null) return null;
     return this.requestUser();
   }
@@ -921,17 +913,9 @@ export class KickService {
    * the rejected local session so the warning cannot repeat every minute.
    */
   async getAuthState(): Promise<KickAuthState> {
-    const [bearer, xsrf] = await Promise.all([
-      this.readSessionToken(),
-      this.readXsrfToken(),
-    ]);
-    if (bearer === null && xsrf === null) {
-      return { status: "signed-out", account: null };
-    }
-    // XSRF without an account bearer is stale. The inverse is a valid account
-    // whose write cookie may still be initializing after social login.
+    const bearer = await this.readSessionToken();
     if (bearer === null) {
-      return { status: "signed-out", account: null, reason: "expired" };
+      return { status: "signed-out", account: null };
     }
 
     try {
@@ -954,12 +938,6 @@ export class KickService {
       const account = this.parseUser(await response.json());
       if (account === null) {
         return { status: "signed-out", account: null, reason: "expired" };
-      }
-      if (xsrf === null) {
-        // Do not hold startup or invalidate a working account while Kick
-        // creates its write cookie. A send will still fail closed if repair
-        // does not complete.
-        void this.repairWriteCredentials().catch(() => undefined);
       }
       return { status: "signed-in", account };
     } catch {
@@ -1064,27 +1042,28 @@ export class KickService {
   }
 
   async updateChatColor(color: string): Promise<KickChatColorState> {
-    const credentials = await this.readWriteCredentials();
-    if (credentials === null) throw new Error("Sign in to Kick to change your color.");
+    const bearer = await this.readSessionToken();
+    if (bearer === null) throw new Error("Sign in to Kick to change your color.");
 
     const path = "/api/internal/v1/chatroom/identity";
     const body = { color };
     const response = await this.kickSession().fetch(`${KICK_ORIGIN}${path}`, {
       method: "PUT",
+      credentials: "include",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         "User-Agent": this.userAgent(),
         Referer: `${KICK_ORIGIN}/`,
-        "X-XSRF-TOKEN": credentials.xsrf,
-        Authorization: `Bearer ${credentials.bearer}`,
+        "x-app-platform": "web",
+        Authorization: `Bearer ${bearer}`,
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     let status = response.status;
     if (status === 401 || status === 403 || status === 419) {
-      status = await this.pageFetch(path, "PUT", credentials.bearer, body);
+      status = await this.pageFetch(path, "PUT", bearer, body);
     }
     if (status === 401 || status === 403 || status === 419) {
       throw new Error("Kick rejected the session. Sign in again.");
@@ -1228,30 +1207,27 @@ export class KickService {
     };
   }
 
-  /**
-   * Posts a chat message. Kick is a Laravel app, so the request needs the CSRF
-   * token it issued alongside the session; without it the API answers 419
-   * regardless of who is signed in.
-   */
+  /** Posts a chat message using the same bearer-and-cookie shape as Kick web. */
   async sendMessage(
     chatroomId: string,
     content: string,
     replyTarget?: KickChatReplyTarget,
   ): Promise<void> {
-    const credentials = await this.readWriteCredentials();
-    if (credentials === null) throw new Error("Not signed in to Kick.");
+    const bearer = await this.readSessionToken();
+    if (bearer === null) throw new Error("Not signed in to Kick.");
 
     const response = await this.kickSession().fetch(
       `${KICK_ORIGIN}/api/v2/messages/send/${encodeURIComponent(chatroomId)}`,
       {
         method: "POST",
+        credentials: "include",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
           "User-Agent": this.userAgent(),
           Referer: `${KICK_ORIGIN}/`,
-          "X-XSRF-TOKEN": credentials.xsrf,
-          Authorization: `Bearer ${credentials.bearer}`,
+          "x-app-platform": "web",
+          Authorization: `Bearer ${bearer}`,
         },
         body: JSON.stringify(
           replyTarget
@@ -1415,19 +1391,6 @@ export class KickService {
     }
   }
 
-  private async readXsrfToken(): Promise<string | null> {
-    try {
-      const [cookie] = await this.kickSession().cookies.get({
-        url: KICK_ORIGIN,
-        name: "XSRF-TOKEN",
-      });
-      // Laravel stores it percent-encoded; the header wants the raw value.
-      return cookie ? decodeURIComponent(cookie.value) : null;
-    } catch {
-      return null;
-    }
-  }
-
   /**
    * Recent chat, newest first, from the channel's message route. Keyed by the
    * channel id, not the chatroom id the socket subscribes to. Kick's own
@@ -1441,67 +1404,6 @@ export class KickService {
     const parsed = kickChatHistorySchema.safeParse(payload);
     if (!parsed.success) return [];
     return parsed.data.data?.messages ?? [];
-  }
-
-  private async readWriteCredentials(): Promise<KickWriteCredentials | null> {
-    const [bearer, xsrf] = await Promise.all([
-      this.readSessionToken(),
-      this.readXsrfToken(),
-    ]);
-    return bearer === null || xsrf === null ? null : { bearer, xsrf };
-  }
-
-  /**
-   * A completed id.kick.com login can briefly exist before kick.com has
-   * initialized its own bearer and CSRF cookies. Visiting the site in the same
-   * isolated partition finishes that hand-off without exposing either token to
-   * the renderer. This is only attempted for an account the user endpoint
-   * already recognizes, so an anonymous send does not open a hidden login.
-   */
-  private async repairWriteCredentials(): Promise<KickWriteCredentials | null> {
-    const existing = await this.readWriteCredentials();
-    if (existing !== null) return existing;
-    this.writeCredentialRepairRequest ??= this.refreshWriteCredentials().finally(() => {
-      this.writeCredentialRepairRequest = null;
-    });
-    return this.writeCredentialRepairRequest;
-  }
-
-  private async refreshWriteCredentials(): Promise<KickWriteCredentials | null> {
-    if ((await this.requestUser()) === null) return null;
-
-    const window = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        partition: KICK_PARTITION,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        images: false,
-      },
-    });
-    this.writeCredentialRepairWindow = window;
-    window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
-    try {
-      await Promise.race([
-        window.loadURL(`${KICK_ORIGIN}/`),
-        new Promise((resolve) => setTimeout(resolve, CHALLENGE_TIMEOUT_MS)),
-      ]);
-      const deadline = Date.now() + 5_000;
-      while (Date.now() < deadline) {
-        const credentials = await this.readWriteCredentials();
-        if (credentials !== null) return credentials;
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      return null;
-    } catch {
-      return null;
-    } finally {
-      if (!window.isDestroyed()) window.destroy();
-      if (this.writeCredentialRepairWindow === window) {
-        this.writeCredentialRepairWindow = null;
-      }
-    }
   }
 
   /**
@@ -1637,13 +1539,11 @@ export class KickService {
         resolve(user);
       };
 
-      // Account identity is the completion signal. XSRF is write-only state
-      // and may arrive slightly later after Google login, so repair it without
-      // trapping the user in the auth window or reporting them as signed out.
+      // Account identity is the completion signal. The current site uses the
+      // bearer plus same-partition cookies for later authenticated writes.
       const poll = setInterval(() => {
         void this.getUser().then((user) => {
           if (user === null) return;
-          void this.repairWriteCredentials().catch(() => undefined);
           finish(user);
         });
       }, 1_500);
@@ -1659,12 +1559,7 @@ export class KickService {
   /** Clears every Kick login surface; anonymous playback state is re-fetched. */
   async signOut(): Promise<void> {
     if (this.loginWindow && !this.loginWindow.isDestroyed()) this.loginWindow.destroy();
-    if (this.writeCredentialRepairWindow && !this.writeCredentialRepairWindow.isDestroyed()) {
-      this.writeCredentialRepairWindow.destroy();
-    }
     this.loginWindow = null;
-    this.writeCredentialRepairWindow = null;
-    this.writeCredentialRepairRequest = null;
     this.sessionCookie = null;
     this.sessionFetchedAt = 0;
     this.sessionRequest = null;

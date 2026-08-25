@@ -72,7 +72,7 @@ describe("KickService authentication", () => {
     });
   });
 
-  it("accepts an authenticated account while its write-only XSRF cookie initializes", async () => {
+  it("accepts an authenticated account without an obsolete XSRF prerequisite", async () => {
     electronState.cookiesGet.mockImplementation(
       async (filter: { name?: string }) =>
         filter.name === "session_token" ? [{ value: "test" }] : [],
@@ -92,17 +92,12 @@ describe("KickService authentication", () => {
     expect(electronState.fetch).toHaveBeenCalled();
   });
 
-  it("reports an XSRF-only local session as expired without waiting on Kick", async () => {
-    electronState.cookiesGet.mockImplementation(
-      async (filter: { name?: string }) =>
-        filter.name === "XSRF-TOKEN" ? [{ value: "test" }] : [],
-    );
+  it("reports a missing account bearer as signed out without waiting on Kick", async () => {
     const service = new KickService();
 
     await expect(service.getAuthState()).resolves.toEqual({
       status: "signed-out",
       account: null,
-      reason: "expired",
     });
     expect(electronState.fetch).not.toHaveBeenCalled();
   });
@@ -126,5 +121,36 @@ describe("KickService authentication", () => {
     );
 
     expect(electronState.fetch).not.toHaveBeenCalled();
+  });
+
+  it("sends with the current bearer-and-cookie request shape", async () => {
+    electronState.cookiesGet.mockImplementation(
+      async (filter: { name?: string }) => {
+        if (filter.name === "session_token") return [{ value: "bearer" }];
+        return [];
+      },
+    );
+    electronState.fetch.mockImplementation(async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("/api/v2/messages/send/")) {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    const service = new KickService();
+
+    await expect(service.sendMessage("123", "hello")).resolves.toBeUndefined();
+
+    expect(electronState.fetch).toHaveBeenCalledWith(
+      "https://kick.com/api/v2/messages/send/123",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        headers: expect.objectContaining({
+          Authorization: "Bearer bearer",
+          "x-app-platform": "web",
+        }),
+      }),
+    );
   });
 });
