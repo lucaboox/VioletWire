@@ -21,6 +21,7 @@ import type { KickAuthState, KickChatColorState } from "../shared/platform";
  */
 
 const KICK_ORIGIN = "https://kick.com";
+const KICK_IDENTITY_ORIGIN = "https://id.kick.com";
 // Kick's newer API host, which serves the category directory the site itself
 // pages through (viewer-sorted and cursor-paginated). It needs no account.
 const KICK_WEB_ORIGIN = "https://web.kick.com";
@@ -47,6 +48,18 @@ const COOKIE_WAIT_MS = 2_500;
 const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type UnknownRecord = Record<string, unknown>;
+
+/**
+ * Kick's social-login page only forwards the completed provider callback to
+ * the main site when its `redirect` query is present. Without it, Google can
+ * leave the auth window on the identity landing page and the kick.com session
+ * never becomes observable by the app.
+ */
+export function getKickLoginUrl(): string {
+  const loginUrl = new URL("/login", KICK_IDENTITY_ORIGIN);
+  loginUrl.searchParams.set("redirect", `${KICK_ORIGIN}/`);
+  return loginUrl.toString();
+}
 
 interface KickWriteCredentials {
   bearer: string;
@@ -893,13 +906,12 @@ export class KickService {
     };
   }
 
-  /**
-   * The usable signed-in Kick account. A read-only website identity without
-   * chat-write cookies is treated as signed out so the renderer never offers a
-   * composer that can only fail later.
-   */
+  /** The signed-in Kick account. Write-only CSRF state is repaired separately. */
   async getUser(): Promise<KickUser | null> {
-    if ((await this.readWriteCredentials()) === null) return null;
+    // The bearer identifies the account. XSRF-TOKEN is intentionally not a
+    // prerequisite here: Google login can issue it after the account session,
+    // and treating that brief/repairable state as signed out broke sign-in.
+    if ((await this.readSessionToken()) === null) return null;
     return this.requestUser();
   }
 
@@ -916,7 +928,9 @@ export class KickService {
     if (bearer === null && xsrf === null) {
       return { status: "signed-out", account: null };
     }
-    if (bearer === null || xsrf === null) {
+    // XSRF without an account bearer is stale. The inverse is a valid account
+    // whose write cookie may still be initializing after social login.
+    if (bearer === null) {
       return { status: "signed-out", account: null, reason: "expired" };
     }
 
@@ -938,9 +952,16 @@ export class KickService {
       if (!response.ok) return { status: "unavailable", account: null };
 
       const account = this.parseUser(await response.json());
-      return account === null
-        ? { status: "signed-out", account: null, reason: "expired" }
-        : { status: "signed-in", account };
+      if (account === null) {
+        return { status: "signed-out", account: null, reason: "expired" };
+      }
+      if (xsrf === null) {
+        // Do not hold startup or invalidate a working account while Kick
+        // creates its write cookie. A send will still fail closed if repair
+        // does not complete.
+        void this.repairWriteCredentials().catch(() => undefined);
+      }
+      return { status: "signed-in", account };
     } catch {
       return { status: "unavailable", account: null };
     }
@@ -1600,14 +1621,13 @@ export class KickService {
     this.loginWindow = window;
     window.setMenu(null);
 
-    // Kick's dedicated login page rather than the full site. Sign-in there
-    // establishes the same kick.com session, which the account poll below
-    // detects, and it loads far lighter than the homepage.
-    await window.loadURL("https://id.kick.com/login");
+    // Kick's dedicated login page rather than the full site. The explicit
+    // redirect is required by its current social-login flow (notably Google)
+    // so the callback returns through kick.com and initializes that session.
+    await window.loadURL(getKickLoginUrl());
 
     return new Promise<KickUser | null>((resolve) => {
       let settled = false;
-      let repairingCredentials = false;
       const finish = (user: KickUser | null) => {
         if (settled) return;
         settled = true;
@@ -1617,33 +1637,21 @@ export class KickService {
         resolve(user);
       };
 
-      // Kick's sign-in has no redirect to intercept. Do not finish merely when
-      // the read-only account endpoint answers: chat sends also require the
-      // kick.com bearer and CSRF cookies, which can arrive slightly later.
+      // Account identity is the completion signal. XSRF is write-only state
+      // and may arrive slightly later after Google login, so repair it without
+      // trapping the user in the auth window or reporting them as signed out.
       const poll = setInterval(() => {
-        void Promise.all([this.requestUser(), this.readWriteCredentials()]).then(
-          ([user, credentials]) => {
-            if (user === null) return;
-            if (credentials !== null) {
-              finish(user);
-              return;
-            }
-            if (repairingCredentials) return;
-            repairingCredentials = true;
-            void this.repairWriteCredentials().then((repaired) => {
-              repairingCredentials = false;
-              if (repaired !== null) finish(user);
-            });
-          },
-        );
+        void this.getUser().then((user) => {
+          if (user === null) return;
+          void this.repairWriteCredentials().catch(() => undefined);
+          finish(user);
+        });
       }, 1_500);
       poll.unref();
 
       window.on("closed", () => {
         // Closing the window without signing in is a cancellation, not an error.
-        void Promise.all([this.requestUser(), this.readWriteCredentials()]).then(
-          ([user, credentials]) => finish(credentials === null ? null : user),
-        );
+        void this.getUser().then((user) => finish(user));
       });
     });
   }

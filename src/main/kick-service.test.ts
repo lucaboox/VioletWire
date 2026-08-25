@@ -16,7 +16,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { KickService } from "./kick-service";
+import { getKickLoginUrl, KickService } from "./kick-service";
 
 describe("KickService authentication", () => {
   beforeEach(() => {
@@ -46,6 +46,12 @@ describe("KickService authentication", () => {
     expect(electronState.flushStorageData).toHaveBeenCalledOnce();
   });
 
+  it("sends social sign-in back through the main Kick site", () => {
+    expect(getKickLoginUrl()).toBe(
+      "https://id.kick.com/login?redirect=https%3A%2F%2Fkick.com%2F",
+    );
+  });
+
   it("does not report a read-only identity as a usable signed-in account", async () => {
     const service = new KickService();
 
@@ -66,10 +72,30 @@ describe("KickService authentication", () => {
     });
   });
 
-  it("reports a partially expired local session without waiting on Kick", async () => {
+  it("accepts an authenticated account while its write-only XSRF cookie initializes", async () => {
     electronState.cookiesGet.mockImplementation(
       async (filter: { name?: string }) =>
         filter.name === "session_token" ? [{ value: "test" }] : [],
+    );
+    electronState.fetch.mockResolvedValue(
+      new Response(JSON.stringify({ id: 42, username: "viewer" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const service = new KickService();
+
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "signed-in",
+      account: { id: "42", username: "viewer", profileImageUrl: "" },
+    });
+    expect(electronState.fetch).toHaveBeenCalled();
+  });
+
+  it("reports an XSRF-only local session as expired without waiting on Kick", async () => {
+    electronState.cookiesGet.mockImplementation(
+      async (filter: { name?: string }) =>
+        filter.name === "XSRF-TOKEN" ? [{ value: "test" }] : [],
     );
     const service = new KickService();
 
