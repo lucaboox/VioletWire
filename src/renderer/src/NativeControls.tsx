@@ -597,6 +597,10 @@ export function NativeControls({
     return combined;
   }, [providerEmoteMaps]);
 
+  /** Whose emotes this chat is showing, which is not always Twitch's. */
+  const chatPlatformLabel =
+    channel && parseChannelKey(channel).platform === "kick" ? "Kick" : "Twitch";
+
   // The overlay chat draws emotes at the same size the main window does, and
   // this window keeps its own copy of that setting.
   useEffect(() => {
@@ -747,11 +751,15 @@ export function NativeControls({
 
   useEffect(() => {
     if (!channel) return;
+    const target = parseChannelKey(channel);
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
       setProviderEmoteMaps(emptyProviderEmoteMaps());
       setProviderChannelNames(emptyProviderChannelNames());
+      // Twitch's badges mean nothing on Kick, whose badges arrive with the
+      // messages themselves.
+      if (target.platform === "kick") setChatBadges(new Map());
     });
 
     const mergeProviderResult = (result: EmoteSetResult) => {
@@ -775,6 +783,51 @@ export function NativeControls({
         });
       }
     };
+
+    // Kick is not Twitch: FrankerFaceZ and BetterTTV do not serve it, its
+    // emotes come from Kick's own sets rather than Helix, and 7TV addresses its
+    // channels by Kick's user id. Asking Twitch for any of it filled this chat
+    // with the wrong service's emotes — Twitch's, wherever you were watching.
+    if (target.platform === "kick") {
+      void window.desktop.kick
+        .getChannel(target.login)
+        .then(async (kickChannel) => {
+          if (cancelled || !kickChannel?.userId) return;
+          const set = await window.desktop.emotes.getSevenTvChannel(
+            kickChannel.userId,
+            "kick",
+          );
+          mergeProviderResult(set);
+        })
+        .catch(() => {});
+      void window.desktop.kick
+        .getEmoteSets(target.login)
+        .then((sets) => {
+          if (cancelled) return;
+          setTwitchPickerEmotes(
+            sets.flatMap((set) => {
+              // Kick names the channel's own set after the channel; the rest are
+              // its shared sets, which the picker keeps apart by owner.
+              const isChannelSet = set.name.toLowerCase() === target.login;
+              return set.emotes.map((emote) => ({
+                id: emote.id,
+                name: emote.name,
+                imageUrl: emote.imageUrl,
+                scope: isChannelSet ? ("channel" as const) : ("global" as const),
+                subscriptionOnly: emote.subscribersOnly,
+                ownerId: `kick-set-${set.id}`,
+                ownerName: isChannelSet ? target.login : set.name,
+              }));
+            }),
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setTwitchPickerEmotes([]);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const globalRequests = [
       window.desktop.emotes.getSevenTvGlobal(),
@@ -1484,10 +1537,10 @@ export function NativeControls({
                 <div className="native-emote-picker-anchor">
                   <button
                     aria-expanded={emotePickerOpen}
-                    aria-label="Choose Twitch and 7TV emotes"
+                    aria-label={`Choose ${chatPlatformLabel} and 7TV emotes`}
                     className={emotePickerOpen ? "native-emote-button active" : "native-emote-button"}
                     onClick={() => setEmotePickerOpen((current) => !current)}
-                    title="Twitch and 7TV emotes"
+                    title={`${chatPlatformLabel} and 7TV emotes`}
                     type="button"
                   >
                     <Smile size={17} />
@@ -1502,6 +1555,7 @@ export function NativeControls({
                             `${current}${current && !current.endsWith(" ") ? " " : ""}${name} `,
                           )
                         }
+                        platformLabel={chatPlatformLabel}
                         providerChannelEmoteNames={providerChannelNames}
                         providerEmotes={providerEmoteMaps}
                         twitchEmotes={twitchPickerEmotes}
