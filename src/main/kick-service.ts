@@ -30,6 +30,13 @@ const KICK_WEB_ORIGIN = "https://web.kick.com";
 // Nothing about it identifies a person until someone signs in.
 const SESSION_COOKIE = "kick_session";
 const REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * How many refusals in a row it takes to believe a stored Kick account is
+ * really gone. The check runs once a minute, so a session that has genuinely
+ * expired is still cleared within a few minutes, while a passing refusal — the
+ * kind Kick's edge hands out on its own schedule — no longer costs a login.
+ */
+const EXPIRY_CONFIRMATIONS = 3;
 // Long enough that a viewing session reuses one cookie, short enough that a
 // rotated cookie recovers without waiting for a failure.
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -546,6 +553,8 @@ export class KickService {
   // instead of each opening its own request.
   private sessionRequest: Promise<string | null> | null = null;
   private challengeFailedAt = 0;
+  /** Consecutive refusals of the stored account; see countRejection. */
+  private rejectionStreak = 0;
   private loginWindow: BrowserWindow | null = null;
   private readonly detailCache = new Map<
     string,
@@ -915,6 +924,7 @@ export class KickService {
   async getAuthState(): Promise<KickAuthState> {
     const bearer = await this.readSessionToken();
     if (bearer === null) {
+      this.rejectionStreak = 0;
       return { status: "signed-out", account: null };
     }
 
@@ -929,20 +939,43 @@ export class KickService {
         },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-      if (response.status === 401) {
-        return { status: "signed-out", account: null, reason: "expired" };
-      }
+      if (response.status === 401) return this.countRejection();
       // A 403 can be Kick's edge challenge rather than an invalid account.
       if (!response.ok) return { status: "unavailable", account: null };
 
-      const account = this.parseUser(await response.json());
-      if (account === null) {
-        return { status: "signed-out", account: null, reason: "expired" };
+      const payload = await response.json().catch(() => null);
+      const account = this.parseUser(payload);
+      if (account !== null) {
+        this.rejectionStreak = 0;
+        return { status: "signed-in", account };
       }
-      return { status: "signed-in", account };
+      // Signed out, this route answers with an empty array. Any other body it
+      // did not expect — an edge challenge, a rate limit, a shape Kick has
+      // since changed — says nothing about the account, and must not be read
+      // as a verdict on it.
+      if (Array.isArray(payload) && payload.length === 0) return this.countRejection();
+      return { status: "unavailable", account: null };
     } catch {
       return { status: "unavailable", account: null };
     }
+  }
+
+  /**
+   * Records that Kick has refused the stored account, and says whether to
+   * believe it yet.
+   *
+   * One refusal is not enough. Acting on this throws the login away — the
+   * renderer signs out, which empties the whole Kick partition, identity
+   * provider and all — and the check runs every minute, so a single edge
+   * challenge in the small hours was costing a viewer their session overnight.
+   * Several in a row, with any success resetting the count, separates an
+   * account that has really expired from a bad minute.
+   */
+  private countRejection(): KickAuthState {
+    this.rejectionStreak += 1;
+    return this.rejectionStreak >= EXPIRY_CONFIRMATIONS
+      ? { status: "signed-out", account: null, reason: "expired" }
+      : { status: "unavailable", account: null };
   }
 
   /**
@@ -1507,6 +1540,9 @@ export class KickService {
       this.loginWindow.focus();
       return null;
     }
+    // A fresh login starts the count over, so refusals aimed at the account
+    // being replaced cannot be held against the new one.
+    this.rejectionStreak = 0;
 
     const window = new BrowserWindow({
       width: 520,
@@ -1564,6 +1600,7 @@ export class KickService {
     this.sessionFetchedAt = 0;
     this.sessionRequest = null;
     this.challengeFailedAt = 0;
+    this.rejectionStreak = 0;
     const kickSession = this.kickSession();
     try {
       // The dedicated partition contains both kick.com and id.kick.com. An

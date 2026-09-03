@@ -60,11 +60,89 @@ describe("KickService authentication", () => {
     expect(electronState.fetch).not.toHaveBeenCalled();
   });
 
-  it("reports a server-rejected stored session as expired", async () => {
+  it("reports a stored session as expired once Kick keeps refusing it", async () => {
     electronState.cookiesGet.mockImplementation(async () => [{ value: "test" }]);
     electronState.fetch.mockResolvedValue(new Response(null, { status: 401 }));
     const service = new KickService();
 
+    // Acting on this empties the whole Kick partition, so one refusal is not
+    // enough to act on.
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "unavailable",
+      account: null,
+    });
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "unavailable",
+      account: null,
+    });
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "signed-out",
+      account: null,
+      reason: "expired",
+    });
+  });
+
+  it("forgets earlier refusals as soon as Kick accepts the account again", async () => {
+    electronState.cookiesGet.mockImplementation(async () => [{ value: "test" }]);
+    const refused = () => new Response(null, { status: 401 });
+    const accepted = () =>
+      new Response(JSON.stringify({ id: 42, username: "viewer" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    electronState.fetch
+      .mockResolvedValueOnce(refused())
+      .mockResolvedValueOnce(refused())
+      .mockResolvedValueOnce(accepted())
+      .mockResolvedValueOnce(refused())
+      .mockResolvedValueOnce(refused());
+    const service = new KickService();
+
+    await service.getAuthState();
+    await service.getAuthState();
+    await expect(service.getAuthState()).resolves.toMatchObject({ status: "signed-in" });
+    // The two after the success start a fresh run, so neither signs the
+    // viewer out on the strength of what happened before it.
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "unavailable",
+      account: null,
+    });
+    await expect(service.getAuthState()).resolves.toEqual({
+      status: "unavailable",
+      account: null,
+    });
+  });
+
+  it("treats an unrecognised body as a bad answer, not an expired account", async () => {
+    electronState.cookiesGet.mockImplementation(async () => [{ value: "test" }]);
+    // What an edge challenge, a rate limit, or a changed shape looks like. A
+    // body can only be read once, so each call is answered afresh.
+    for (const body of ['{"error":"too many requests"}', "<html>Just a moment…</html>", "{}"]) {
+      electronState.fetch.mockImplementation(
+        async () =>
+          new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+      const service = new KickService();
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await expect(service.getAuthState(), body).resolves.toEqual({
+          status: "unavailable",
+          account: null,
+        });
+      }
+    }
+  });
+
+  it("still believes the empty answer Kick gives for a session it does not know", async () => {
+    electronState.cookiesGet.mockImplementation(async () => [{ value: "test" }]);
+    electronState.fetch.mockImplementation(
+      async () =>
+        new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    const service = new KickService();
+
+    await service.getAuthState();
+    await service.getAuthState();
     await expect(service.getAuthState()).resolves.toEqual({
       status: "signed-out",
       account: null,
