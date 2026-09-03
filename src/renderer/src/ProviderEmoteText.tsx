@@ -38,10 +38,18 @@ function appendText(segments: Segment[], text: string): void {
 export function plainTextSegments(
   text: string,
   emotes: Map<string, ProviderEmote>,
+  /**
+   * Whether an emote already stands to the left of this text — one the caller
+   * drew itself, such as a Twitch emote earlier in the same message. A
+   * zero-width emote is drawn over what precedes it, so it needs to know
+   * whether anything does.
+   */
+  precededByEmote = false,
 ): Segment[] {
   const tokens = text.split(/(\s+)/);
   const segments: Segment[] = [];
   let pendingModifiers: ProviderEmote[] = [];
+  let anyEmoteYet = precededByEmote;
 
   const flushPendingAsText = () => {
     if (pendingModifiers.length === 0) return;
@@ -62,14 +70,23 @@ export function plainTextSegments(
       // between. Remove only that separating whitespace, then leave the
       // overlay as its own zero-width inline item. Keeping it independent also
       // lets it stack over a native Twitch emote rendered by the caller.
-      const previous = segments.at(-1);
-      if (previous?.kind === "text" && /^\s+$/.test(previous.text)) segments.pop();
+      //
+      // With nothing to stack on, it is drawn like any other emote instead. An
+      // overlay takes no width and is painted leftwards from where it sits, so
+      // one sent on its own — which is how these often arrive, a whole message
+      // being the single emote — was landing on top of the sender's name and
+      // badges and hanging off the side of the message.
+      if (anyEmoteYet) {
+        const previous = segments.at(-1);
+        if (previous?.kind === "text" && /^\s+$/.test(previous.text)) segments.pop();
+      }
       segments.push({
         kind: "emote",
         emote,
         modifiers: pendingModifiers,
-        zeroWidth: true,
+        zeroWidth: anyEmoteYet,
       });
+      anyEmoteYet = true;
       pendingModifiers = [];
       return;
     }
@@ -113,6 +130,7 @@ export function plainTextSegments(
         modifiers: pendingModifiers,
         zeroWidth: false,
       });
+      anyEmoteYet = true;
       pendingModifiers = [];
       return;
     }
@@ -130,6 +148,8 @@ export function renderProviderText(
   emotes: Map<string, ProviderEmote>,
   key: string,
   emoteClassName: string,
+  /** True when the caller has already drawn an emote to the left of this text. */
+  precededByEmote = false,
 ): ReactNode[] {
   return tokenizeChatLinks(text).flatMap((content, contentIndex) => {
     if (content.kind === "link") {
@@ -158,7 +178,13 @@ export function renderProviderText(
       );
     }
 
-    return plainTextSegments(content.text, emotes).map((segment, segmentIndex) => {
+    return plainTextSegments(
+      content.text,
+      emotes,
+      // Only the first run of text can be the start of the message; anything
+      // after a link has that link to its left rather than the sender's name.
+      precededByEmote || contentIndex > 0,
+    ).map((segment, segmentIndex) => {
       if (segment.kind === "text") {
         return tokenizeChatMentions(segment.text).map((token, tokenIndex) =>
           token.kind === "mention" ? (

@@ -40,6 +40,9 @@ export function renderChatMessageText(
           providerEmotes,
           `${message.id}-text-${index}`,
           "chat-emote",
+          // Anything but the opening run follows a Twitch emote drawn below,
+          // which a zero-width emote is entitled to stack over.
+          index > 0,
         ),
       );
     }
@@ -73,6 +76,8 @@ export function renderChatMessageText(
         providerEmotes,
         `${message.id}-tail`,
         "chat-emote",
+        // The tail always follows the last Twitch emote.
+        true,
       ),
     );
   }
