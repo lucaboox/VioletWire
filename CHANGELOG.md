@@ -4,6 +4,25 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.19] - 2026-09-03
+
+### Fixes
+
+- Kick logins no longer disappear on their own. The account was checked every
+  minute and thrown away on a single refusal — including any reply Kick did not
+  return in the expected shape, such as a rate limit or one of its edge
+  challenges — which emptied the whole Kick session, so a login made in the
+  evening was often gone by morning. It now takes several refusals in a row,
+  and an unrecognized reply is no longer counted as one at all.
+- Chat over the video showed Twitch's emotes on Kick channels: the suggestions
+  while typing, and the picker above them, were Twitch's 7TV, FrankerFaceZ, and
+  BetterTTV sets whatever you were watching. It now shows Kick's own emotes and
+  that channel's 7TV set, as the main window already did.
+- A zero-width emote sent on its own — how FirstTimeClanka and its like are
+  usually sent — was drawn over the sender's badges and name and hung off the
+  side of the message. With nothing to stack on it is now drawn where it was
+  sent, and still stacks whenever an emote precedes it.
+
 ## [0.3.4-alpha.18] - 2026-08-24
 
 ### Fixes
