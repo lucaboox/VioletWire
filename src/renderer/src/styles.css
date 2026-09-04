@@ -1117,14 +1117,21 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 /* .player-host isolates, so everything inside it paints as one layer below the
    floating bar however high its own z-index is, leaving the restore-chat button
    and the controls unclickable underneath. Dropping the isolation in theater
-   lets them order against the bar directly: video, then bar, then controls. */
-.theater-mode .player-host, .fullscreen-mode .player-host { isolation: auto; }
+   lets them order against the bar directly: video, then bar, then controls.
+   Its own z-index has to go with it: a positioned element with one still makes
+   a layer of its own, which is what kept the button trapped underneath. */
+.theater-mode .player-host, .fullscreen-mode .player-host { isolation: auto; z-index: auto; }
 /* Only the stream-info half sits over the picture, so only it needs to fade
    out into the video. */
 .theater-mode .player-toolbar-main, .fullscreen-mode .player-toolbar-main { padding-top: 12px; padding-bottom: 6px; background: linear-gradient(180deg, rgb(5 5 6 / 82%) 0%, rgb(5 5 6 / 62%) 55%, rgb(5 5 6 / 0%) 100%); }
-/* Fades with the player controls rather than covering the video permanently. */
+/* Fades with the player controls rather than covering the video permanently.
+   The bar's contents take pointer events back above, so a faded bar has to
+   take them from its contents too — otherwise a strip of window nobody can see
+   goes on swallowing clicks across the top of the picture. */
 .theater-mode .player-page.controls-hidden .player-toolbar,
 .fullscreen-mode .player-page.controls-hidden .player-toolbar { opacity: 0; pointer-events: none; }
+.theater-mode .player-page.controls-hidden .player-toolbar-main,
+.fullscreen-mode .player-page.controls-hidden .player-toolbar-main { pointer-events: none; }
 /* With chat hidden the toolbar spans the full width, putting its actions in the
    same corner as the button that brings chat back. Reserve room for it, and
    only while it is actually on screen. */
