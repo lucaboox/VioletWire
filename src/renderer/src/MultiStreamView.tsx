@@ -6,6 +6,8 @@ import {
   GripVertical,
   Maximize,
   Maximize2,
+  MessageSquare,
+  MessageSquareOff,
   Minimize,
   Minimize2,
   Plus,
@@ -39,8 +41,12 @@ interface MultiStreamViewProps {
   onMove: (id: number, delta: number) => void;
   presets: MultiStreamPreset[];
   onSavePreset: (name: string) => void;
+  /** Point a saved line-up at the streams that are open now. */
+  onUpdatePreset: (name: string) => void;
   onDeletePreset: (name: string) => void;
   onOpenPreset: (preset: MultiStreamPreset) => void;
+  chatVisible: boolean;
+  onToggleChat: () => void;
   followedLive: FollowedChannel[];
   nameFor: (login: string) => string;
   tooltipFor: (channel: string) => string;
@@ -66,8 +72,11 @@ export function MultiStreamView({
   onMove,
   presets,
   onSavePreset,
+  onUpdatePreset,
   onDeletePreset,
   onOpenPreset,
+  chatVisible,
+  onToggleChat,
   followedLive,
   nameFor,
   tooltipFor,
@@ -177,6 +186,15 @@ export function MultiStreamView({
             <Bookmark size={16} /> Presets
           </button>
           <button
+            aria-pressed={chatVisible}
+            className={chatVisible ? "multi-bar-btn active" : "multi-bar-btn"}
+            onClick={onToggleChat}
+            title={chatVisible ? "Hide chat" : "Show chat"}
+            type="button"
+          >
+            {chatVisible ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />} Chat
+          </button>
+          <button
             aria-pressed={theater}
             className={theater ? "multi-bar-btn active" : "multi-bar-btn"}
             onClick={onToggleTheater}
@@ -213,6 +231,7 @@ export function MultiStreamView({
               onDelete={onDeletePreset}
               onOpen={onOpenPreset}
               onSave={onSavePreset}
+              onUpdate={onUpdatePreset}
               presets={presets}
             />
           )}
@@ -340,9 +359,16 @@ const MultiTile = memo(function MultiTile({
   // The quality popover keeps the bar up while it's open.
   const barVisible = controlsShown || qualityMenuOpen;
 
-  // Lazy-load the quality list the first time the menu opens for this tile.
+  const { status, error } = tile.state;
+
+  // Fetch the quality list as soon as the tile is playing instead of when the
+  // menu opens. The list comes from a Streamlink run that takes seconds, which
+  // is why opening the menu used to sit on "Loading…". Waiting for playback
+  // keeps that run clear of starting the stream; a menu opened before then
+  // still asks for it, for a tile that never got going.
   useEffect(() => {
-    if (!qualityMenuOpen || qualities.length > 0) return;
+    if (qualities.length > 0) return;
+    if (status !== "playing" && !qualityMenuOpen) return;
     let cancelled = false;
     void window.desktop.player
       .getNativeQualities(tile.channel)
@@ -353,9 +379,8 @@ const MultiTile = memo(function MultiTile({
     return () => {
       cancelled = true;
     };
-  }, [qualityMenuOpen, qualities.length, tile.channel]);
+  }, [status, qualityMenuOpen, qualities.length, tile.channel]);
 
-  const { status, error } = tile.state;
   const offline = error === "Stream is offline." || /offline|no playable streams/i.test(error ?? "");
   const showOverlay = status !== "playing";
 
@@ -625,6 +650,7 @@ interface PresetMenuProps {
   canSave: boolean;
   nameFor: (login: string) => string;
   onSave: (name: string) => void;
+  onUpdate: (name: string) => void;
   onDelete: (name: string) => void;
   onOpen: (preset: MultiStreamPreset) => void;
   onClose: () => void;
@@ -636,6 +662,7 @@ function PresetMenu({
   canSave,
   nameFor,
   onSave,
+  onUpdate,
   onDelete,
   onOpen,
   onClose,
@@ -692,6 +719,16 @@ function PresetMenu({
               </span>
             </button>
             <button
+              aria-label={`Save the open streams into the ${preset.name} preset`}
+              className="multi-preset-update"
+              disabled={!canSave}
+              onClick={() => onUpdate(preset.name)}
+              title="Save the streams that are open into this preset"
+              type="button"
+            >
+              <Save size={13} />
+            </button>
+            <button
               aria-label={`Delete the ${preset.name} preset`}
               className="multi-preset-delete"
               onClick={() => onDelete(preset.name)}
@@ -705,6 +742,12 @@ function PresetMenu({
         {presets.length === 0 && (
           <p className="multi-add-empty">
             <Bookmark size={13} /> No presets yet — name the streams you have open to save them.
+          </p>
+        )}
+        {presets.length > 0 && (
+          <p className="multi-preset-hint">
+            To change one, open it, add or remove streams, then save it back with{" "}
+            <Save aria-hidden="true" size={11} />.
           </p>
         )}
       </div>

@@ -7,6 +7,11 @@
   min-height: 0;
 }
 
+/* Chat turned off from the bar: the grid takes the whole width. */
+.multi-stream-layout.chat-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .multi-stream-page {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -782,7 +787,8 @@
   white-space: nowrap;
 }
 
-.multi-add-list .multi-preset-delete {
+.multi-add-list .multi-preset-delete,
+.multi-add-list .multi-preset-update {
   display: grid;
   width: 26px;
   height: 26px;
@@ -796,9 +802,35 @@
   cursor: pointer;
 }
 
+.multi-add-list .multi-preset-update:hover:not(:disabled) {
+  color: #e9d5ff;
+  background: #2c1c44;
+}
+
+.multi-add-list .multi-preset-update:disabled {
+  color: #4e4e57;
+  background: transparent;
+  cursor: default;
+}
+
 .multi-add-list .multi-preset-delete:hover {
   color: #fff;
   background: #7f1d1d;
+}
+
+.multi-preset-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 0;
+  padding: 8px 10px 4px;
+  color: #71717a;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.multi-preset-hint svg {
+  vertical-align: -1px;
 }
 
 .oled-mode .multi-stream-page,

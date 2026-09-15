@@ -879,6 +879,9 @@ export function App() {
   const [multiTileOrder, setMultiTileOrder] = useState<number[]>([]);
   // Saved line-ups, mirrored from preferences so the bar can list them.
   const [multiStreamPresets, setMultiStreamPresets] = useState<MultiStreamPreset[]>([]);
+  // Whether the grid keeps its chat column. Held for the run of the app like
+  // the single player's own chat toggle rather than saved.
+  const [multiChatVisible, setMultiChatVisible] = useState(true);
   // Which tile's chat the tabbed Stream Chat is currently showing.
   const [multiChatChannel, setMultiChatChannel] = useState<string | null>(null);
   const [multiChatBroadcasterResult, setMultiChatBroadcasterResult] = useState<{
@@ -1393,7 +1396,7 @@ export function App() {
     if (host) host.scrollTop = host.scrollHeight;
     const frame = requestAnimationFrame(() => setMultiChatPaused(false));
     return () => cancelAnimationFrame(frame);
-  }, [effectiveMultiChatChannel]);
+  }, [effectiveMultiChatChannel, multiChatVisible]);
 
   // Land on the newest message in the same commit that adds it, before the
   // browser paints — exactly what the side chat's feed does (see useChatFeed).
@@ -1423,7 +1426,9 @@ export function App() {
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [multiStreamActive, effectiveMultiChatChannel]);
+    // Hiding the chat throws these nodes away, so bringing it back has to
+    // observe the new ones.
+  }, [multiStreamActive, effectiveMultiChatChannel, multiChatVisible]);
 
   useEffect(
     () => window.desktop.player.onFullscreenChanged(setFullscreen),
@@ -3171,6 +3176,20 @@ export function App() {
     setNotice(`Saved "${label}".`);
   }
 
+  // Editing a preset means pointing it at the streams that are up now, so a
+  // line-up gains or loses somebody by opening it, changing the grid, and
+  // saving it back. It keeps its place in the list.
+  function updateMultiStreamPreset(name: string) {
+    const channels = orderedMultiTiles.map((tile) => tile.channel);
+    if (channels.length === 0) return;
+    saveMultiStreamPresets(
+      multiStreamPresets.map((preset) =>
+        preset.name === name ? { ...preset, channels } : preset,
+      ),
+    );
+    setNotice(`Updated "${name}".`);
+  }
+
   function deleteMultiStreamPreset(name: string) {
     saveMultiStreamPresets(multiStreamPresets.filter((preset) => preset.name !== name));
   }
@@ -4144,7 +4163,11 @@ export function App() {
         </header>
 
         {multiStreamActive ? (
-          <div className="multi-stream-layout">
+          <div
+            className={
+              multiChatVisible ? "multi-stream-layout" : "multi-stream-layout chat-hidden"
+            }
+          >
             <MultiStreamView
               tiles={multiTiles}
               order={shownMultiTileOrder}
@@ -4152,8 +4175,11 @@ export function App() {
               onMove={moveMultiTile}
               presets={multiStreamPresets}
               onSavePreset={saveMultiStreamPreset}
+              onUpdatePreset={updateMultiStreamPreset}
               onDeletePreset={deleteMultiStreamPreset}
               onOpenPreset={(preset) => void openMultiStreamPreset(preset)}
+              chatVisible={multiChatVisible}
+              onToggleChat={() => setMultiChatVisible((visible) => !visible)}
               followedLive={liveFollowedChannels}
               nameFor={nameForChannel}
               tooltipFor={streamTooltipForChannel}
@@ -4179,6 +4205,7 @@ export function App() {
               onToggleFullscreen={() => void window.desktop.player.setFullscreen(!fullscreen)}
               onExit={exitMultiStream}
             />
+            {multiChatVisible && (
             <aside className="multi-chat" aria-label="Stream chat">
               <div
                 className="multi-chat-tabs multi-chat-tabbar"
@@ -4494,6 +4521,7 @@ export function App() {
                 />
               )}
             </aside>
+            )}
           </div>
         ) : activeChannel && !miniPlayerActive ? (
           <section
