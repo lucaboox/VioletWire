@@ -248,6 +248,15 @@
   font-weight: 600;
 }
 
+/* The toggles carry their meaning in the icon and the tooltip, so they get a
+   square footprint rather than a labelled one. */
+.multi-bar-btn.icon-only {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+}
+
 .multi-bar-btn:hover {
   border-color: rgb(255 255 255 / 15%);
   color: white;
@@ -276,6 +285,28 @@
 .multi-theater .multi-stream-layout,
 .fullscreen-mode .multi-stream-layout {
   height: 100%;
+}
+
+/* Once the mouse has been still in theater or fullscreen, the bar hands its
+   row to the grid so the streams take the whole window. It never floats over
+   the top row, which would cover that stream's own name and controls. Any
+   movement brings it back.
+
+   It collapses rather than leaving the layout: `display: none` would stop it
+   being a grid item at all, and the grid would drop into the bar's own row
+   and take its height, which left the streams nothing to draw in. */
+.multi-theater .multi-stream-page.controls-hidden .multi-stream-bar,
+.fullscreen-mode .multi-stream-page.controls-hidden .multi-stream-bar {
+  height: 0;
+  overflow: hidden;
+  border-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The cursor goes with it, in fullscreen only. */
+.fullscreen-mode .multi-stream-page.controls-hidden {
+  cursor: none;
 }
 
 /* Grid layouts scale to the tile count: solo, side-by-side, and 2x2. */
@@ -324,9 +355,10 @@
   cursor: pointer;
 }
 
-/* Once a tile's controls auto-hide, hide its cursor too — same as the single
-   player. Any pointer move reveals the controls and restores the cursor. */
-.multi-tile.controls-hidden {
+/* Once a tile's controls auto-hide, hide its cursor too — but only in
+   fullscreen, where nothing else on screen needs pointing at. Any pointer
+   move reveals the controls and restores the cursor. */
+.fullscreen-mode .multi-tile.controls-hidden {
   cursor: none;
 }
 

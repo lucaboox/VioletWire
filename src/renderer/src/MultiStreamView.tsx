@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import {
   AudioLines,
   Bookmark,
@@ -96,6 +104,20 @@ export function MultiStreamView({
 }: MultiStreamViewProps) {
   const [pickerOpen, setPickerOpen] = useState(tiles.length === 0);
   const [presetsOpen, setPresetsOpen] = useState(false);
+  // The bar keeps out of the way like a tile's own controls do. It only has
+  // anywhere to go in theater and fullscreen, where it floats over the grid,
+  // so that is where the CSS acts on this.
+  const [barShown, setBarShown] = useState(true);
+  const barTimer = useRef<number | null>(null);
+  // Read inside the timeout, which would otherwise close over a stale value
+  // and hide the bar out from under an open menu.
+  const menuOpen = useRef(false);
+  useEffect(() => {
+    menuOpen.current = pickerOpen || presetsOpen;
+  }, [pickerOpen, presetsOpen]);
+  // Whether the pointer is on the bar (or in a menu hanging off it), which
+  // holds it open however long the pointer stays still.
+  const pointerOnBar = useRef(false);
   // The tile being dragged, and the one the pointer is over — only for the
   // highlight; the swap itself is decided on drop.
   const [draggedTile, setDraggedTile] = useState<number | null>(null);
@@ -119,6 +141,50 @@ export function MultiStreamView({
     setDropTile(null);
   }, []);
 
+  // Any movement brings the bar back and restarts the countdown — unless the
+  // pointer is on the bar itself, where somebody reading a tooltip is holding
+  // still on purpose and the bar must stay put until they move off it.
+  const revealBar = useCallback(() => {
+    setBarShown(true);
+    if (barTimer.current !== null) window.clearTimeout(barTimer.current);
+    barTimer.current = null;
+    if (pointerOnBar.current) return;
+    barTimer.current = window.setTimeout(() => {
+      barTimer.current = null;
+      if (!menuOpen.current) setBarShown(false);
+    }, controlsHideDelay);
+  }, [controlsHideDelay]);
+
+  // Whether the pointer is on the bar is read off each movement rather than
+  // from enter/leave handlers on the bar itself: fading the bar out changes
+  // what is under a pointer that never moved, and the leave that follows would
+  // bring the bar straight back and hold it there.
+  const noteMouseMove = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      pointerOnBar.current =
+        event.target instanceof Element && event.target.closest(".multi-stream-bar") !== null;
+      revealBar();
+    },
+    [revealBar],
+  );
+
+  // Leaving the grid altogether is a real move, so the bar stops being held.
+  const leavePage = useCallback(() => {
+    pointerOnBar.current = false;
+    revealBar();
+  }, [revealBar]);
+
+  // Start the first countdown on mount, like the tiles do.
+  useEffect(() => {
+    barTimer.current = window.setTimeout(() => {
+      barTimer.current = null;
+      if (!menuOpen.current) setBarShown(false);
+    }, controlsHideDelay);
+    return () => {
+      if (barTimer.current !== null) window.clearTimeout(barTimer.current);
+    };
+  }, [controlsHideDelay]);
+
   const dropOnTile = useCallback(
     (id: number) => {
       const carried = draggedTileRef.current;
@@ -135,13 +201,19 @@ export function MultiStreamView({
       const target = event.target instanceof Element ? event.target : null;
       if (!target?.closest(".multi-add-picker, .multi-add-toggle")) setPickerOpen(false);
       if (!target?.closest(".multi-preset-menu, .multi-preset-toggle")) setPresetsOpen(false);
+      // Closing a menu hands the bar back to the countdown it was holding off.
+      revealBar();
     };
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [pickerOpen, presetsOpen]);
+  }, [pickerOpen, presetsOpen, revealBar]);
 
   return (
-    <section className="multi-stream-page">
+    <section
+      className={barShown ? "multi-stream-page" : "multi-stream-page controls-hidden"}
+      onMouseLeave={leavePage}
+      onMouseMove={noteMouseMove}
+    >
       <header className="multi-stream-bar">
         <div className="multi-stream-title">
           <button
@@ -159,6 +231,9 @@ export function MultiStreamView({
           </span>
         </div>
         <div className="multi-stream-bar-actions">
+          {/* Taken out of the bar: the sidebar and the search box both add to
+              the grid now, and the empty grid still offers the picker. Kept
+              here in case it is wanted back.
           {canAdd && (
             <button
               className={pickerOpen ? "multi-bar-btn multi-add-toggle active" : "multi-bar-btn multi-add-toggle"}
@@ -171,6 +246,7 @@ export function MultiStreamView({
               <Plus size={16} /> Add stream
             </button>
           )}
+          */}
           <button
             aria-expanded={presetsOpen}
             className={
@@ -185,32 +261,36 @@ export function MultiStreamView({
           >
             <Bookmark size={16} /> Presets
           </button>
+          {/* Icons alone from here: what each one does is in its tooltip. */}
           <button
+            aria-label={chatVisible ? "Hide chat" : "Show chat"}
             aria-pressed={chatVisible}
-            className={chatVisible ? "multi-bar-btn active" : "multi-bar-btn"}
+            className={chatVisible ? "multi-bar-btn icon-only active" : "multi-bar-btn icon-only"}
             onClick={onToggleChat}
             title={chatVisible ? "Hide chat" : "Show chat"}
             type="button"
           >
-            {chatVisible ? <MessageSquare size={16} /> : <MessageSquareOff size={16} />} Chat
+            {chatVisible ? <MessageSquare size={17} /> : <MessageSquareOff size={17} />}
           </button>
           <button
+            aria-label="Theater mode"
             aria-pressed={theater}
-            className={theater ? "multi-bar-btn active" : "multi-bar-btn"}
+            className={theater ? "multi-bar-btn icon-only active" : "multi-bar-btn icon-only"}
             onClick={onToggleTheater}
             title="Theater mode (T)"
             type="button"
           >
-            {theater ? <Minimize2 size={16} /> : <Maximize2 size={16} />} Theater
+            {theater ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
           </button>
           <button
+            aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
             aria-pressed={fullscreen}
-            className={fullscreen ? "multi-bar-btn active" : "multi-bar-btn"}
+            className={fullscreen ? "multi-bar-btn icon-only active" : "multi-bar-btn icon-only"}
             onClick={onToggleFullscreen}
             title={fullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)"}
             type="button"
           >
-            {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />} Fullscreen
+            {fullscreen ? <Minimize size={17} /> : <Maximize size={17} />}
           </button>
           {pickerOpen && canAdd && (
             <AddStreamPicker
