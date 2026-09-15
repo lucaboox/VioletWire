@@ -1,7 +1,19 @@
 import { z } from "zod";
 import { BLOCKED_CHATTER_LIMIT } from "./blocked-chatters";
 import { chatHistoryLimitSchema } from "./chat";
-import { playerModeSchema } from "./player";
+import {
+  MAX_MULTISTREAM_TILES,
+  MULTISTREAM_PRESET_LIMIT,
+  playerModeSchema,
+} from "./player";
+
+/** A named multistream line-up: the channels its tiles were on, in grid order. */
+export const multiStreamPresetSchema = z.object({
+  name: z.string().min(1).max(40),
+  channels: z.array(z.string().min(1).max(80)).min(1).max(MAX_MULTISTREAM_TILES),
+});
+
+export type MultiStreamPreset = z.infer<typeof multiStreamPresetSchema>;
 
 export const mentionSoundIdSchema = z.enum(["ping", "chime", "pop", "knock"]);
 export type MentionSoundId = z.infer<typeof mentionSoundIdSchema>;
@@ -84,6 +96,11 @@ export const appPreferencesSchema = z.object({
    * what chat looked like before they were understood at all.
    */
   chatShowGifs: z.boolean(),
+  /**
+   * Saved multistream line-ups, newest arrangement first in the viewer's own
+   * order. Opening one replaces whatever the grid is showing.
+   */
+  multiStreamPresets: z.array(multiStreamPresetSchema).max(MULTISTREAM_PRESET_LIMIT),
 });
 
 export const appPreferencesPatchSchema = appPreferencesSchema.partial().strict();
@@ -140,6 +157,7 @@ export const defaultAppPreferences: AppPreferences = {
   mentionTabBehavior: "complete",
   blockedChatUsers: [],
   chatShowGifs: true,
+  multiStreamPresets: [],
 };
 
 export interface PreferencesApi {

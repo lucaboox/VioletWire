@@ -302,8 +302,11 @@
   grid-template-rows: 1fr 1fr;
 }
 
-/* With three tiles the first spans the top row for a balanced layout. */
-.multi-grid.count-3 .multi-tile:first-child {
+/* With three tiles the one in the first cell spans the top row for a balanced
+   layout. Tiles are placed by `order`, not by their place in the DOM — moving
+   a tile in the DOM would re-attach its playing video — so this follows the
+   lead class rather than :first-child. */
+.multi-grid.count-3 .multi-tile.lead {
   grid-column: 1 / span 2;
 }
 
@@ -320,6 +323,22 @@
    player. Any pointer move reveals the controls and restores the cursor. */
 .multi-tile.controls-hidden {
   cursor: none;
+}
+
+/* Dragging a stream by its name plate: the one being carried fades, and the
+   one under the pointer shows the cell it would trade for. */
+.multi-tile.dragged {
+  opacity: 0.55;
+}
+
+.multi-tile.drop-target::after {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  border: 2px solid #a78bfa;
+  background: rgb(124 58 237 / 16%);
+  content: "";
+  pointer-events: none;
 }
 
 .multi-tile-overlay {
@@ -367,6 +386,27 @@
   width: 13px;
   height: 13px;
   flex: 0 0 auto;
+}
+
+.multi-tile-name-box[draggable="true"] {
+  cursor: grab;
+}
+
+.multi-tile-name-box[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.multi-tile-name-box:focus-visible {
+  outline: 2px solid #a78bfa;
+  outline-offset: 2px;
+}
+
+.multi-tile-grip {
+  color: #8a8a94;
+}
+
+.multi-tile-name-box:hover .multi-tile-grip {
+  color: #e4e4e7;
 }
 
 /* Compact control cluster at the top-right, auto-hidden with the controls. */
@@ -679,6 +719,86 @@
   padding: 14px 12px;
   color: #8a8a94;
   font-size: 12px;
+}
+
+/* Saved line-ups: a name field with its Save button, then one row per preset
+   with the channels it holds and a delete cross. */
+.multi-preset-save {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 11px;
+  height: 36px;
+  border: 1px solid #6d28d9;
+  border-radius: 7px;
+  color: #e9d5ff;
+  background: #2c1c44;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.multi-preset-save:hover:not(:disabled) {
+  filter: brightness(1.2);
+}
+
+.multi-preset-save:disabled {
+  border-color: #3a3a42;
+  color: #6f6f79;
+  background: #232329;
+  cursor: default;
+}
+
+.multi-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.multi-add-list .multi-preset-open {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 2px;
+  justify-items: start;
+}
+
+.multi-preset-name {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-preset-channels {
+  overflow: hidden;
+  max-width: 100%;
+  color: #8a8a94;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-add-list .multi-preset-delete {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: #8a8a94;
+  background: transparent;
+  cursor: pointer;
+}
+
+.multi-add-list .multi-preset-delete:hover {
+  color: #fff;
+  background: #7f1d1d;
 }
 
 .oled-mode .multi-stream-page,

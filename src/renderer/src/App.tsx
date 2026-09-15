@@ -51,6 +51,8 @@ import {
 } from "lucide-react";
 import {
   formatQualityLabel,
+  MAX_MULTISTREAM_TILES,
+  MULTISTREAM_PRESET_LIMIT,
   type ChatPresentation,
   type MultiStreamTileState,
   type NativePlayerAvailability,
@@ -73,7 +75,11 @@ import type {
 import type { EmoteSetResult } from "../../shared/emotes";
 import type { EmoteStoreUsage } from "../../shared/chat";
 import { EMOTE_STORE_LIMIT_BYTES } from "../../shared/http-cache";
-import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
+import type {
+  AppPreferences,
+  MentionSoundId,
+  MultiStreamPreset,
+} from "../../shared/preferences";
 import type { EmoteProvider, ProviderEmote } from "../../shared/emotes";
 import type {
   ChatBadgeAsset,
@@ -137,6 +143,11 @@ import {
   TwitchChatColorControls,
 } from "./ChatSettingsControls";
 import { playMentionSound } from "./mention-sound";
+import {
+  moveTilePosition,
+  swapTilePositions,
+  tileDisplayOrder,
+} from "./multi-stream-order";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
 import changelogSource from "../../../CHANGELOG.md?raw";
@@ -862,6 +873,12 @@ export function App() {
   const [multiStreamActive, setMultiStreamActive] = useState(false);
   const [multiTheater, setMultiTheater] = useState(false);
   const [multiTiles, setMultiTiles] = useState<MultiStreamTileState[]>([]);
+  // Tile ids in the arrangement the viewer dragged them into. The tiles keep
+  // their place in the DOM so a swap never re-attaches a playing video; this
+  // list only decides which grid cell each one is drawn in.
+  const [multiTileOrder, setMultiTileOrder] = useState<number[]>([]);
+  // Saved line-ups, mirrored from preferences so the bar can list them.
+  const [multiStreamPresets, setMultiStreamPresets] = useState<MultiStreamPreset[]>([]);
   // Which tile's chat the tabbed Stream Chat is currently showing.
   const [multiChatChannel, setMultiChatChannel] = useState<string | null>(null);
   const [multiChatBroadcasterResult, setMultiChatBroadcasterResult] = useState<{
@@ -879,6 +896,21 @@ export function App() {
   const multiChatPinned = useRef(true);
   const multiChatUserScrollAt = useRef(0);
   const [multiChatPaused, setMultiChatPaused] = useState(false);
+  // Tile ids as the grid draws them: the dragged arrangement, with any tile
+  // added since put after it.
+  const shownMultiTileOrder = useMemo(
+    () => tileDisplayOrder(multiTiles.map((tile) => tile.id), multiTileOrder),
+    [multiTiles, multiTileOrder],
+  );
+  // The same tiles in that order, so the chat tabs read left to right like the
+  // grid does and a dragged stream takes its tab along with it.
+  const orderedMultiTiles = useMemo(
+    () =>
+      shownMultiTileOrder
+        .map((id) => multiTiles.find((tile) => tile.id === id))
+        .filter((tile): tile is MultiStreamTileState => tile !== undefined),
+    [shownMultiTileOrder, multiTiles],
+  );
   // The selected chat tab, falling back to the active tile (or first) when the
   // held selection has no tile — derived rather than stored so no effect writes
   // it. A user tab click or tile activation still sets multiChatChannel.
@@ -887,9 +919,9 @@ export function App() {
     if (multiChatChannel && multiTiles.some((tile) => tile.channel === multiChatChannel)) {
       return multiChatChannel;
     }
-    const fallback = multiTiles.find((tile) => tile.active) ?? multiTiles[0];
+    const fallback = multiTiles.find((tile) => tile.active) ?? orderedMultiTiles[0];
     return fallback ? fallback.channel : null;
-  }, [multiStreamActive, multiChatChannel, multiTiles]);
+  }, [multiStreamActive, multiChatChannel, multiTiles, orderedMultiTiles]);
   // The channel the chat pane (connection, emotes, badges, sending) follows:
   // the selected tab in multistream, otherwise the single watched channel.
   const chatChannel = multiStreamActive ? effectiveMultiChatChannel : activeChannel;
@@ -1363,6 +1395,20 @@ export function App() {
     return () => cancelAnimationFrame(frame);
   }, [effectiveMultiChatChannel]);
 
+  // Land on the newest message in the same commit that adds it, before the
+  // browser paints — exactly what the side chat's feed does (see useChatFeed).
+  // The ResizeObserver below cannot cover this on its own: once a busy chat
+  // fills its buffer every batch drops as many rows off the top as it appends,
+  // so the content box often does not change size at all, no observation
+  // fires, and the browser's own scroll anchoring holds the view where the
+  // trimmed rows used to be — leaving the newest lines below the fold until
+  // some later batch happens to change the height.
+  useLayoutEffect(() => {
+    if (!multiChatPinned.current) return;
+    const host = multiChatHost.current;
+    if (host) host.scrollTop = host.scrollHeight;
+  }, [multiDisplayMessages]);
+
   // Keep the chat glued to the bottom while pinned even as content grows — new
   // messages and, crucially, late-loading emote/badge images that expand rows
   // after they first render (the naive "scroll on message" approach missed
@@ -1397,6 +1443,7 @@ export function App() {
       setChatDeletedMessageStyle(preferences.chatDeletedMessageStyle);
       setChatOnLeft(preferences.chatOnLeft);
       setFavoriteChannels(new Set(preferences.favoriteChannels));
+      setMultiStreamPresets(preferences.multiStreamPresets);
       setControlsHideDelay(preferences.controlsHideDelay);
       setPlatformFilter(preferences.platformFilter);
       setSearchPlatformFilter(preferences.searchPlatformFilter);
@@ -1837,10 +1884,18 @@ export function App() {
       preresolveTimer.current = null;
     }
   }, []);
-  const followedChannelActivator = useRef(watchChannel);
-  followedChannelActivator.current = watchChannel;
+  // A sidebar channel opens on its own, except while multistream is up, where
+  // it joins the grid. Held in a ref so the row callback keeps one identity and
+  // a list of hundreds doesn't reconcile every time the player state ticks.
+  const followedChannelActivator = useRef<(channel: FollowedChannel) => void>(
+    () => undefined,
+  );
+  followedChannelActivator.current = (channel) => {
+    if (multiStreamActive) addChannelToMultiStream(channel.login);
+    else void watchChannel(channel.login, channel);
+  };
   const activateFollowedChannel = useCallback((channel: FollowedChannel) => {
-    void followedChannelActivator.current(channel.login, channel);
+    followedChannelActivator.current(channel);
   }, []);
   const openFollowedChannelMenu = useCallback(
     (login: string, x: number, y: number) => setChannelMenu({ login, x, y }),
@@ -2918,6 +2973,24 @@ export function App() {
     void watchChannel(channel.login, channel);
   }
 
+  // While multistream is up, picking a channel anywhere — the sidebar, the
+  // search box — joins the grid instead of replacing it with a single player.
+  // The grid is what the viewer is looking at, and leaving it to watch one
+  // stream is what the back arrow is for.
+  function addChannelToMultiStream(channel: string) {
+    if (multiTiles.length >= MAX_MULTISTREAM_TILES) {
+      setNotice(`Multistream is full at ${MAX_MULTISTREAM_TILES} streams. Remove one first.`);
+      return;
+    }
+    void addMultiTile(channel);
+  }
+
+  function addSearchResultToMultiStream(channel: string) {
+    setTopSearchOpen(false);
+    setChannelInput("");
+    addChannelToMultiStream(channel);
+  }
+
   async function watchChannel(
     channel: string,
     identity?: ChannelNavigationIdentity,
@@ -3034,7 +3107,16 @@ export function App() {
   function leaveMultiStream() {
     if (!multiStreamActive) return;
     window.desktop.player.multiStop();
+    // Fullscreen belongs to the grid that asked for it. Leaving multistream
+    // while fullscreen must give the window back, or whatever comes next
+    // (Home, a single stream) opens filling the whole screen with no way out
+    // but the keyboard.
+    if (fullscreen) {
+      void window.desktop.player.setFullscreen(false);
+      setFullscreen(false);
+    }
     setMultiTiles([]);
+    setMultiTileOrder([]);
     setMultiChatChannel(null);
     setMultiStreamActive(false);
     setMultiTheater(false);
@@ -3063,6 +3145,75 @@ export function App() {
   function removeMultiTile(id: number) {
     window.desktop.player.multiRemoveTile(id);
     setMultiTiles((current) => current.filter((tile) => tile.id !== id));
+  }
+
+  function saveMultiStreamPresets(next: MultiStreamPreset[]) {
+    setMultiStreamPresets(next);
+    void window.desktop.preferences
+      .update({ multiStreamPresets: next })
+      .catch(() => setNotice("VioletWire could not save that multistream preset."));
+  }
+
+  // Saving under a name that already exists replaces it, so re-saving a
+  // line-up after adding a stream to it does the obvious thing.
+  function saveMultiStreamPreset(name: string) {
+    const label = name.trim().slice(0, 40);
+    const channels = orderedMultiTiles.map((tile) => tile.channel);
+    if (!label || channels.length === 0) return;
+    const kept = multiStreamPresets.filter(
+      (preset) => preset.name.toLowerCase() !== label.toLowerCase(),
+    );
+    if (kept.length >= MULTISTREAM_PRESET_LIMIT) {
+      setNotice(`Presets are limited to ${MULTISTREAM_PRESET_LIMIT}. Delete one first.`);
+      return;
+    }
+    saveMultiStreamPresets([...kept, { name: label, channels }]);
+    setNotice(`Saved "${label}".`);
+  }
+
+  function deleteMultiStreamPreset(name: string) {
+    saveMultiStreamPresets(multiStreamPresets.filter((preset) => preset.name !== name));
+  }
+
+  // Starting the manager again replaces the running grid outright, so a preset
+  // simply becomes the new line-up. The chat buffers belong to the streams that
+  // are going away with it.
+  async function openMultiStreamPreset(preset: MultiStreamPreset) {
+    multiChatPending.current = new Map();
+    setMultiChatBuffers(new Map());
+    setMultiChatStates(new Map());
+    setMultiChatChannel(null);
+    setMultiTileOrder([]);
+    setMultiTiles(await window.desktop.player.multiStart(preset.channels));
+  }
+
+  // Dropping one stream on another trades their cells; the keyboard walks a
+  // stream along one cell at a time. Both work off the order as it is being
+  // shown, so a tile added since the last drag keeps the place it was given.
+  function swapMultiTiles(one: number, other: number) {
+    setMultiTileOrder((current) =>
+      swapTilePositions(
+        tileDisplayOrder(
+          multiTiles.map((tile) => tile.id),
+          current,
+        ),
+        one,
+        other,
+      ),
+    );
+  }
+
+  function moveMultiTile(id: number, delta: number) {
+    setMultiTileOrder((current) =>
+      moveTilePosition(
+        tileDisplayOrder(
+          multiTiles.map((tile) => tile.id),
+          current,
+        ),
+        id,
+        delta,
+      ),
+    );
   }
 
   function activateMultiTile(id: number) {
@@ -3728,6 +3879,10 @@ export function App() {
                         className="top-search-direct"
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => {
+                          if (multiStreamActive) {
+                            addSearchResultToMultiStream(channelInput.trim().toLowerCase());
+                            return;
+                          }
                           setTopSearchOpen(false);
                           const normalizedLogin = channelInput.trim().toLowerCase();
                           void watchChannel(
@@ -3740,7 +3895,8 @@ export function App() {
                         type="button"
                       >
                         <ProviderLogo name="twitch" />
-                        Go to <strong>{channelInput.trim()}</strong> on Twitch
+                        {multiStreamActive ? "Add" : "Go to"}{" "}
+                        <strong>{channelInput.trim()}</strong> on Twitch
                       </button>
                     )}
                     {searchPlatformFilter !== "twitch" && (
@@ -3748,13 +3904,19 @@ export function App() {
                         className="top-search-direct"
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => {
+                          const channel = channelKey("kick", channelInput.trim().toLowerCase());
+                          if (multiStreamActive) {
+                            addSearchResultToMultiStream(channel);
+                            return;
+                          }
                           setTopSearchOpen(false);
-                          void watchChannel(channelKey("kick", channelInput.trim().toLowerCase()));
+                          void watchChannel(channel);
                         }}
                         type="button"
                       >
                         <ProviderLogo name="kick" />
-                        Go to <strong>{channelInput.trim()}</strong> on Kick
+                        {multiStreamActive ? "Add" : "Go to"}{" "}
+                        <strong>{channelInput.trim()}</strong> on Kick
                       </button>
                     )}
                     {topSearchResults.categories.length > 0 && (
@@ -3805,9 +3967,14 @@ export function App() {
                             className="top-search-result"
                             key={`channel-${channel.id}`}
                             onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => chooseSearchChannel(channel)}
+                            onClick={() =>
+                              multiStreamActive
+                                ? addSearchResultToMultiStream(channel.login)
+                                : chooseSearchChannel(channel)
+                            }
                             onMouseEnter={channel.isLive ? () => schedulePreresolve(channel.login) : undefined}
                             onMouseLeave={cancelPreresolve}
+                            title={multiStreamActive ? "Add to multistream" : undefined}
                             type="button"
                           >
                             {channel.profileImageUrl ? (
@@ -3852,9 +4019,15 @@ export function App() {
                             key={`kick-${channel.id}`}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => {
+                              const channelName = channelKey("kick", channel.slug);
+                              if (multiStreamActive) {
+                                addSearchResultToMultiStream(channelName);
+                                return;
+                              }
                               setTopSearchOpen(false);
-                              void watchChannel(channelKey("kick", channel.slug));
+                              void watchChannel(channelName);
                             }}
+                            title={multiStreamActive ? "Add to multistream" : undefined}
                             type="button"
                           >
                             {channel.profileImageUrl ? (
@@ -3974,6 +4147,13 @@ export function App() {
           <div className="multi-stream-layout">
             <MultiStreamView
               tiles={multiTiles}
+              order={shownMultiTileOrder}
+              onSwap={swapMultiTiles}
+              onMove={moveMultiTile}
+              presets={multiStreamPresets}
+              onSavePreset={saveMultiStreamPreset}
+              onDeletePreset={deleteMultiStreamPreset}
+              onOpenPreset={(preset) => void openMultiStreamPreset(preset)}
               followedLive={liveFollowedChannels}
               nameFor={nameForChannel}
               tooltipFor={streamTooltipForChannel}
@@ -4009,10 +4189,10 @@ export function App() {
                   } as CSSProperties
                 }
               >
-                {multiTiles.length === 0 ? (
+                {orderedMultiTiles.length === 0 ? (
                   <span className="multi-chat-empty-tabs">Add a stream to see its chat</span>
                 ) : (
-                  multiTiles.map((tile) => {
+                  orderedMultiTiles.map((tile) => {
                     const channelName = nameForChannel(tile.channel);
                     const platform = parseChannelKey(tile.channel).platform;
                     const chatSelected = effectiveMultiChatChannel === tile.channel;

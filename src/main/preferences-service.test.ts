@@ -118,6 +118,7 @@ describe("PreferencesService", () => {
       mentionTabBehavior: "complete",
       blockedChatUsers: [],
       chatShowGifs: true,
+      multiStreamPresets: [],
     });
   });
 

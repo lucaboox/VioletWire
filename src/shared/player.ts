@@ -214,6 +214,10 @@ export type NativeHlsStateReport = z.infer<typeof nativeHlsStateReportSchema>;
 // active tile plays audio.
 export const MAX_MULTISTREAM_TILES = 4;
 
+// How many named line-ups the viewer can keep. Generous for a feature people
+// use to flip between a handful of regular sets.
+export const MULTISTREAM_PRESET_LIMIT = 24;
+
 export interface MultiStreamTile {
   id: number;
   channel: string;

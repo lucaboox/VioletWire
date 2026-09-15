@@ -1,13 +1,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
+  Bookmark,
   ChevronLeft,
+  GripVertical,
   Maximize,
   Maximize2,
   Minimize,
   Minimize2,
   Plus,
   RotateCcw,
+  Save,
   Settings,
   Volume2,
   VolumeX,
@@ -19,6 +22,7 @@ import {
   type NativeQuality,
   type NativeQualityValue,
 } from "../../shared/player";
+import type { MultiStreamPreset } from "../../shared/preferences";
 import type { FollowedChannel } from "../../shared/twitch";
 import { channelKey, parseChannelKey, type Platform } from "../../shared/platform";
 import { ProviderLogo } from "./ProviderLogo";
@@ -27,6 +31,16 @@ import "./multi-stream.css";
 
 interface MultiStreamViewProps {
   tiles: MultiStreamTileState[];
+  /** Tile ids in the arrangement the grid draws them in. */
+  order: number[];
+  /** Trade two tiles' cells, after a drop. */
+  onSwap: (one: number, other: number) => void;
+  /** Walk one tile `delta` cells along, from the keyboard. */
+  onMove: (id: number, delta: number) => void;
+  presets: MultiStreamPreset[];
+  onSavePreset: (name: string) => void;
+  onDeletePreset: (name: string) => void;
+  onOpenPreset: (preset: MultiStreamPreset) => void;
   followedLive: FollowedChannel[];
   nameFor: (login: string) => string;
   tooltipFor: (channel: string) => string;
@@ -47,6 +61,13 @@ interface MultiStreamViewProps {
 
 export function MultiStreamView({
   tiles,
+  order,
+  onSwap,
+  onMove,
+  presets,
+  onSavePreset,
+  onDeletePreset,
+  onOpenPreset,
   followedLive,
   nameFor,
   tooltipFor,
@@ -65,25 +86,50 @@ export function MultiStreamView({
   onExit,
 }: MultiStreamViewProps) {
   const [pickerOpen, setPickerOpen] = useState(tiles.length === 0);
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  // The tile being dragged, and the one the pointer is over — only for the
+  // highlight; the swap itself is decided on drop.
+  const [draggedTile, setDraggedTile] = useState<number | null>(null);
+  const [dropTile, setDropTile] = useState<number | null>(null);
+  // The drop handler reads the ref, not the state: a drop that arrives before
+  // React has re-rendered since the drag started would otherwise see no tile
+  // being carried and quietly do nothing.
+  const draggedTileRef = useRef<number | null>(null);
   const canAdd = tiles.length < MAX_MULTISTREAM_TILES;
+  const canReorder = tiles.length > 1;
   const usedLogins = useMemo(() => new Set(tiles.map((tile) => tile.channel)), [tiles]);
 
-  // Close the add-stream menu when clicking anywhere outside it or its toggle.
+  const startDrag = useCallback((id: number) => {
+    draggedTileRef.current = id;
+    setDraggedTile(id);
+  }, []);
+
+  const endDrag = useCallback(() => {
+    draggedTileRef.current = null;
+    setDraggedTile(null);
+    setDropTile(null);
+  }, []);
+
+  const dropOnTile = useCallback(
+    (id: number) => {
+      const carried = draggedTileRef.current;
+      if (carried !== null && carried !== id) onSwap(carried, id);
+      endDrag();
+    },
+    [endDrag, onSwap],
+  );
+
+  // Close a bar menu when clicking anywhere outside it or its own toggle.
   useEffect(() => {
-    if (!pickerOpen) return;
+    if (!pickerOpen && !presetsOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        (target.closest(".multi-add-picker") || target.closest(".multi-add-toggle"))
-      ) {
-        return;
-      }
-      setPickerOpen(false);
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target?.closest(".multi-add-picker, .multi-add-toggle")) setPickerOpen(false);
+      if (!target?.closest(".multi-preset-menu, .multi-preset-toggle")) setPresetsOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [pickerOpen]);
+  }, [pickerOpen, presetsOpen]);
 
   return (
     <section className="multi-stream-page">
@@ -107,12 +153,29 @@ export function MultiStreamView({
           {canAdd && (
             <button
               className={pickerOpen ? "multi-bar-btn multi-add-toggle active" : "multi-bar-btn multi-add-toggle"}
-              onClick={() => setPickerOpen((open) => !open)}
+              onClick={() => {
+                setPresetsOpen(false);
+                setPickerOpen((open) => !open);
+              }}
               type="button"
             >
               <Plus size={16} /> Add stream
             </button>
           )}
+          <button
+            aria-expanded={presetsOpen}
+            className={
+              presetsOpen ? "multi-bar-btn multi-preset-toggle active" : "multi-bar-btn multi-preset-toggle"
+            }
+            onClick={() => {
+              setPickerOpen(false);
+              setPresetsOpen((open) => !open);
+            }}
+            title="Saved line-ups"
+            type="button"
+          >
+            <Bookmark size={16} /> Presets
+          </button>
           <button
             aria-pressed={theater}
             className={theater ? "multi-bar-btn active" : "multi-bar-btn"}
@@ -142,6 +205,17 @@ export function MultiStreamView({
               onClose={() => setPickerOpen(false)}
             />
           )}
+          {presetsOpen && (
+            <PresetMenu
+              canSave={tiles.length > 0}
+              nameFor={nameFor}
+              onClose={() => setPresetsOpen(false)}
+              onDelete={onDeletePreset}
+              onOpen={onOpenPreset}
+              onSave={onSavePreset}
+              presets={presets}
+            />
+          )}
         </div>
       </header>
 
@@ -154,6 +228,16 @@ export function MultiStreamView({
             tooltip={tooltipFor(tile.channel)}
             platform={parseChannelKey(tile.channel).platform}
             controlsHideDelay={controlsHideDelay}
+            position={Math.max(0, order.indexOf(tile.id))}
+            positionCount={tiles.length}
+            canReorder={canReorder}
+            dragged={draggedTile === tile.id}
+            dropTarget={dropTile === tile.id && draggedTile !== tile.id}
+            onDragStart={startDrag}
+            onDragEnd={endDrag}
+            onDragOverTile={setDropTile}
+            onDropTile={dropOnTile}
+            onMove={onMove}
             onRemove={onRemove}
             onActivate={onActivate}
             onToggleMute={onToggleMute}
@@ -181,6 +265,17 @@ interface MultiTileProps {
   tooltip: string;
   platform: Platform;
   controlsHideDelay: number;
+  /** Which grid cell this tile is drawn in; the DOM order never changes. */
+  position: number;
+  positionCount: number;
+  canReorder: boolean;
+  dragged: boolean;
+  dropTarget: boolean;
+  onDragStart: (id: number) => void;
+  onDragEnd: () => void;
+  onDragOverTile: (id: number) => void;
+  onDropTile: (id: number) => void;
+  onMove: (id: number, delta: number) => void;
   onRemove: (id: number) => void;
   onActivate: (id: number) => void;
   onToggleMute: (id: number) => void;
@@ -195,6 +290,16 @@ const MultiTile = memo(function MultiTile({
   tooltip,
   platform,
   controlsHideDelay,
+  position,
+  positionCount,
+  canReorder,
+  dragged,
+  dropTarget,
+  onDragStart,
+  onDragEnd,
+  onDragOverTile,
+  onDropTile,
+  onMove,
   onRemove,
   onActivate,
   onToggleMute,
@@ -260,9 +365,25 @@ const MultiTile = memo(function MultiTile({
         "multi-tile",
         tile.active ? "active" : "",
         barVisible ? "" : "controls-hidden",
+        position === 0 ? "lead" : "",
+        dragged ? "dragged" : "",
+        dropTarget ? "drop-target" : "",
       ]
         .filter(Boolean)
         .join(" ")}
+      style={{ order: position }}
+      onDragOver={(event) => {
+        if (!canReorder || dragged) return;
+        // Without this the browser refuses the drop and no drop event fires.
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        onDragOverTile(tile.id);
+      }}
+      onDrop={(event) => {
+        if (!canReorder) return;
+        event.preventDefault();
+        onDropTile(tile.id);
+      }}
       onClick={() => onActivate(tile.id)}
       onAuxClick={(event) => {
         if (event.button !== 1) return;
@@ -300,7 +421,37 @@ const MultiTile = memo(function MultiTile({
           {status === "error" && !offline && error && <p>{error}</p>}
         </div>
       )}
-      <div className="multi-tile-name-box">
+      {/* The name plate doubles as the grip: drag it onto another stream to
+          trade places, or focus it and walk the stream along with the arrow
+          keys. Dragging the tile itself would fight the volume slider. */}
+      <div
+        aria-label={
+          canReorder
+            ? `${name}, stream ${position + 1} of ${positionCount}. Drag onto another stream to swap places, or use the left and right arrow keys.`
+            : undefined
+        }
+        className="multi-tile-name-box"
+        draggable={canReorder}
+        onDragEnd={onDragEnd}
+        onDragStart={(event) => {
+          if (!canReorder) return;
+          event.dataTransfer.effectAllowed = "move";
+          // A drag only starts once the transfer carries something.
+          event.dataTransfer.setData("text/plain", String(tile.id));
+          onDragStart(tile.id);
+        }}
+        onKeyDown={(event) => {
+          if (!canReorder) return;
+          const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+          if (delta === 0) return;
+          event.preventDefault();
+          onMove(tile.id, delta);
+        }}
+        role={canReorder ? "button" : undefined}
+        tabIndex={canReorder ? 0 : undefined}
+        title={canReorder ? "Drag onto another stream to swap places" : undefined}
+      >
+        {canReorder && <GripVertical aria-hidden="true" className="multi-tile-grip" size={13} />}
         {tile.active && <span className={`multi-tile-live-dot ${platform}`} title="Audio playing" />}
         <ProviderLogo name={platform} />
         <span className="multi-tile-name" title={tooltip}>{name}</span>
@@ -445,7 +596,14 @@ function AddStreamPicker({ followedLive, usedLogins, onAdd, onClose }: AddStream
       </div>
       <div className="multi-add-list">
         {available.map((channel) => (
-          <button key={channel.login} onClick={() => onAdd(channel.login)} type="button">
+          // The avatar carries its service's colour — purple for Twitch, green
+          // for Kick — since the list mixes both and the names alone don't say.
+          <button
+            className={`service-ring ${parseChannelKey(channel.login).platform}`}
+            key={channel.login}
+            onClick={() => onAdd(channel.login)}
+            type="button"
+          >
             {channel.profileImageUrl && <img alt="" src={channel.profileImageUrl} />}
             <span className="multi-add-name">{channel.displayName}</span>
             <span className="multi-add-game">{channel.category || "Live"}</span>
@@ -454,6 +612,99 @@ function AddStreamPicker({ followedLive, usedLogins, onAdd, onClose }: AddStream
         {available.length === 0 && (
           <p className="multi-add-empty">
             <RotateCcw size={13} /> No more live followed channels — type a name above.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface PresetMenuProps {
+  presets: MultiStreamPreset[];
+  /** False with an empty grid, where there is no line-up to name. */
+  canSave: boolean;
+  nameFor: (login: string) => string;
+  onSave: (name: string) => void;
+  onDelete: (name: string) => void;
+  onOpen: (preset: MultiStreamPreset) => void;
+  onClose: () => void;
+}
+
+/** Save the streams that are up under a name, and bring a saved set back. */
+function PresetMenu({
+  presets,
+  canSave,
+  nameFor,
+  onSave,
+  onDelete,
+  onOpen,
+  onClose,
+}: PresetMenuProps) {
+  const [name, setName] = useState("");
+
+  const submit = () => {
+    if (!canSave || name.trim().length === 0) return;
+    onSave(name);
+    setName("");
+    onClose();
+  };
+
+  return (
+    <div className="multi-add-picker multi-preset-menu" role="dialog" aria-label="Multistream presets">
+      <div className="multi-add-field">
+        <input
+          aria-label="Name for the streams that are open"
+          autoFocus
+          disabled={!canSave}
+          maxLength={40}
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") onClose();
+            if (event.key === "Enter") submit();
+          }}
+          placeholder={canSave ? "Name these streams…" : "Add a stream first"}
+          type="text"
+          value={name}
+        />
+        <button
+          className="multi-preset-save"
+          disabled={!canSave || name.trim().length === 0}
+          onClick={submit}
+          type="button"
+        >
+          <Save size={14} /> Save
+        </button>
+      </div>
+      <div className="multi-add-list">
+        {presets.map((preset) => (
+          <div className="multi-preset-row" key={preset.name}>
+            <button
+              className="multi-preset-open"
+              onClick={() => {
+                onOpen(preset);
+                onClose();
+              }}
+              type="button"
+            >
+              <span className="multi-preset-name">{preset.name}</span>
+              <span className="multi-preset-channels">
+                {preset.channels.map((channel) => nameFor(channel)).join(" · ")}
+              </span>
+            </button>
+            <button
+              aria-label={`Delete the ${preset.name} preset`}
+              className="multi-preset-delete"
+              onClick={() => onDelete(preset.name)}
+              title="Delete preset"
+              type="button"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        ))}
+        {presets.length === 0 && (
+          <p className="multi-add-empty">
+            <Bookmark size={13} /> No presets yet — name the streams you have open to save them.
           </p>
         )}
       </div>
