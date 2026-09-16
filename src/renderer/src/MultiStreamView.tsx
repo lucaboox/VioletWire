@@ -13,11 +13,9 @@ import {
   ChevronLeft,
   GripVertical,
   Maximize,
-  Maximize2,
   MessageSquare,
   MessageSquareOff,
   Minimize,
-  Minimize2,
   Plus,
   RotateCcw,
   Save,
@@ -36,6 +34,7 @@ import type { MultiStreamPreset } from "../../shared/preferences";
 import type { FollowedChannel } from "../../shared/twitch";
 import { channelKey, parseChannelKey, type Platform } from "../../shared/platform";
 import { ProviderLogo } from "./ProviderLogo";
+import { SidebarLayoutIcon } from "./SidebarLayoutIcon";
 import { HlsNativeVideo } from "./HlsNativeVideo";
 import "./multi-stream.css";
 
@@ -280,7 +279,7 @@ export function MultiStreamView({
             title="Theater mode (T)"
             type="button"
           >
-            {theater ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+            <SidebarLayoutIcon filled={theater} size={17} />
           </button>
           <button
             aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}

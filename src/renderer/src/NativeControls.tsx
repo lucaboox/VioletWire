@@ -65,6 +65,7 @@ import type { ChatRestrictions } from "../../shared/chat";
 import { EmotePicker } from "./EmotePicker";
 import { setChatEmoteHeight } from "./emote-scale";
 import { ChatBadge } from "./ChatBadge";
+import { SidebarLayoutIcon } from "./SidebarLayoutIcon";
 import { ReplyThread } from "./ReplyThread";
 import { ChatUserCard } from "./ChatUserCard";
 import { ChatEmote } from "./ChatEmote";
@@ -83,27 +84,6 @@ import { useChatSendQueue } from "./use-chat-send-queue";
 // so the app keeps a single icon dependency. Stroked to sit alongside lucide:
 // same 24 grid, same 2px round strokes. Theater fills the panel, so the solid
 // state marks the toggle being on rather than the chrome still being there.
-function SidebarLayoutIcon({ filled, size = 18 }: { filled: boolean; size?: number }) {
-  return (
-    <svg
-      aria-hidden="true"
-      fill="none"
-      height={size}
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      viewBox="0 0 24 24"
-      width={size}
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect height="18" rx="2" width="18" x="3" y="3" />
-      <path d="M15 3v18" />
-      {filled && <path d="M16 4h4v16h-4z" fill="currentColor" stroke="none" />}
-    </svg>
-  );
-}
-
 const initialState: NativePlayerState = {
   status: "idle",
   paused: false,
