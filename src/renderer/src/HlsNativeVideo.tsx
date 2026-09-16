@@ -17,6 +17,63 @@ interface AudioGraph {
   compressor: DynamicsCompressorNode;
 }
 
+/**
+ * The compressor's audio graph, kept against the media element rather than the
+ * component that rendered it.
+ *
+ * An element can only be handed to a MediaElementSourceNode once, and from
+ * then on every sound it makes goes through that node. Building a second graph
+ * for the same element throws, and closing the first one while the element is
+ * still on screen leaves it wired to a dead sink: the audio stops and the
+ * picture, which Chromium paces off the audio clock, drops to a frame every
+ * few seconds. Both used to happen whenever the playback effect re-ran on the
+ * same element — a quality change, a new playlist, or React's development
+ * double-invoke — which is how a stream ended up frozen after being opened,
+ * closed and opened again.
+ */
+const audioGraphs = new WeakMap<HTMLMediaElement, AudioGraph>();
+
+function audioGraphFor(video: HTMLVideoElement): AudioGraph | null {
+  const existing = audioGraphs.get(video);
+  if (existing) return existing;
+  const context = new AudioContext({ latencyHint: "playback" });
+  let source: MediaElementAudioSourceNode;
+  try {
+    source = context.createMediaElementSource(video);
+  } catch {
+    // Already connected to a graph this build cannot see. Sound still reaches
+    // the speakers through it; only the compressor is unavailable.
+    void context.close();
+    return null;
+  }
+  const graph: AudioGraph = {
+    context,
+    source,
+    compressor: context.createDynamicsCompressor(),
+  };
+  graph.compressor.threshold.value = -18;
+  graph.compressor.knee.value = 12;
+  graph.compressor.ratio.value = 4;
+  graph.compressor.attack.value = 0.02;
+  graph.compressor.release.value = 0.25;
+  audioGraphs.set(video, graph);
+  return graph;
+}
+
+/** Closes a retired element's graph, once the element has actually gone. */
+function retireAudioGraph(video: HTMLVideoElement | null): void {
+  // Deliberately a task later: an effect cleanup also runs while the element is
+  // still on screen (React's development double-invoke, and any re-run of the
+  // playback effect), and closing the context then is exactly what breaks it.
+  window.setTimeout(() => {
+    if (!video || video.isConnected) return;
+    const graph = audioGraphs.get(video);
+    if (!graph) return;
+    audioGraphs.delete(video);
+    void graph.context.close();
+  }, 0);
+}
+
 function liveEdge(video: HTMLVideoElement): number | null {
   if (video.seekable.length === 0) return null;
   return video.seekable.end(video.seekable.length - 1);
@@ -73,7 +130,6 @@ function playbackStats(
 export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pausedFrameRef = useRef<HTMLCanvasElement>(null);
-  const audioGraph = useRef<AudioGraph | null>(null);
   const compressorEnabled = useRef(state.compressorEnabled);
   const stateRef = useRef(state);
   const hlsSessionId = state.hlsSource?.sessionId;
@@ -85,6 +141,15 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  // The graph outlives this effect on purpose — see audioGraphs above. All this
+  // asks for is that it be closed once the element has gone. The element is
+  // taken here rather than in the cleanup, where React has already detached
+  // the ref and there would be nothing left to retire.
+  useEffect(() => {
+    const video = videoRef.current;
+    return () => retireAudioGraph(video);
+  }, []);
 
   useEffect(() => {
     compressorEnabled.current = state.compressorEnabled;
@@ -260,22 +325,9 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
 
     const ensureAudioGraph = async (enabled: boolean) => {
       compressorEnabled.current = enabled;
-      if (!enabled && !audioGraph.current) return;
-      if (!audioGraph.current) {
-        const context = new AudioContext({ latencyHint: "playback" });
-        const graph: AudioGraph = {
-          context,
-          source: context.createMediaElementSource(video),
-          compressor: context.createDynamicsCompressor(),
-        };
-        graph.compressor.threshold.value = -18;
-        graph.compressor.knee.value = 12;
-        graph.compressor.ratio.value = 4;
-        graph.compressor.attack.value = 0.02;
-        graph.compressor.release.value = 0.25;
-        audioGraph.current = graph;
-      }
-      const graph = audioGraph.current;
+      if (!enabled && !audioGraphs.has(video)) return;
+      const graph = audioGraphFor(video);
+      if (!graph) return;
       graph.source.disconnect();
       graph.compressor.disconnect();
       if (enabled) {
@@ -533,9 +585,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       hidePausedFrame();
       video.removeAttribute("src");
       video.load();
-      const graph = audioGraph.current;
-      audioGraph.current = null;
-      if (graph) void graph.context.close();
     };
   }, [
     hlsLatencyMode,
