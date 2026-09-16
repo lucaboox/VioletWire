@@ -4,6 +4,55 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.20] - 2026-09-15
+
+### Additions
+
+- Multistream line-ups can be saved. Name the streams you have open from the
+  new Presets menu in the bar, bring that set back whenever you like, and save
+  over one once you have added or dropped somebody.
+- Streams can be rearranged in the grid: drag one by its name plate onto
+  another to trade places, or focus the plate and use the left and right arrow
+  keys. The chat tabs follow the grid, and a swap never interrupts playback.
+- A Chat button in the multistream bar puts the chat column away and gives its
+  width to the streams.
+- With multistream open, picking a channel in the sidebar or the search box
+  adds it to the grid instead of replacing it with a single player. Add stream
+  has left the bar as a result; an empty grid still offers its picker.
+
+### Improvements
+
+- The multistream bar now keeps out of the way in theater and fullscreen: it
+  goes once the mouse has been still, handing its row to the streams, and comes
+  back on the next movement. In fullscreen the cursor goes with it. Resting on
+  a button to read its tooltip keeps the bar where it is.
+- A stream's quality list is collected as soon as it starts playing, so its
+  menu opens with the resolutions already in it rather than sitting on
+  "Loading…" for a few seconds.
+- Channels in the add-stream list carry their service's colour around their
+  avatar, and theater mode shows the same icon in multistream as in the single
+  player.
+
+### Fixes
+
+- Opening a stream, closing it and opening it again could leave the picture
+  updating about once every five seconds, with the buffer full and no error
+  reported. The audio compressor's graph was rebuilt for each playback session
+  although it belongs to the video itself, which left the video attached to an
+  audio output that had been closed. Chromium paces the picture off the audio
+  clock, so the frames crawled along with it.
+- Chat in multistream could leave the newest messages below the fold for a
+  moment on a busy channel, correcting itself a second later. Nothing held the
+  view at the bottom in the moment the messages arrived, and once the buffer is
+  full every batch drops as many lines off the top as it adds, so the list
+  often does not change size at all and the one thing watching for it never
+  fired.
+- Leaving multistream while fullscreen kept the window fullscreen, so whatever
+  came next opened filling the screen.
+- The button that brings chat back could not be clicked in fullscreen, where
+  the faded toolbar above it went on swallowing clicks across the top of the
+  picture.
+
 ## [0.3.4-alpha.19] - 2026-09-03
 
 ### Fixes
