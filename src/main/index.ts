@@ -1015,6 +1015,16 @@ async function createWindow(): Promise<void> {
     sendToWindow(createdWindow, "window:fullscreen-changed", false);
   });
 
+  // A fresh load of the interface — a reload, or the error screen's Reload
+  // button — starts with nothing playing, so anything the old page had going
+  // is taken down with it rather than left running with no page to show it:
+  // the player and its chat, and multistream's tiles and their chats.
+  mainWindow.webContents.on("did-start-navigation", (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    destroyPlayer();
+    if (multiStreamManager.isActive()) multiStreamManager.stop();
+    multiChatService.stop();
+  });
   mainWindow.on("close", () => persistWindowState(true));
   mainWindow.on("closed", () => {
     if (windowStateTimer) clearTimeout(windowStateTimer);
