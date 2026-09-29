@@ -11,3 +11,7 @@ coverage/
 vendor/native/
 native/*/build/
 AGENTS.md
+
+# Serena code-assistant state
+.serena/
+__pycache__/
