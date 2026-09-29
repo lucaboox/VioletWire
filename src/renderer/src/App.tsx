@@ -13,6 +13,7 @@ import {
 import {
   ArrowDown,
   Clock,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Compass,
@@ -51,6 +52,7 @@ import {
 } from "lucide-react";
 import {
   formatQualityLabel,
+  MAX_MULTISTREAM_TILES,
   type ChatPresentation,
   type NativePlayerAvailability,
   type NativePlayerState,
@@ -72,7 +74,11 @@ import type {
 import type { EmoteSetResult } from "../../shared/emotes";
 import type { EmoteStoreUsage } from "../../shared/chat";
 import { EMOTE_STORE_LIMIT_BYTES } from "../../shared/http-cache";
-import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
+import type {
+  AppPreferences,
+  MentionSoundId,
+  MultiStreamPreset,
+} from "../../shared/preferences";
 import type { EmoteProvider, ProviderEmote } from "../../shared/emotes";
 import type {
   ChatBadgeAsset,
@@ -886,6 +892,24 @@ export function App() {
     () => ({ twitch: viewerLogin, kick: kickViewerLogin }),
     [viewerLogin, kickViewerLogin],
   );
+  // The saved line-ups menu hanging off the top bar's Multistream button.
+  const [topPresetsOpen, setTopPresetsOpen] = useState(false);
+  useEffect(() => {
+    if (!topPresetsOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".top-multistream-group")) return;
+      setTopPresetsOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTopPresetsOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOutside, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOutside, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [topPresetsOpen]);
   const playMentionAlert = useCallback(() => {
     const mention = mentionSettings.current;
     if (mention.enabled) playMentionSound(mention.soundId, mention.volume);
@@ -2914,6 +2938,14 @@ export function App() {
     setActiveSection("home");
   }, [leaveMultiStream]);
 
+  // From the top bar a preset either becomes the line-up of the grid already
+  // open, or opens the grid with it.
+  function openPresetFromTopBar(preset: MultiStreamPreset) {
+    setTopPresetsOpen(false);
+    if (multiStreamActive) multiStream.openPreset(preset);
+    else void enterMultiStream(preset.channels);
+  }
+
   // Both are handed to the memoised grid, so they only change when the
   // followed lists they read do.
   const nameForChannel = useCallback(
@@ -3410,6 +3442,16 @@ export function App() {
               </button>
             ))}
           </div>
+          {multiStreamActive && (
+            // With the grid up a channel here joins it instead of opening on
+            // its own, and nothing else on screen says so.
+            <p className="followed-multistream-hint" role="note">
+              <LayoutGrid aria-hidden="true" size={13} />
+              {multiTiles.length >= MAX_MULTISTREAM_TILES
+                ? "The grid is full — close a stream to add another"
+                : "Click a channel to add it to the grid"}
+            </p>
+          )}
           <div className="followed-list">
             {sidebarLiveChannels.length + sidebarOfflineChannels.length === 0 &&
               platformFilter === "kick" &&
@@ -3797,17 +3839,60 @@ export function App() {
               Standard
             </button>
           </div>
-          <button
-            aria-pressed={multiStreamActive}
-            className={multiStreamActive ? "top-multistream active" : "top-multistream"}
-            disabled={authState.status !== "signed-in"}
-            onClick={() => (multiStreamActive ? exitMultiStream() : void enterMultiStream())}
-            title="Watch up to 4 streams at once"
-            type="button"
-          >
-            <LayoutGrid size={16} />
-            <span>Multistream</span>
-          </button>
+          <div className="top-multistream-group">
+            <button
+              aria-pressed={multiStreamActive}
+              className={[
+                "top-multistream",
+                multiStreamActive ? "active" : "",
+                multiStreamPresets.length > 0 ? "with-presets" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              disabled={authState.status !== "signed-in"}
+              onClick={() => (multiStreamActive ? exitMultiStream() : void enterMultiStream())}
+              title="Watch up to 4 streams at once"
+              type="button"
+            >
+              <LayoutGrid size={16} />
+              <span>Multistream</span>
+            </button>
+            {/* A saved line-up, straight from anywhere — no need to open an
+                empty grid first just to reach its Presets menu. */}
+            {multiStreamPresets.length > 0 && (
+              <button
+                aria-expanded={topPresetsOpen}
+                aria-haspopup="menu"
+                aria-label="Open a saved multistream"
+                className={
+                  topPresetsOpen || multiStreamActive
+                    ? "top-multistream-presets active"
+                    : "top-multistream-presets"
+                }
+                disabled={authState.status !== "signed-in"}
+                onClick={() => setTopPresetsOpen((open) => !open)}
+                title="Open a saved line-up"
+                type="button"
+              >
+                <ChevronDown size={14} />
+              </button>
+            )}
+            {topPresetsOpen && (
+              <div aria-label="Saved multistreams" className="top-preset-menu" role="menu">
+                {multiStreamPresets.map((preset) => (
+                  <button
+                    key={preset.name}
+                    onClick={() => openPresetFromTopBar(preset)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <strong>{preset.name}</strong>
+                    <small>{preset.channels.map((channel) => nameForChannel(channel)).join(" · ")}</small>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             className="sign-in"
             disabled={authBusy}
