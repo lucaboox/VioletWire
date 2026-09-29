@@ -51,10 +51,7 @@ import {
 } from "lucide-react";
 import {
   formatQualityLabel,
-  MAX_MULTISTREAM_TILES,
-  MULTISTREAM_PRESET_LIMIT,
   type ChatPresentation,
-  type MultiStreamTileState,
   type NativePlayerAvailability,
   type NativePlayerState,
   type NativeQualityValue,
@@ -75,11 +72,7 @@ import type {
 import type { EmoteSetResult } from "../../shared/emotes";
 import type { EmoteStoreUsage } from "../../shared/chat";
 import { EMOTE_STORE_LIMIT_BYTES } from "../../shared/http-cache";
-import type {
-  AppPreferences,
-  MentionSoundId,
-  MultiStreamPreset,
-} from "../../shared/preferences";
+import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
 import type { EmoteProvider, ProviderEmote } from "../../shared/emotes";
 import type {
   ChatBadgeAsset,
@@ -88,7 +81,6 @@ import type {
   ChatMessage,
   TwitchPickerEmote,
 } from "../../shared/chat";
-import { applyChatMessageBatch } from "../../shared/chat-messages";
 import {
   messageMentionsLogin,
 } from "../../shared/chat";
@@ -102,7 +94,7 @@ import {
   parseChangelog,
 } from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
-import { isChatterBlocked, useBlockedChatters } from "./blocked-chatters";
+import { useBlockedChatters } from "./blocked-chatters";
 import { usePreference } from "./use-preference";
 import { BlockedChattersSettings } from "./BlockedChattersSettings";
 import { ChatComposerInput } from "./ChatComposerInput";
@@ -148,11 +140,7 @@ import {
   viewerNameFor,
   type ViewerNames,
 } from "./mention-alert";
-import {
-  moveTilePosition,
-  swapTilePositions,
-  tileDisplayOrder,
-} from "./multi-stream-order";
+import { useMultiStream } from "./use-multi-stream";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
 import changelogSource from "../../../CHANGELOG.md?raw";
@@ -875,61 +863,65 @@ export function App() {
     behindLive: false,
     quality: "best",
   });
-  const [multiStreamActive, setMultiStreamActive] = useState(false);
-  const [multiTheater, setMultiTheater] = useState(false);
-  const [multiTiles, setMultiTiles] = useState<MultiStreamTileState[]>([]);
-  // Tile ids in the arrangement the viewer dragged them into. The tiles keep
-  // their place in the DOM so a swap never re-attaches a playing video; this
-  // list only decides which grid cell each one is drawn in.
-  const [multiTileOrder, setMultiTileOrder] = useState<number[]>([]);
-  // Saved line-ups, mirrored from preferences so the bar can list them.
-  const [multiStreamPresets, setMultiStreamPresets] = useState<MultiStreamPreset[]>([]);
-  // Whether the grid keeps its chat column. Held for the run of the app like
-  // the single player's own chat toggle rather than saved.
-  const [multiChatVisible, setMultiChatVisible] = useState(true);
-  // Which tile's chat the tabbed Stream Chat is currently showing.
-  const [multiChatChannel, setMultiChatChannel] = useState<string | null>(null);
-  const [multiChatBroadcasterResult, setMultiChatBroadcasterResult] = useState<{
-    channel: string;
-    id: string | null;
-  } | null>(null);
-  // All tile channels stay connected at once; each keeps its own message buffer
-  // so switching tabs is instant and nothing is missed in the background.
-  const [multiChatBuffers, setMultiChatBuffers] = useState<Map<string, ChatMessage[]>>(new Map());
-  const [multiChatStates, setMultiChatStates] = useState<
-    Map<string, ChatConnectionState>
-  >(new Map());
-  const multiChatHost = useRef<HTMLDivElement>(null);
-  const multiChatContent = useRef<HTMLDivElement>(null);
-  const multiChatPinned = useRef(true);
-  const multiChatUserScrollAt = useRef(0);
-  const [multiChatPaused, setMultiChatPaused] = useState(false);
-  // Tile ids as the grid draws them: the dragged arrangement, with any tile
-  // added since put after it.
-  const shownMultiTileOrder = useMemo(
-    () => tileDisplayOrder(multiTiles.map((tile) => tile.id), multiTileOrder),
-    [multiTiles, multiTileOrder],
+  const mentionSettings = useRef<{
+    enabled: boolean;
+    names: ViewerNames;
+    volume: number;
+    soundId: MentionSoundId;
+    /** The chat on screen, which is the only one the side chat's alert covers. */
+    channel: string | null;
+  }>({
+    enabled: false,
+    names: { twitch: "", kick: "" },
+    volume: 70,
+    soundId: "ping",
+    channel: null,
+  });
+  const viewerLogin =
+    authState.status === "signed-in" ? authState.account.login.toLowerCase() : "";
+  const kickViewerLogin = kickAccount?.username.toLowerCase() ?? "";
+  // The viewer's name on each service, so a mention in Kick chat is looked for
+  // under their Kick name rather than their Twitch one.
+  const viewerNames = useMemo<ViewerNames>(
+    () => ({ twitch: viewerLogin, kick: kickViewerLogin }),
+    [viewerLogin, kickViewerLogin],
   );
-  // The same tiles in that order, so the chat tabs read left to right like the
-  // grid does and a dragged stream takes its tab along with it.
-  const orderedMultiTiles = useMemo(
-    () =>
-      shownMultiTileOrder
-        .map((id) => multiTiles.find((tile) => tile.id === id))
-        .filter((tile): tile is MultiStreamTileState => tile !== undefined),
-    [shownMultiTileOrder, multiTiles],
-  );
-  // The selected chat tab, falling back to the active tile (or first) when the
-  // held selection has no tile — derived rather than stored so no effect writes
-  // it. A user tab click or tile activation still sets multiChatChannel.
-  const effectiveMultiChatChannel = useMemo(() => {
-    if (!multiStreamActive) return null;
-    if (multiChatChannel && multiTiles.some((tile) => tile.channel === multiChatChannel)) {
-      return multiChatChannel;
-    }
-    const fallback = multiTiles.find((tile) => tile.active) ?? orderedMultiTiles[0];
-    return fallback ? fallback.channel : null;
-  }, [multiStreamActive, multiChatChannel, multiTiles, orderedMultiTiles]);
+  const playMentionAlert = useCallback(() => {
+    const mention = mentionSettings.current;
+    if (mention.enabled) playMentionSound(mention.soundId, mention.volume);
+  }, []);
+
+  const multiStream = useMultiStream({
+    fullscreen,
+    notify: setNotice,
+    viewerNames,
+    onMention: playMentionAlert,
+  });
+  const {
+    active: multiStreamActive,
+    theater: multiTheater,
+    tiles: multiTiles,
+    orderedTiles: orderedMultiTiles,
+    shownOrder: shownMultiTileOrder,
+    presets: multiStreamPresets,
+    setPresets: setMultiStreamPresets,
+    chatVisible: multiChatVisible,
+    chatChannel: effectiveMultiChatChannel,
+    chatStates: multiChatStates,
+    chatPaused: multiChatPaused,
+    chatBroadcasterId: multiChatBroadcasterId,
+    displayMessages: multiDisplayMessages,
+    tabActivity: multiChatTabActivity,
+    chatHost: multiChatHost,
+    chatContent: multiChatContent,
+    scrollChatToBottom: scrollMultiChatToBottom,
+    handleChatScroll: handleMultiChatScroll,
+    noteChatUserScroll: noteMultiChatUserScroll,
+    selectChatTab: selectMultiChatTab,
+    addChannel: addMultiStreamChannel,
+    start: startMultiStream,
+    stop: stopMultiStream,
+  } = multiStream;
   // The channel the chat pane (connection, emotes, badges, sending) follows:
   // the selected tab in multistream, otherwise the single watched channel.
   const chatChannel = multiStreamActive ? effectiveMultiChatChannel : activeChannel;
@@ -957,9 +949,7 @@ export function App() {
   // over and the other tabs stay empty rather than showing Twitch's.
   const pickerProviderEmotes = chatIsKick ? kickSevenTvEmotes : providerEmoteMaps;
   const chatBroadcasterId = multiStreamActive
-    ? multiChatBroadcasterResult?.channel === effectiveMultiChatChannel
-      ? multiChatBroadcasterResult.id
-      : null
+    ? multiChatBroadcasterId
     : (streamMetadata?.broadcasterId ?? null);
   const currentPinnedChatMessage =
     pinnedChatResult?.channel === chatChannel
@@ -1016,18 +1006,8 @@ export function App() {
     };
   }, [authState.status, chatBroadcasterId, chatChannel]);
 
-  // Multistream keeps a buffer per tab rather than going through the chat feed
-  // engine, so the blocked list is applied to it here as well.
   const blockedChatters = useBlockedChatters();
   const chatShowGifs = usePreference((preferences) => preferences.chatShowGifs);
-  const multiDisplayMessages = useMemo(() => {
-    const buffered = effectiveMultiChatChannel
-      ? (multiChatBuffers.get(effectiveMultiChatChannel) ?? [])
-      : [];
-    return blockedChatters.size === 0
-      ? buffered
-      : buffered.filter((message) => !isChatterBlocked(message.login));
-  }, [blockedChatters, effectiveMultiChatChannel, multiChatBuffers]);
   const chatProviderEmotes = useMemo(() => {
     const combined = new Map<string, ProviderEmote>();
     // Channel sets win over global sets in each service; provider priority
@@ -1049,20 +1029,6 @@ export function App() {
   const chatHost = useRef<HTMLDivElement>(null);
   const chatInputHost = useRef<HTMLDivElement>(null);
   const chatComposerHost = useRef<HTMLFormElement>(null);
-  const mentionSettings = useRef<{
-    enabled: boolean;
-    names: ViewerNames;
-    volume: number;
-    soundId: MentionSoundId;
-    /** The chat on screen, which is the only one this feed's alert covers. */
-    channel: string | null;
-  }>({
-    enabled: false,
-    names: { twitch: "", kick: "" },
-    volume: 70,
-    soundId: "ping",
-    channel: null,
-  });
 
   // Fires for every arriving message before batching; used only for the
   // mention alert. The feed engine (batching, scroll/pause, trimming) is
@@ -1279,170 +1245,6 @@ export function App() {
     };
   }, []);
 
-  // Keep the multistream tile list in sync with the main process. Upsert each
-  // tile by id, and drop tiles the manager reports removed.
-  useEffect(() => {
-    const removeState = window.desktop.player.onMultiTileState((tile) => {
-      setMultiTiles((current) => {
-        const next = current.filter((existing) => existing.id !== tile.id);
-        next.push(tile);
-        next.sort((left, right) => left.id - right.id);
-        return next;
-      });
-    });
-    const removeRemoved = window.desktop.player.onMultiTileRemoved((id) => {
-      setMultiTiles((current) => current.filter((tile) => tile.id !== id));
-    });
-    return () => {
-      removeState();
-      removeRemoved();
-    };
-  }, []);
-
-  // Load the selected tab's broadcaster id for its channel emotes/badges. The
-  // messages themselves come from the always-connected per-channel buffers.
-  useEffect(() => {
-    if (!multiStreamActive || !effectiveMultiChatChannel) return;
-    const target = parseChannelKey(effectiveMultiChatChannel);
-    let cancelled = false;
-    const request =
-      target.platform === "kick"
-        ? window.desktop.kick
-            .getChannel(target.login)
-            .then((channel) => channel?.id ?? null)
-        : window.desktop.twitch
-            .getStreamMetadata(effectiveMultiChatChannel)
-            .then((meta) => meta?.broadcasterId ?? null);
-    void request
-      .then((broadcasterId) => {
-        if (!cancelled) {
-          setMultiChatBroadcasterResult({
-            channel: effectiveMultiChatChannel,
-            id: broadcasterId,
-          });
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [multiStreamActive, effectiveMultiChatChannel]);
-
-  // Buffer every tile channel's chat. Messages are batched on a short interval
-  // so busy channels don't re-render the app per message.
-  const multiChatPending = useRef<Map<string, ChatMessage[]>>(new Map());
-  // Listeners stay registered so no message is missed between starting
-  // multistream and this effect running; they're idle when main isn't sending.
-  useEffect(() => {
-    const removeMessage = window.desktop.player.onMultiChatMessage((channel, message) => {
-      const pending = multiChatPending.current;
-      pending.set(channel, [...(pending.get(channel) ?? []), message]);
-    });
-    const removeState = window.desktop.player.onMultiChatState((channel, state) => {
-      setMultiChatStates((current) => {
-        const next = new Map(current);
-        next.set(channel, state);
-        return next;
-      });
-    });
-    return () => {
-      removeMessage();
-      removeState();
-    };
-  }, []);
-
-  // The batch flush only needs to tick while multistream is up — otherwise it
-  // was firing every 150ms for the life of the app doing nothing.
-  useEffect(() => {
-    if (!multiStreamActive) return;
-    const flush = window.setInterval(() => {
-      if (multiChatPending.current.size === 0) return;
-      const batch = multiChatPending.current;
-      multiChatPending.current = new Map();
-      setMultiChatBuffers((current) => {
-        const next = new Map(current);
-        for (const [channel, messages] of batch) {
-          next.set(channel, applyChatMessageBatch(current.get(channel) ?? [], messages));
-        }
-        return next;
-      });
-    }, 150);
-    return () => window.clearInterval(flush);
-  }, [multiStreamActive]);
-
-  const scrollMultiChatToBottom = useCallback(() => {
-    const host = multiChatHost.current;
-    if (host) host.scrollTop = host.scrollHeight;
-    multiChatPinned.current = true;
-    setMultiChatPaused(false);
-  }, []);
-
-  // Only a real wheel/pointer scroll pauses the feed. Programmatic scrolls (tab
-  // switches, jump-to-bottom) and content-driven reflow (emote images loading)
-  // must not — otherwise switching chats can leave it stuck "scrolled up".
-  const handleMultiChatScroll = useCallback(() => {
-    const host = multiChatHost.current;
-    if (!host) return;
-    const atBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 40;
-    if (atBottom) {
-      multiChatPinned.current = true;
-      setMultiChatPaused(false);
-      return;
-    }
-    if (Date.now() - multiChatUserScrollAt.current < 700) {
-      multiChatPinned.current = false;
-      setMultiChatPaused(true);
-    }
-  }, []);
-
-  const noteMultiChatUserScroll = useCallback(() => {
-    multiChatUserScrollAt.current = Date.now();
-  }, []);
-
-  // A new tab starts pinned to the newest message. Clear the paused state
-  // directly (a short new chat may not fire a scroll event to clear it) and
-  // drop any stale scroll intent so the first reflow can't re-pause it.
-  useLayoutEffect(() => {
-    multiChatPinned.current = true;
-    multiChatUserScrollAt.current = 0;
-    const host = multiChatHost.current;
-    if (host) host.scrollTop = host.scrollHeight;
-    const frame = requestAnimationFrame(() => setMultiChatPaused(false));
-    return () => cancelAnimationFrame(frame);
-  }, [effectiveMultiChatChannel, multiChatVisible]);
-
-  // Land on the newest message in the same commit that adds it, before the
-  // browser paints — exactly what the side chat's feed does (see useChatFeed).
-  // The ResizeObserver below cannot cover this on its own: once a busy chat
-  // fills its buffer every batch drops as many rows off the top as it appends,
-  // so the content box often does not change size at all, no observation
-  // fires, and the browser's own scroll anchoring holds the view where the
-  // trimmed rows used to be — leaving the newest lines below the fold until
-  // some later batch happens to change the height.
-  useLayoutEffect(() => {
-    if (!multiChatPinned.current) return;
-    const host = multiChatHost.current;
-    if (host) host.scrollTop = host.scrollHeight;
-  }, [multiDisplayMessages]);
-
-  // Keep the chat glued to the bottom while pinned even as content grows — new
-  // messages and, crucially, late-loading emote/badge images that expand rows
-  // after they first render (the naive "scroll on message" approach missed
-  // these and left the view stuck above the newest line).
-  useEffect(() => {
-    if (!multiStreamActive) return;
-    const host = multiChatHost.current;
-    const content = multiChatContent.current;
-    if (!host || !content) return;
-    const observer = new ResizeObserver(() => {
-      if (multiChatPinned.current) host.scrollTop = host.scrollHeight;
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-    // Hiding the chat throws these nodes away, so bringing it back has to
-    // observe the new ones.
-  }, [multiStreamActive, effectiveMultiChatChannel, multiChatVisible]);
-
   useEffect(
     () => window.desktop.player.onFullscreenChanged(setFullscreen),
     [],
@@ -1497,7 +1299,8 @@ export function App() {
       disposed = true;
       removeListener();
     };
-  }, []);
+    // The presets setter comes from the multistream hook and never changes.
+  }, [setMultiStreamPresets]);
 
   useEffect(() => {
     if (!preferencesReady) return;
@@ -1557,15 +1360,6 @@ export function App() {
     window.desktop.chat.setHistoryLimit(chatHistoryLimit);
   }, [chatHistoryLimit, preferencesReady]);
 
-  const viewerLogin =
-    authState.status === "signed-in" ? authState.account.login.toLowerCase() : "";
-  const kickViewerLogin = kickAccount?.username.toLowerCase() ?? "";
-  // The viewer's name on each service, so a mention in Kick chat is looked for
-  // under their Kick name rather than their Twitch one.
-  const viewerNames = useMemo<ViewerNames>(
-    () => ({ twitch: viewerLogin, kick: kickViewerLogin }),
-    [viewerLogin, kickViewerLogin],
-  );
   // Whose name marks a row as a mention in the chat on screen.
   const chatViewerName = viewerNameFor(chatChannel, viewerNames);
 
@@ -1927,7 +1721,7 @@ export function App() {
     () => undefined,
   );
   followedChannelActivator.current = (channel) => {
-    if (multiStreamActive) addChannelToMultiStream(channel.login);
+    if (multiStreamActive) void addMultiStreamChannel(channel.login);
     else void watchChannel(channel.login, channel);
   };
   const activateFollowedChannel = useCallback((channel: FollowedChannel) => {
@@ -2544,37 +2338,6 @@ export function App() {
     theaterMode,
   ]);
 
-  // Multistream shortcuts: T = theater, F = fullscreen. Same guards as the
-  // single player — ignore modifier combos (Alt+F etc.) and keys typed into
-  // chat inputs, buttons, and other interactive controls.
-  useEffect(() => {
-    if (!multiStreamActive) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest(
-          'input, textarea, select, button, a, [contenteditable="true"], [role="textbox"], [role="menu"], [role="dialog"]',
-        )
-      ) {
-        return;
-      }
-      const key = event.key.toLowerCase();
-      if (key === "t") {
-        setMultiTheater((current) => !current);
-      } else if (key === "f") {
-        void window.desktop.player.setFullscreen(!fullscreen);
-      } else if (event.key === "Escape" && fullscreen) {
-        void window.desktop.player.setFullscreen(false);
-      } else if (event.key === "Escape" && multiTheater) {
-        setMultiTheater(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [multiStreamActive, fullscreen, multiTheater]);
-
   const activeChannelFollowState = useMemo<boolean | null>(() => {
     if (!activeChannel) return null;
     const target = parseChannelKey(activeChannel);
@@ -3009,22 +2772,14 @@ export function App() {
     void watchChannel(channel.login, channel);
   }
 
-  // While multistream is up, picking a channel anywhere — the sidebar, the
-  // search box — joins the grid instead of replacing it with a single player.
-  // The grid is what the viewer is looking at, and leaving it to watch one
-  // stream is what the back arrow is for.
-  function addChannelToMultiStream(channel: string) {
-    if (multiTiles.length >= MAX_MULTISTREAM_TILES) {
-      setNotice(`Multistream is full at ${MAX_MULTISTREAM_TILES} streams. Remove one first.`);
-      return;
-    }
-    void addMultiTile(channel);
-  }
-
+  // While multistream is up, picking a channel in the search box joins the
+  // grid instead of replacing it with a single player. The grid is what the
+  // viewer is looking at, and leaving it to watch one stream is what the back
+  // arrow is for.
   function addSearchResultToMultiStream(channel: string) {
     setTopSearchOpen(false);
     setChannelInput("");
-    addChannelToMultiStream(channel);
+    void addMultiStreamChannel(channel);
   }
 
   async function watchChannel(
@@ -3123,10 +2878,10 @@ export function App() {
     setActiveSection("home");
   }
 
-  async function enterMultiStream() {
-    // Carry the currently-watched channel in as the first tile, if any.
-    const seed = activeChannel ? [activeChannel] : [];
-    // Tear down the single-player renderer state before multistream starts.
+  // Tears down the single player, then starts the grid — with the stream that
+  // was on screen as its first tile, or with a saved line-up.
+  async function enterMultiStream(channels?: string[]) {
+    const seed = channels ?? (activeChannel ? [activeChannel] : []);
     setMiniPlayerActive(false);
     setMiniPlayerPosition(null);
     setActiveChannel(null);
@@ -3134,15 +2889,16 @@ export function App() {
     setFullscreen(false);
     setTheaterMode(false);
     setEmotePickerOpen(false);
-    setMultiStreamActive(true);
-    setMultiTiles(await window.desktop.player.multiStart(seed));
+    await startMultiStream(seed);
   }
 
   // Tear down multistream without navigating — used both by the explicit exit
   // and whenever another view (opening a stream, Home/Browse) takes over.
-  function leaveMultiStream() {
+  // Handed to the grid, which is memoised, so it keeps one identity for as
+  // long as nothing it reads has changed.
+  const leaveMultiStream = useCallback(() => {
     if (!multiStreamActive) return;
-    window.desktop.player.multiStop();
+    stopMultiStream();
     // Fullscreen belongs to the grid that asked for it. Leaving multistream
     // while fullscreen must give the window back, or whatever comes next
     // (Home, a single stream) opens filling the whole screen with no way out
@@ -3151,157 +2907,54 @@ export function App() {
       void window.desktop.player.setFullscreen(false);
       setFullscreen(false);
     }
-    setMultiTiles([]);
-    setMultiTileOrder([]);
-    setMultiChatChannel(null);
-    setMultiStreamActive(false);
-    setMultiTheater(false);
-    // Start the next session with clean chat buffers.
-    multiChatPending.current = new Map();
-    setMultiChatBuffers(new Map());
-    setMultiChatStates(new Map());
-  }
+  }, [fullscreen, multiStreamActive, stopMultiStream]);
 
-  function exitMultiStream() {
+  const exitMultiStream = useCallback(() => {
     leaveMultiStream();
     setActiveSection("home");
-  }
+  }, [leaveMultiStream]);
 
-  async function addMultiTile(channel: string) {
-    const tile = await window.desktop.player.multiAddTile(channel);
-    if (!tile) return;
-    setMultiTiles((current) => {
-      const next = current.filter((existing) => existing.id !== tile.id);
-      next.push(tile);
-      next.sort((left, right) => left.id - right.id);
-      return next;
-    });
-  }
+  // Both are handed to the memoised grid, so they only change when the
+  // followed lists they read do.
+  const nameForChannel = useCallback(
+    (channelKey: string): string => {
+      const { platform, login } = parseChannelKey(channelKey);
+      if (platform === "kick") {
+        return (
+          kickFollowedChannels.find((channel) => channel.slug === login)?.displayName ?? login
+        );
+      }
+      return followedChannels.find((channel) => channel.login === login)?.displayName ?? login;
+    },
+    [followedChannels, kickFollowedChannels],
+  );
 
-  function removeMultiTile(id: number) {
-    window.desktop.player.multiRemoveTile(id);
-    setMultiTiles((current) => current.filter((tile) => tile.id !== id));
-  }
+  const streamTooltipForChannel = useCallback(
+    (key: string): string => {
+      const { platform, login } = parseChannelKey(key);
+      const channel =
+        platform === "kick"
+          ? kickFollowedChannels.find((entry) => entry.slug === login)
+          : followedChannels.find((entry) => entry.login === login);
+      const name = channel?.displayName ?? login;
+      if (!channel) return name;
 
-  function saveMultiStreamPresets(next: MultiStreamPreset[]) {
-    setMultiStreamPresets(next);
-    void window.desktop.preferences
-      .update({ multiStreamPresets: next })
-      .catch(() => setNotice("VioletWire could not save that multistream preset."));
-  }
-
-  // Saving under a name that already exists replaces it, so re-saving a
-  // line-up after adding a stream to it does the obvious thing.
-  function saveMultiStreamPreset(name: string) {
-    const label = name.trim().slice(0, 40);
-    const channels = orderedMultiTiles.map((tile) => tile.channel);
-    if (!label || channels.length === 0) return;
-    const kept = multiStreamPresets.filter(
-      (preset) => preset.name.toLowerCase() !== label.toLowerCase(),
-    );
-    if (kept.length >= MULTISTREAM_PRESET_LIMIT) {
-      setNotice(`Presets are limited to ${MULTISTREAM_PRESET_LIMIT}. Delete one first.`);
-      return;
-    }
-    saveMultiStreamPresets([...kept, { name: label, channels }]);
-    setNotice(`Saved "${label}".`);
-  }
-
-  // Editing a preset means pointing it at the streams that are up now, so a
-  // line-up gains or loses somebody by opening it, changing the grid, and
-  // saving it back. It keeps its place in the list.
-  function updateMultiStreamPreset(name: string) {
-    const channels = orderedMultiTiles.map((tile) => tile.channel);
-    if (channels.length === 0) return;
-    saveMultiStreamPresets(
-      multiStreamPresets.map((preset) =>
-        preset.name === name ? { ...preset, channels } : preset,
-      ),
-    );
-    setNotice(`Updated "${name}".`);
-  }
-
-  function deleteMultiStreamPreset(name: string) {
-    saveMultiStreamPresets(multiStreamPresets.filter((preset) => preset.name !== name));
-  }
-
-  // Starting the manager again replaces the running grid outright, so a preset
-  // simply becomes the new line-up. The chat buffers belong to the streams that
-  // are going away with it.
-  async function openMultiStreamPreset(preset: MultiStreamPreset) {
-    multiChatPending.current = new Map();
-    setMultiChatBuffers(new Map());
-    setMultiChatStates(new Map());
-    setMultiChatChannel(null);
-    setMultiTileOrder([]);
-    setMultiTiles(await window.desktop.player.multiStart(preset.channels));
-  }
-
-  // Dropping one stream on another trades their cells; the keyboard walks a
-  // stream along one cell at a time. Both work off the order as it is being
-  // shown, so a tile added since the last drag keeps the place it was given.
-  function swapMultiTiles(one: number, other: number) {
-    setMultiTileOrder((current) =>
-      swapTilePositions(
-        tileDisplayOrder(
-          multiTiles.map((tile) => tile.id),
-          current,
-        ),
-        one,
-        other,
-      ),
-    );
-  }
-
-  function moveMultiTile(id: number, delta: number) {
-    setMultiTileOrder((current) =>
-      moveTilePosition(
-        tileDisplayOrder(
-          multiTiles.map((tile) => tile.id),
-          current,
-        ),
-        id,
-        delta,
-      ),
-    );
-  }
-
-  function activateMultiTile(id: number) {
-    window.desktop.player.multiSetActive(id);
-    // Moving audio focus to a tile also switches its chat into view.
-    const tile = multiTiles.find((entry) => entry.id === id);
-    if (tile) setMultiChatChannel(tile.channel);
-  }
-
-  function nameForChannel(channelKey: string): string {
-    const { platform, login } = parseChannelKey(channelKey);
-    if (platform === "kick") {
-      return kickFollowedChannels.find((channel) => channel.slug === login)?.displayName ?? login;
-    }
-    return followedChannels.find((channel) => channel.login === login)?.displayName ?? login;
-  }
-
-  function streamTooltipForChannel(key: string): string {
-    const { platform, login } = parseChannelKey(key);
-    const channel =
-      platform === "kick"
-        ? kickFollowedChannels.find((entry) => entry.slug === login)
-        : followedChannels.find((entry) => entry.login === login);
-    const name = channel?.displayName ?? login;
-    if (!channel) return name;
-
-    return [
-      name,
-      channel.category || (channel.isLive ? "Live" : "Offline"),
-      channel.title &&
-        (channel.title.length > 96 ? `${channel.title.slice(0, 93).trimEnd()}…` : channel.title),
-      channel.isLive
-        ? `${Intl.NumberFormat("en").format(channel.viewerCount)} viewers`
-        : "Offline",
-    ]
-      .filter((line): line is string => Boolean(line))
-      .join("\n");
-  }
+      return [
+        name,
+        channel.category || (channel.isLive ? "Live" : "Offline"),
+        channel.title &&
+          (channel.title.length > 96
+            ? `${channel.title.slice(0, 93).trimEnd()}…`
+            : channel.title),
+        channel.isLive
+          ? `${Intl.NumberFormat("en").format(channel.viewerCount)} viewers`
+          : "Offline",
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n");
+    },
+    [followedChannels, kickFollowedChannels],
+  );
 
   async function navigateTo(section: AppSection) {
     if (section === "settings") {
@@ -3506,6 +3159,9 @@ export function App() {
   const chatSignedIn =
     activeChatPlatform === "kick" ? kickAccount !== null : authState.status === "signed-in";
   const singleChatDisabled = !chatSignedIn || chatBlocked;
+  // Each service signs in on its own, so the prompt names the one this chat needs.
+  const chatSignInPrompt =
+    activeChatPlatform === "kick" ? "Sign in to Kick to chat" : "Sign in to Twitch to chat";
 
   // Both services in one list, in scope order, keyed by channel key so a Kick
   // and a Twitch channel sharing a name stay distinct.
@@ -4199,41 +3855,35 @@ export function App() {
               multiChatVisible ? "multi-stream-layout" : "multi-stream-layout chat-hidden"
             }
           >
+            {/* Every callback here keeps one identity, so the grid and its
+                tiles skip the redraws App makes for chat and everything else. */}
             <MultiStreamView
               tiles={multiTiles}
               order={shownMultiTileOrder}
-              onSwap={swapMultiTiles}
-              onMove={moveMultiTile}
+              onSwap={multiStream.swapTiles}
+              onMove={multiStream.moveTile}
               presets={multiStreamPresets}
-              onSavePreset={saveMultiStreamPreset}
-              onUpdatePreset={updateMultiStreamPreset}
-              onDeletePreset={deleteMultiStreamPreset}
-              onOpenPreset={(preset) => void openMultiStreamPreset(preset)}
+              onSavePreset={multiStream.savePreset}
+              onUpdatePreset={multiStream.updatePreset}
+              onDeletePreset={multiStream.deletePreset}
+              onOpenPreset={multiStream.openPreset}
               chatVisible={multiChatVisible}
-              onToggleChat={() => setMultiChatVisible((visible) => !visible)}
+              onToggleChat={multiStream.toggleChat}
               followedLive={liveFollowedChannels}
               nameFor={nameForChannel}
               tooltipFor={streamTooltipForChannel}
               controlsHideDelay={controlsHideDelay}
-              onAdd={(channel) => void addMultiTile(channel)}
-              onRemove={removeMultiTile}
-              onActivate={activateMultiTile}
-              onToggleMute={(id) =>
-                window.desktop.player.multiControl(id, { command: "toggle-mute" })
-              }
-              onSetVolume={(id, volume) =>
-                window.desktop.player.multiControl(id, { command: "set-volume", value: volume })
-              }
-              onToggleCompressor={(id, enabled) =>
-                window.desktop.player.multiControl(id, { command: "set-compressor", enabled })
-              }
-              onSetQuality={(id, quality) =>
-                void window.desktop.player.multiSetQuality(id, quality)
-              }
+              onAdd={addMultiStreamChannel}
+              onRemove={multiStream.removeTile}
+              onActivate={multiStream.activateTile}
+              onToggleMute={multiStream.toggleMute}
+              onSetVolume={multiStream.setVolume}
+              onToggleCompressor={multiStream.toggleCompressor}
+              onSetQuality={multiStream.setQuality}
               theater={multiTheater}
-              onToggleTheater={() => setMultiTheater((current) => !current)}
+              onToggleTheater={multiStream.toggleTheater}
               fullscreen={fullscreen}
-              onToggleFullscreen={() => void window.desktop.player.setFullscreen(!fullscreen)}
+              onToggleFullscreen={multiStream.toggleFullscreen}
               onExit={exitMultiStream}
             />
             {multiChatVisible && (
@@ -4254,9 +3904,21 @@ export function App() {
                     const channelName = nameForChannel(tile.channel);
                     const platform = parseChannelKey(tile.channel).platform;
                     const chatSelected = effectiveMultiChatChannel === tile.channel;
+                    // Only ever set on a tab that is not on screen.
+                    const activity = multiChatTabActivity.get(tile.channel);
                     return (
                       <button
-                        aria-label={`Open chat for ${channelName}${tile.active ? ", audio active" : ""}`}
+                        aria-label={[
+                          `Open chat for ${channelName}`,
+                          tile.active ? "audio active" : "",
+                          activity === "mention"
+                            ? "you were mentioned"
+                            : activity === "message"
+                              ? "new messages"
+                              : "",
+                        ]
+                          .filter(Boolean)
+                          .join(", ")}
                         aria-selected={chatSelected}
                         className={
                           [
@@ -4269,12 +3931,17 @@ export function App() {
                             .join(" ")
                         }
                         key={tile.id}
-                        onClick={() => setMultiChatChannel(tile.channel)}
+                        onClick={() => selectMultiChatTab(tile.channel)}
                         role="tab"
                         title={streamTooltipForChannel(tile.channel)}
                         type="button"
                       >
                         <span>{channelName}</span>
+                        {activity && (
+                          <i aria-hidden="true" className={`multi-chat-tab-activity ${activity}`}>
+                            {activity === "mention" ? "@" : null}
+                          </i>
+                        )}
                       </button>
                     );
                   })
@@ -4370,13 +4037,13 @@ export function App() {
                     emoteMatch={emoteAutocompleteMatch}
                     mentionTab={mentionTabBehavior}
                     aria-label="Send a chat message"
-                    disabled={authState.status !== "signed-in" || !effectiveMultiChatChannel}
+                    disabled={!chatSignedIn || !effectiveMultiChatChannel}
                     maxLength={500}
                     mentionCandidates={chatMentionCandidates}
                     onValueChange={setChatInput}
                     placeholder={
-                      authState.status !== "signed-in"
-                        ? "Sign in to chat"
+                      !chatSignedIn
+                        ? chatSignInPrompt
                         : replyingTo
                           ? "Write a reply"
                           : `Message ${nameForChannel(effectiveMultiChatChannel ?? "")}`
@@ -4519,7 +4186,7 @@ export function App() {
                   </div>
                   <button
                     className={chatIsKick ? "chat-send-button kick" : "chat-send-button"}
-                    disabled={authState.status !== "signed-in" || !chatInput.trim()}
+                    disabled={!chatSignedIn || !chatInput.trim()}
                     type="submit"
                   >
                     {replyingTo ? "Reply" : "Chat"}
@@ -5235,11 +4902,11 @@ export function App() {
                           mentionCandidates={chatMentionCandidates}
                           onValueChange={setChatInput}
                           placeholder={
-                            authState.status === "signed-in"
+                            chatSignedIn
                               ? replyingTo
                                 ? "Write a reply"
                                 : "Send a message"
-                              : "Sign in to send messages"
+                              : chatSignInPrompt
                           }
                           ref={chatInputHost}
                           sevenTvEmotes={chatProviderEmotes}

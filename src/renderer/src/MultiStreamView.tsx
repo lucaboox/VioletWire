@@ -72,7 +72,11 @@ interface MultiStreamViewProps {
   onExit: () => void;
 }
 
-export function MultiStreamView({
+/**
+ * Memoised: App redraws for chat and a great deal else, and every prop handed
+ * in here keeps its identity across those redraws.
+ */
+export const MultiStreamView = memo(function MultiStreamView({
   tiles,
   order,
   onSwap,
@@ -355,7 +359,7 @@ export function MultiStreamView({
       </div>
     </section>
   );
-}
+});
 
 interface MultiTileProps {
   tile: MultiStreamTileState;
