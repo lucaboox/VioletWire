@@ -58,7 +58,9 @@ export const nativeControlsContextSchema = z.object({
   chatVisible: z.boolean(),
   chatPresentation: chatPresentationSchema,
   channelDisplayName: z.string().min(1).max(50).optional(),
-  viewerLogin: z.string().max(25).regex(/^[a-z0-9_]*$/).optional(),
+  // The viewer's name on the service this channel is on: a Kick name as well
+  // as a Twitch login, so hyphens are allowed too.
+  viewerLogin: z.string().max(32).regex(/^[a-z0-9_-]*$/).optional(),
   // Whether the viewer follows the channel, so the overlay composer can block a
   // followers-only chat it is certain the viewer cannot post to.
   isFollowed: z.boolean().optional(),

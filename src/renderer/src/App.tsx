@@ -144,6 +144,11 @@ import {
 } from "./ChatSettingsControls";
 import { playMentionSound } from "./mention-sound";
 import {
+  shouldAlertMention,
+  viewerNameFor,
+  type ViewerNames,
+} from "./mention-alert";
+import {
   moveTilePosition,
   swapTilePositions,
   tileDisplayOrder,
@@ -1046,10 +1051,18 @@ export function App() {
   const chatComposerHost = useRef<HTMLFormElement>(null);
   const mentionSettings = useRef<{
     enabled: boolean;
-    login: string;
+    names: ViewerNames;
     volume: number;
     soundId: MentionSoundId;
-  }>({ enabled: false, login: "", volume: 70, soundId: "ping" });
+    /** The chat on screen, which is the only one this feed's alert covers. */
+    channel: string | null;
+  }>({
+    enabled: false,
+    names: { twitch: "", kick: "" },
+    volume: 70,
+    soundId: "ping",
+    channel: null,
+  });
 
   // Fires for every arriving message before batching; used only for the
   // mention alert. The feed engine (batching, scroll/pause, trimming) is
@@ -1058,8 +1071,8 @@ export function App() {
     const mention = mentionSettings.current;
     if (
       mention.enabled &&
-      !message.historical &&
-      messageMentionsLogin(message, mention.login)
+      mention.channel !== null &&
+      shouldAlertMention(message, mention.names, [mention.channel])
     ) {
       playMentionSound(mention.soundId, mention.volume);
     }
@@ -1546,15 +1559,33 @@ export function App() {
 
   const viewerLogin =
     authState.status === "signed-in" ? authState.account.login.toLowerCase() : "";
+  const kickViewerLogin = kickAccount?.username.toLowerCase() ?? "";
+  // The viewer's name on each service, so a mention in Kick chat is looked for
+  // under their Kick name rather than their Twitch one.
+  const viewerNames = useMemo<ViewerNames>(
+    () => ({ twitch: viewerLogin, kick: kickViewerLogin }),
+    [viewerLogin, kickViewerLogin],
+  );
+  // Whose name marks a row as a mention in the chat on screen.
+  const chatViewerName = viewerNameFor(chatChannel, viewerNames);
 
   useEffect(() => {
     mentionSettings.current = {
       enabled: mentionSoundEnabled,
-      login: viewerLogin,
+      names: viewerNames,
       volume: mentionSoundVolume,
       soundId: mentionSoundId,
+      // Multistream sounds its own alerts, across every tile's chat.
+      channel: multiStreamActive ? null : activeChannel,
     };
-  }, [mentionSoundEnabled, mentionSoundVolume, mentionSoundId, viewerLogin]);
+  }, [
+    activeChannel,
+    mentionSoundEnabled,
+    mentionSoundVolume,
+    mentionSoundId,
+    multiStreamActive,
+    viewerNames,
+  ]);
 
   useEffect(() => window.desktop.chat.onState(setChatConnectionState), []);
   useEffect(
@@ -4277,7 +4308,9 @@ export function App() {
                         ? "Add a stream to see its chat"
                         : multiChatStates.get(effectiveMultiChatChannel) === "connected"
                           ? "Waiting for the next chat message…"
-                          : "Connecting to Twitch chat…"}
+                          : parseChannelKey(effectiveMultiChatChannel).platform === "kick"
+                            ? "Connecting to Kick chat…"
+                            : "Connecting to Twitch chat…"}
                     </div>
                   )}
                   {multiDisplayMessages.map((message) => (
@@ -4286,7 +4319,7 @@ export function App() {
                       deletedMessageStyle={chatDeletedMessageStyle}
                       deletedRevealed={revealedDeletedMessages.has(message.id)}
                       key={message.id}
-                      mentioned={messageMentionsLogin(message, viewerLogin)}
+                      mentioned={messageMentionsLogin(message, chatViewerName)}
                       message={message}
                       oledMode={oledMode}
                       onOpenThread={setOpenReplyThread}
@@ -4832,7 +4865,7 @@ export function App() {
                           chatVisible,
                           chatPresentation,
                           channelDisplayName: activeChannelDisplayName ?? undefined,
-                          viewerLogin,
+                          viewerLogin: chatViewerName,
                           isFollowed: activeChannelFollowState ?? undefined,
                         }}
                         inlineVisible={nativeControlsVisible}
@@ -5080,7 +5113,7 @@ export function App() {
                           badges={twitchBadges}
                           deletedMessageStyle={chatDeletedMessageStyle}
                           deletedRevealed={revealedDeletedMessages.has(message.id)}
-                          mentioned={messageMentionsLogin(message, viewerLogin)}
+                          mentioned={messageMentionsLogin(message, chatViewerName)}
                           message={message}
                           oledMode={oledMode}
                           onRevealDeleted={revealDeletedMessage}

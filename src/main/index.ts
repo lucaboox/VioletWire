@@ -809,7 +809,12 @@ function destroyPlayer(invalidatePendingOpen = true): void {
   if (subscriptionWindow && !subscriptionWindow.isDestroyed()) subscriptionWindow.close();
   subscriptionWindow = null;
   hlsNativePlayer.destroy();
+  // Both transports, whichever the closed stream was on. Kick's used to stay
+  // subscribed until a Twitch stream happened to replace it, so a closed Kick
+  // chat went on delivering messages — and mention alerts — to nothing on
+  // screen.
   twitchChatService.disconnect();
+  kickChatService.disconnect();
   activePlayerMode = null;
   activeChannelName = null;
   latestNativePlayerState = null;
