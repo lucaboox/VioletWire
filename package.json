@@ -33,7 +33,7 @@
     "electron-updater": "6.8.9",
     "emoji-picker-element": "^1.29.1",
     "flag-icons": "^7.5.0",
-    "hls.js": "^1.6.15",
+    "hls.js": "^1.7.3",
     "lucide-react": "1.24.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
