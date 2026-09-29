@@ -68,7 +68,7 @@ export class StreamPlaybackResolver {
           ...streamlinkPlatformArguments(target.platform),
           channelUrl(target.platform, target.login),
         ],
-        playbackToken,
+        { twitchToken: playbackToken },
         {
           windowsHide: true,
           stdio: ["ignore", "pipe", "ignore"],
@@ -162,11 +162,13 @@ export class StreamPlaybackResolver {
           "error",
           "--stream-url",
           ...streamlinkPlatformArguments(platform),
-          ...(kickCookie === null ? [] : ["--http-cookie", kickCookie]),
           channelUrl(platform, login),
           quality,
         ],
-        playbackToken,
+        // The Kick session goes the same private way as the Twitch token.
+        // On the command line it was readable by any program on the machine
+        // whenever Twitch playback was not linked.
+        { twitchToken: playbackToken, httpCookie: kickCookie },
         {
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],

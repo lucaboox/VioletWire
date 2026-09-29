@@ -474,6 +474,58 @@ function isAllowedKickNavigation(rawUrl: string): boolean {
 // The signed-in Kick website session, so its subscribe page acts as the user.
 const KICK_WEBSITE_PARTITION = "persist:violetwire-kick";
 
+/**
+ * Hands a link a web page asked to open to the default browser — but only a
+ * web link. shell.openExternal launches whatever Windows has registered for a
+ * scheme, so passing it anything a page supplies would let that page start
+ * other programs on the machine.
+ */
+function openWebLinkExternally(rawUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return;
+  void shell.openExternal(url.toString()).catch((reason: unknown) => {
+    console.error(
+      "[external-link] Unable to open URL:",
+      reason instanceof Error ? reason.message : String(reason),
+    );
+  });
+}
+
+/**
+ * The same guards the Twitch windows have, for a page signed in to Kick: it
+ * stays on Kick, and only web links leave it, to the default browser. Applied
+ * to every window Kick opens from it too, since a popup does not inherit the
+ * handlers of the page that opened it.
+ */
+function guardKickContents(contents: Electron.WebContents): void {
+  contents.setWindowOpenHandler(({ url }) => {
+    // Kick opens its clip editor and similar in a window of its own; anything
+    // off Kick goes to the default browser.
+    if (isAllowedKickNavigation(url)) return { action: "allow" };
+    openWebLinkExternally(url);
+    return { action: "deny" };
+  });
+  contents.on("did-create-window", (child) => {
+    child.setMenu(null);
+    guardKickContents(child.webContents);
+  });
+  contents.on("will-navigate", (event, url) => {
+    if (isAllowedKickNavigation(url)) return;
+    event.preventDefault();
+    openWebLinkExternally(url);
+  });
+  contents.on("will-redirect", (event, url) => {
+    // A redirect off Kick is refused rather than opened: it is the page's
+    // doing, not something the viewer clicked.
+    if (!isAllowedKickNavigation(url)) event.preventDefault();
+  });
+}
+
 let kickWindow: BrowserWindow | null = null;
 
 async function openKickWindow(slug: string, title: string): Promise<void> {
@@ -494,7 +546,7 @@ async function openKickWindow(slug: string, title: string): Promise<void> {
     backgroundColor: "#0b0b0e",
     webPreferences: {
       // The signed-in Kick partition, so the page acts as the logged-in user.
-      partition: "persist:violetwire-kick",
+      partition: KICK_WEBSITE_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -502,13 +554,10 @@ async function openKickWindow(slug: string, title: string): Promise<void> {
   });
   kickWindow = window;
   window.setMenu(null);
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    // Kick opens its clip editor and similar in-page, but keep any external
-    // links in the default browser.
-    if (url.startsWith("https://kick.com/")) return { action: "allow" };
-    void shell.openExternal(url);
-    return { action: "deny" };
-  });
+  guardKickContents(window.webContents);
+  window.webContents.session.setPermissionRequestHandler(
+    (_contents, _permission, callback) => callback(false),
+  );
   window.on("closed", () => {
     kickWindow = null;
   });
@@ -1276,25 +1325,36 @@ handleTrusted("kick:get-auth-state", () => kickService.getAuthState());
 handleTrusted("kick:sign-in", () => kickService.signIn());
 handleTrusted("kick:sign-out", () => kickService.signOut());
 handleTrusted("kick:get-followed", () => kickService.getFollowedChannels());
+/**
+ * A Kick channel name as its API takes one, or null. Every handler that puts a
+ * name into a Kick URL goes through this: encoding a path segment still lets
+ * `..` through, which would point a signed-in request at another endpoint.
+ */
+function parseKickSlug(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const slug = raw.trim().toLowerCase();
+  return /^[a-z0-9_-]{1,40}$/.test(slug) ? slug : null;
+}
+
 handleTrusted("kick:open-window", (_event, rawSlug: unknown) => {
-  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
-  if (!/^[a-z0-9_-]+$/.test(slug)) throw new Error("A channel is required.");
+  const slug = parseKickSlug(rawSlug);
+  if (slug === null) throw new Error("A channel is required.");
   return openKickWindow(slug, `${slug} on Kick`);
 });
 handleTrusted("kick:set-following", (_event, rawSlug: unknown, rawFollow: unknown) => {
-  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
-  if (slug.length === 0) throw new Error("A channel is required.");
+  const slug = parseKickSlug(rawSlug);
+  if (slug === null) throw new Error("A channel is required.");
   return kickService.setFollowing(slug, rawFollow === true);
 });
 
 handleTrusted("kick:get-emote-sets", (_event, rawSlug: unknown) => {
-  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
-  return slug.length === 0 ? [] : kickService.getEmoteSets(slug);
+  const slug = parseKickSlug(rawSlug);
+  return slug === null ? [] : kickService.getEmoteSets(slug);
 });
 
 handleTrusted("kick:get-channel", (_event, rawSlug: unknown) => {
-  const slug = typeof rawSlug === "string" ? rawSlug.slice(0, 40).toLowerCase() : "";
-  return slug.length === 0 ? null : kickService.getChannel(slug);
+  const slug = parseKickSlug(rawSlug);
+  return slug === null ? null : kickService.getChannel(slug);
 });
 
 handleTrusted("kick:search", (_event, rawQuery: unknown) => {
