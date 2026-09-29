@@ -147,6 +147,7 @@ import {
   type ViewerNames,
 } from "./mention-alert";
 import { useMultiStream } from "./use-multi-stream";
+import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import type { AppUpdateStatus } from "../../shared/updates";
 import violetWireIcon from "./assets/violetwire-icon.png";
 import changelogSource from "../../../CHANGELOG.md?raw";
@@ -478,6 +479,12 @@ const settingsSearchEntries: {
     title: "OLED mode",
     description: "Use true-black backgrounds throughout VioletWire.",
     keywords: "theme black dark appearance",
+  },
+  {
+    section: "appearance",
+    title: "Keyboard shortcuts",
+    description: "See every shortcut, or press ? anywhere outside a text box.",
+    keywords: "keys hotkeys keybinds fullscreen theater mute space",
   },
   {
     section: "about",
@@ -892,6 +899,25 @@ export function App() {
     () => ({ twitch: viewerLogin, kick: kickViewerLogin }),
     [viewerLogin, kickViewerLogin],
   );
+  // The shortcuts list. "?" opens it from anywhere outside a text box; it
+  // closes itself on Escape.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  useEffect(() => {
+    const openOnQuestionMark = (event: KeyboardEvent) => {
+      if (event.key !== "?" || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setShortcutsOpen(true);
+    };
+    window.addEventListener("keydown", openOnQuestionMark);
+    return () => window.removeEventListener("keydown", openOnQuestionMark);
+  }, []);
   // The saved line-ups menu hanging off the top bar's Multistream button.
   const [topPresetsOpen, setTopPresetsOpen] = useState(false);
   useEffect(() => {
@@ -6692,6 +6718,19 @@ export function App() {
                       <span />
                     </button>
                   </div>
+                  <div className="settings-card">
+                    <div>
+                      <strong>Keyboard shortcuts</strong>
+                      <span>Every shortcut in one list. Press ? anywhere outside a text box to open it.</span>
+                    </div>
+                    <button
+                      className="secondary-button"
+                      onClick={() => setShortcutsOpen(true)}
+                      type="button"
+                    >
+                      Show shortcuts
+                    </button>
+                  </div>
                   </section>
                 )}
                 {!hasSettingsSearch && settingsSection === "about" && (
@@ -6846,6 +6885,18 @@ export function App() {
               </div>
             </section>
           </div>
+        )}
+        {shortcutsOpen && (
+          <KeyboardShortcuts
+            linkPreviewKey={
+              genericLinkPreviewsEnabled && genericLinkPreviewActivation !== "hover"
+                ? genericLinkPreviewActivation === "ctrl"
+                  ? "Ctrl"
+                  : "Alt"
+                : null
+            }
+            onClose={() => setShortcutsOpen(false)}
+          />
         )}
         {changelogOpen && (
           <div

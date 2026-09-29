@@ -1,0 +1,87 @@
+/* The shortcuts list: the settings modal's frame, with the groups laid out in
+   two columns so the whole list fits without scrolling on a normal window. */
+.shortcuts-modal-panel {
+  width: min(820px, calc(100vw - 48px));
+  height: auto;
+}
+
+.shortcuts-modal-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 22px 32px;
+  padding: 20px 24px 26px;
+  overflow-y: auto;
+}
+
+.shortcuts-group h3 {
+  margin: 0 0 8px;
+  color: #c4b5fd;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+}
+
+.shortcuts-note {
+  margin: -4px 0 8px;
+  color: #71717a;
+  font-size: 11px;
+}
+
+.shortcuts-group dl {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.shortcuts-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid #1f1f25;
+}
+
+.shortcuts-row:last-child {
+  border-bottom: 0;
+}
+
+.shortcuts-row dt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.shortcuts-row dd {
+  margin: 0;
+  color: #d4d4d8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.shortcuts-row kbd {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  place-items: center;
+  border: 1px solid #3f3f46;
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  color: #f4f4f5;
+  background: #1c1c21;
+  font: 700 11px/1 inherit;
+  font-family: inherit;
+}
+
+.shortcuts-join {
+  margin: 0 3px 0 0;
+  color: #71717a;
+  font-size: 10px;
+}
+
+.oled-mode .shortcuts-row kbd {
+  background: #0a0a0c;
+}
