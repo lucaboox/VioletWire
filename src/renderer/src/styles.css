@@ -1353,3 +1353,14 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
 .chat-window-placer-screen > button:hover { background: #7c3aed; }
 .oled-mode .chat-window-placer-menu { background: #000; }
 .oled-mode .chat-window-placer-screen { background: #000; }
+/* Shown in place of the app when a screen fails to draw (AppErrorBoundary). */
+.app-crash { display: grid; box-sizing: border-box; min-height: 100vh; align-content: center; justify-items: start; gap: 14px; max-width: 620px; margin: 0 auto; padding: 48px 28px; color: #e4e4e7; background: #09090b; font-family: inherit; }
+.app-crash h1 { margin: 0; font-size: 22px; font-weight: 700; }
+.app-crash p { margin: 0; color: #a1a1aa; font-size: 14px; line-height: 1.55; }
+.app-crash-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.app-crash-actions button { padding: 9px 16px; border: 1px solid #3f3f46; border-radius: 9px; color: #e4e4e7; background: #1a1a1f; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; }
+.app-crash-actions button:first-child { border-color: #7c3aed; color: #f3e8ff; background: #2c1c44; }
+.app-crash-actions button:hover { filter: brightness(1.2); }
+.app-crash details { width: 100%; color: #71717a; font-size: 12px; }
+.app-crash summary { cursor: pointer; }
+.app-crash pre { max-height: 240px; overflow: auto; margin: 8px 0 0; padding: 10px; border-radius: 7px; color: #d4d4d8; background: #141417; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
