@@ -1,3 +1,4 @@
+import { savePreferences } from "./save-preferences";
 import { useSyncExternalStore } from "react";
 
 import {
@@ -60,10 +61,7 @@ export function useBlockedChatters(): ReadonlySet<string> {
 }
 
 function save(logins: string[]): Promise<void> {
-  return window.desktop.preferences
-    .update({ blockedChatUsers: logins })
-    .then(() => undefined)
-    .catch(() => undefined);
+  return savePreferences({ blockedChatUsers: logins }).then(() => undefined);
 }
 
 export function blockChatter(login: string): Promise<void> {

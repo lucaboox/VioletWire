@@ -27,6 +27,7 @@ import {
   type AppPreferencesPatch,
 } from "../../shared/preferences";
 import "./emote-picker.css";
+import { savePreferences } from "./save-preferences";
 import {
   ProviderLogo,
   type ProviderLogoName,
@@ -341,7 +342,7 @@ export function EmotePicker({
         if (Object.keys(patch).length > 0) {
           window.localStorage.removeItem(FAVORITES_KEY);
           window.localStorage.removeItem(SIZE_KEY);
-          void window.desktop.preferences.update(patch).catch(() => undefined);
+          void savePreferences(patch);
         }
       })
       .catch(() => undefined);
@@ -621,9 +622,7 @@ export function EmotePicker({
     if (next.has(emote.key)) next.delete(emote.key);
     else next.add(emote.key);
     setFavorites(next);
-    void window.desktop.preferences
-      .update({ emoteFavorites: [...next] })
-      .catch(() => undefined);
+    void savePreferences({ emoteFavorites: [...next] });
   }
 
   function handleEmoteClick(event: React.MouseEvent, emote: PickerEmote) {
@@ -667,12 +666,10 @@ export function EmotePicker({
       resizing.current = false;
       setSize((current) => {
         cachedPickerSize = { width: current.width, height: current.height };
-        void window.desktop.preferences
-          .update({
+        void savePreferences({
             emotePickerWidth: Math.round(current.width),
             emotePickerHeight: Math.round(current.height),
-          })
-          .catch(() => undefined);
+          });
         return current;
       });
     };
@@ -885,9 +882,7 @@ export function EmotePicker({
           onClick={() => {
             const next = !searchAllProviders;
             setSearchAllProviders(next);
-            void window.desktop.preferences
-              .update({ emoteSearchAllProviders: next })
-              .catch(() => undefined);
+            void savePreferences({ emoteSearchAllProviders: next });
           }}
           title={searchAllProviders ? "Searching all providers" : "Search all providers"}
           type="button"

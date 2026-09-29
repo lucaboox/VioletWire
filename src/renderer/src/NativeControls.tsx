@@ -58,6 +58,7 @@ import type { AppPreferences, MentionSoundId } from "../../shared/preferences";
 import { filterChatMentionCandidates } from "../../shared/chat-content";
 import { readableUsernameColor } from "../../shared/chat-color";
 import { parseChannelKey } from "../../shared/platform";
+import { savePreferences } from "./save-preferences";
 import { ChatComposerInput } from "./ChatComposerInput";
 import { fitComposerHeight } from "./composer-height";
 import { NO_CHAT_RESTRICTIONS } from "../../shared/chat";
@@ -695,8 +696,7 @@ export function NativeControls({
     if (!preferencesReady) return;
     window.desktop.chat.setHistoryLimit(chatHistoryLimit);
     const persistTimer = window.setTimeout(() => {
-      void window.desktop.preferences
-        .update({
+      void savePreferences({
           chatOverlayOpacity: chatOpacity,
           chatTimestamps,
           chatHistoryLimit,
@@ -707,8 +707,7 @@ export function NativeControls({
           mentionSoundVolume,
           mentionSoundId,
           audioCompression: audioCompressionPreference,
-        })
-        .catch(() => undefined);
+        });
     }, 180);
     return () => window.clearTimeout(persistTimer);
   }, [
@@ -870,15 +869,13 @@ export function NativeControls({
   }, [nativeChatOverlay]);
 
   const persistOverlayGeometry = useCallback((geometry: OverlayGeometry) => {
-    void window.desktop.preferences
-      .update({
+    void savePreferences({
         chatOverlayPlaced: true,
         chatOverlayLeft: geometry.left,
         chatOverlayTop: geometry.top,
         chatOverlayWidth: geometry.width,
         chatOverlayHeight: geometry.height,
-      })
-      .catch(() => undefined);
+      });
   }, []);
 
   function beginOverlayGesture(
@@ -950,9 +947,7 @@ export function NativeControls({
 
   function resetOverlayGeometry() {
     setOverlayGeometry(null);
-    void window.desktop.preferences
-      .update({ chatOverlayPlaced: false })
-      .catch(() => undefined);
+    void savePreferences({ chatOverlayPlaced: false });
   }
 
   useEffect(() => {
@@ -1112,7 +1107,7 @@ export function NativeControls({
 
   function toggleFpsOverlay(next: boolean) {
     setFpsOverlay(next);
-    void window.desktop.preferences.update({ showFpsOverlay: next }).catch(() => undefined);
+    void savePreferences({ showFpsOverlay: next });
   }
 
   function closeMenu() {

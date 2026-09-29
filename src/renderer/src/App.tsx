@@ -100,6 +100,7 @@ import {
   parseChangelog,
 } from "../../shared/changelog";
 import { readableUsernameColor } from "../../shared/chat-color";
+import { onPreferenceSaveFailed, savePreferences } from "./save-preferences";
 import { useBlockedChatters } from "./blocked-chatters";
 import { usePreference } from "./use-preference";
 import { BlockedChattersSettings } from "./BlockedChattersSettings";
@@ -899,6 +900,15 @@ export function App() {
     () => ({ twitch: viewerLogin, kick: kickViewerLogin }),
     [viewerLogin, kickViewerLogin],
   );
+  // A setting that could not be written looks changed until the next start and
+  // then quietly reverts, so say so the moment it happens.
+  useEffect(
+    () =>
+      onPreferenceSaveFailed(() =>
+        setNotice("VioletWire could not save that setting, so it will go back when the app restarts."),
+      ),
+    [],
+  );
   // The shortcuts list. "?" opens it from anywhere outside a text box; it
   // closes itself on Escape.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -1355,8 +1365,7 @@ export function App() {
   useEffect(() => {
     if (!preferencesReady) return;
     const persistTimer = window.setTimeout(() => {
-      void window.desktop.preferences
-        .update({
+      void savePreferences({
           preferredPlayerMode: preferredMode,
           playbackLatencyMode,
           chatTimestamps,
@@ -1377,8 +1386,7 @@ export function App() {
           emoteAutocompleteMatch,
           mentionTabBehavior,
           oledMode,
-        })
-        .catch(() => undefined);
+        });
     }, 180);
     return () => window.clearTimeout(persistTimer);
   }, [
@@ -2538,7 +2546,7 @@ export function App() {
     setBrowseSearch("");
     setBrowseError(null);
     setBrowseLoading(true);
-    void window.desktop.preferences.update({ browsePlatform: platform });
+    void savePreferences({ browsePlatform: platform });
   }
 
   function openBrowseStream(stream: BrowseStream) {
@@ -2713,7 +2721,7 @@ export function App() {
     const canSearch = channelInput.trim().length >= 2;
     setTwitchSearchLoading(canSearch && option !== "kick" && authState.status === "signed-in");
     setKickSearchLoading(canSearch && option !== "twitch");
-    void window.desktop.preferences.update({ searchPlatformFilter: option });
+    void savePreferences({ searchPlatformFilter: option });
   }
 
   // Enter opens the full results page — unless a service is pinned by a chip, in
@@ -2779,7 +2787,7 @@ export function App() {
     // toggle and any load-more match it.
     if (platform !== browsePlatform) {
       setBrowsePlatform(platform);
-      void window.desktop.preferences.update({ browsePlatform: platform });
+      void savePreferences({ browsePlatform: platform });
     }
     setActiveSection("browse");
     await openBrowseCategory(category, platform);
@@ -2804,7 +2812,7 @@ export function App() {
       await closePlayer();
       if (browsePlatform !== "twitch") {
         setBrowsePlatform("twitch");
-        void window.desktop.preferences.update({ browsePlatform: "twitch" });
+        void savePreferences({ browsePlatform: "twitch" });
       }
       setActiveSection("browse");
       await openBrowseCategory(category, "twitch");
@@ -3280,9 +3288,7 @@ export function App() {
       const next = new Set(current);
       if (next.has(login)) next.delete(login);
       else next.add(login);
-      void window.desktop.preferences
-        .update({ favoriteChannels: [...next] })
-        .catch(() => undefined);
+      void savePreferences({ favoriteChannels: [...next] });
       return next;
     });
     setChannelMenu(null);
@@ -3452,7 +3458,7 @@ export function App() {
                 key={option}
                 onClick={() => {
                   setPlatformFilter(option);
-                  void window.desktop.preferences.update({ platformFilter: option });
+                  void savePreferences({ platformFilter: option });
                 }}
                 type="button"
               >
@@ -6412,9 +6418,7 @@ export function App() {
                         aria-pressed={chatShowGifs}
                         className={chatShowGifs ? "settings-switch active" : "settings-switch"}
                         onClick={() => {
-                          void window.desktop.preferences
-                            .update({ chatShowGifs: !chatShowGifs })
-                            .catch(() => undefined);
+                          void savePreferences({ chatShowGifs: !chatShowGifs });
                         }}
                         type="button"
                       >
