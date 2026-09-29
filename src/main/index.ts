@@ -1480,10 +1480,20 @@ handleTrusted("chat:send", async (
 ) => {
   const target = channelKeySchema.safeParse(rawChannel);
   if (target.success && parseChannelKey(target.data).platform === "kick") {
-    // The room is whatever the live chat connection is subscribed to, so a
-    // message cannot be posted to a channel that is not the one on screen.
-    const chatroomId = kickChatService.getChatroomId();
-    if (chatroomId === null) throw new Error("Kick chat is not connected.");
+    // The room comes from a live connection to the channel asked for, so a
+    // message can only be posted where it is being read. A multistream tile
+    // has a connection of its own; otherwise it is the single player's, and
+    // only while that is on the same channel — it used to be taken from
+    // whichever room the single player had last joined, so a message typed
+    // into a Kick tile could land in another channel entirely.
+    const { login } = parseChannelKey(target.data);
+    const kickChat =
+      multiChatService.kickChatFor(target.data) ??
+      (kickChatService.getChannel() === login ? kickChatService : null);
+    const chatroomId = kickChat?.getChatroomId() ?? null;
+    if (kickChat === null || chatroomId === null) {
+      throw new Error("Kick chat is not connected.");
+    }
     const replyParentMessageId =
       rawReplyParentMessageId === undefined
         ? undefined
@@ -1491,7 +1501,7 @@ handleTrusted("chat:send", async (
     const replyTarget =
       replyParentMessageId === undefined
         ? undefined
-        : kickChatService.getReplyTarget(replyParentMessageId);
+        : kickChat.getReplyTarget(replyParentMessageId);
     if (replyParentMessageId !== undefined && replyTarget === undefined) {
       throw new Error("The Kick message being replied to is no longer available.");
     }

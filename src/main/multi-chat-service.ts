@@ -56,6 +56,15 @@ export class MultiChatService {
     }
   }
 
+  /**
+   * A Kick tile's own chat connection, which is the only way into that tile's
+   * room: the single player's Kick chat is not connected while the grid is up.
+   */
+  kickChatFor(channel: string): KickChatService | null {
+    const service = this.services.get(channel.toLowerCase());
+    return service instanceof KickChatService ? service : null;
+  }
+
   publishSentMessage(channel: string, message: ChatMessage): void {
     this.recordMessage(channel.toLowerCase(), message);
   }

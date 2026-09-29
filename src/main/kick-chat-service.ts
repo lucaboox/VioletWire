@@ -477,6 +477,11 @@ export class KickChatService {
     return this.chatroomId;
   }
 
+  /** The bare Kick channel name this connection is for, if any. */
+  getChannel(): string | null {
+    return this.channel;
+  }
+
   getReplyTarget(messageId: string): KickChatReplyTarget | undefined {
     return this.replyTargets.get(messageId);
   }
