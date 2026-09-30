@@ -4,6 +4,23 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Improvements
+
+- Low latency mode now plays Twitch streams about three seconds behind the
+  broadcaster, down from six and a half, and a little ahead of Twitch's own
+  player on the same machine. The fragment Twitch is still writing is handed
+  to the player a third of a second at a time instead of waiting two seconds
+  for it to finish, and playback holds itself two seconds behind the newest
+  piece. A stream reaches that distance within a few seconds of opening, and
+  gently speeds up by a few percent if it ever falls behind. Balanced mode and
+  Kick are unchanged.
+- The stream stats show the last error the player reported.
+
+### Fixes
+
+- A Twitch segment whose address Twitch renews while it is listed no longer
+  stops the stream; the player now keeps the address it was first given.
+
 ## [0.3.4-alpha.20] - 2026-09-15
 
 ### Additions

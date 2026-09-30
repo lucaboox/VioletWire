@@ -190,6 +190,11 @@ export interface NativePlayerState {
     playlistUrl: string;
     latencyMode: PlaybackLatencyMode;
     mediaTransport: "direct-cdn" | "chromium-protocol" | "localhost-relay";
+    /**
+     * The playlist publishes the fragment still being written as LL-HLS
+     * parts, so the player can hold itself about two seconds from live.
+     */
+    lowLatencyParts: boolean;
   };
   error?: string;
   transition?: NativePlayerTransition;

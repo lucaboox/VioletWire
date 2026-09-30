@@ -75,15 +75,20 @@ export class HlsNativePlayer {
       if (generation !== this.generation) {
         return { ok: false, reason: "Native playback was cancelled." };
       }
+      // In low-latency mode the relay reads the fragment Twitch is still
+      // writing and publishes it a part at a time as LL-HLS, about two
+      // seconds closer to live than waiting for each fragment to finish.
+      const lowLatencyParts = target.platform === "twitch" && latencyMode === "ultra-low";
       const relay = new FilteredHlsRelay(
         this.getRendererOrigin,
         target.platform,
         {
           // Twitch's EXT-X-TWITCH-PREFETCH responses are proprietary growing
           // segments. hls.js can parse converted entries, but cannot play them
-          // reliably at sustained high bitrates. Completed fragments still
-          // download directly from Twitch's CDN and remain low latency.
+          // reliably at sustained high bitrates, so they are never listed as
+          // segments; parts cut from them are complete pieces instead.
           includePrefetch: false,
+          publishParts: lowLatencyParts,
           directMedia: target.platform === "twitch",
           mediaTransport: this.mediaTransport,
         },
@@ -102,7 +107,7 @@ export class HlsNativePlayer {
             : relay.mediaTransportName === "chromium-protocol"
               ? "Chromium protocol stream"
               : "Localhost compatibility relay",
-        Protocol: "Filtered HLS",
+        Protocol: lowLatencyParts ? "Filtered LL-HLS (parts)" : "Filtered HLS",
       };
       this.updateState({
         hlsSource: {
@@ -110,6 +115,7 @@ export class HlsNativePlayer {
           playlistUrl,
           latencyMode,
           mediaTransport: relay.mediaTransportName,
+          lowLatencyParts,
         },
       });
       return { ok: true };

@@ -74,9 +74,40 @@ function retireAudioGraph(video: HTMLVideoElement | null): void {
   }, 0);
 }
 
+/**
+ * With parts, how far behind the newest published part playback holds, in
+ * seconds. Twitch's own player keeps about two seconds of buffer; the parts
+ * themselves trail the broadcast by well under a second on top of that.
+ */
+const PARTS_TARGET_LATENCY = 2;
+/** Where a parts stream settles once it has stalled repeatedly. */
+const PARTS_STABLE_TARGET_LATENCY = 3.5;
+/** A parts stream this far behind its target jumps back rather than catching up. */
+const PARTS_RESYNC_DISTANCE = 3;
+/**
+ * Just after a parts stream starts, how far behind its target it may be before
+ * it jumps straight there rather than catching up, and for how long.
+ */
+const START_JUMP_DISTANCE = 0.4;
+const START_JUMP_WINDOW_MS = 8_000;
+/** The rates used to close the distance to the target, either way. */
+const CATCH_UP_RATE = 1.04;
+const EASE_OFF_RATE = 0.96;
+
 function liveEdge(video: HTMLVideoElement): number | null {
   if (video.seekable.length === 0) return null;
   return video.seekable.end(video.seekable.length - 1);
+}
+
+/** Seconds of media buffered ahead of the playhead. */
+function forwardBuffer(video: HTMLVideoElement): number {
+  const { buffered, currentTime } = video;
+  for (let index = 0; index < buffered.length; index += 1) {
+    if (currentTime >= buffered.start(index) - 0.1 && currentTime <= buffered.end(index)) {
+      return buffered.end(index) - currentTime;
+    }
+  }
+  return 0;
 }
 
 function playbackStats(
@@ -159,6 +190,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
   const hlsLatencyMode = state.hlsSource?.latencyMode ?? "balanced";
   const hlsMediaTransport =
     state.hlsSource?.mediaTransport ?? "localhost-relay";
+  const hlsLowLatencyParts = state.hlsSource?.lowLatencyParts ?? false;
 
   useEffect(() => {
     stateRef.current = state;
@@ -202,8 +234,10 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       playlistUrl: hlsPlaylistUrl,
       latencyMode: hlsLatencyMode,
       mediaTransport: hlsMediaTransport,
+      lowLatencyParts: hlsLowLatencyParts,
     };
     const lowLatency = source.latencyMode === "ultra-low";
+    const parts = source.lowLatencyParts;
 
     let disposed = false;
     let recoveryTimer: number | null = null;
@@ -217,7 +251,15 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     let hls: Hls | null = null;
     let displayedLatency = 0;
     let stallRecoveries = 0;
+    // The most recent error hls.js reported, for the stats overlay.
+    let lastPlayerError = "None";
     let stabilityProfile = false;
+    // Parts mode only: which way playback is being steered towards its
+    // target distance from live, and a smoothed reading of that distance.
+    let steering: -1 | 0 | 1 = 0;
+    let smoothedLatency: number | null = null;
+    // Until when, once playback first settles, it may jump to its target.
+    let startJumpUntil: number | null = null;
     const appendedFragmentBytes = new Map<
       string,
       { bytes: number; duration: number }
@@ -319,6 +361,18 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
               ),
               ...broadcastStats(hls),
               "Stall recoveries": String(stallRecoveries),
+              "Last player error": lastPlayerError,
+              ...(parts
+                ? {
+                    "Low-latency parts": "On",
+                    "Catch-up":
+                      steering === 1
+                        ? "Speeding up"
+                        : steering === -1
+                          ? "Easing off"
+                          : "Holding",
+                  }
+                : { "Low-latency parts": "Off" }),
               "Buffer profile": stabilityProfile
                 ? "Adaptive stability"
                 : lowLatency
@@ -425,17 +479,22 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       // sub-frame timestamp gaps. Treat a short gap as continuous media rather
       // than presenting it as a visible stall.
       maxBufferHole: 0.5,
-      liveSyncDuration: lowLatency ? 4 : 6,
-      liveMaxLatencyDuration: lowLatency ? 10 : 14,
-      // Start at the same low-latency target, then trade at most roughly two
-      // seconds for stability only after hls.js observes a real playback
-      // stall. This gives high-bitrate 1440p streams enough jitter headroom
-      // without penalizing streams that are already healthy.
-      liveSyncOnStallIncrease: 1,
-      // Keep frame presentation at the source cadence. Even subtle variable
-      // playback rates can make Chromium's video compositor and a neighboring
-      // scroll layer contend at mismatched frame intervals. If playback drifts
-      // too far, hls.js performs a discrete live-edge resync instead.
+      // With parts, the distance is measured from the newest part rather than
+      // the newest whole fragment, so it can be much shorter for the same
+      // safety margin. Without them, whole two-second fragments set the pace.
+      liveSyncDuration: parts ? PARTS_TARGET_LATENCY : lowLatency ? 4 : 6,
+      liveMaxLatencyDuration: parts ? PARTS_TARGET_LATENCY + 6 : lowLatency ? 10 : 14,
+      // Start at the low-latency target, then trade some of it for stability
+      // only after hls.js observes a real playback stall (hls.js caps the
+      // total at one target duration). This gives high-bitrate 1440p streams
+      // jitter headroom without penalizing streams that are already healthy.
+      liveSyncOnStallIncrease: parts ? 0.5 : 1,
+      // hls.js's own catch-up switches to its fastest rate whenever latency
+      // is 50ms over target, which with parts arriving every third of a
+      // second is most of the time — and every stretch at a faster rate drops
+      // frames on a 60Hz display. Parts mode steers itself below instead, with
+      // hysteresis; without parts, playback stays at the source cadence and
+      // hls.js resyncs discretely if it drifts too far.
       maxLiveSyncPlaybackRate: 1,
       manifestLoadingMaxRetry: 8,
       manifestLoadingRetryDelay: 1_000,
@@ -448,6 +507,14 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     const enableStabilityProfile = () => {
       if (stabilityProfile) return;
       stabilityProfile = true;
+      if (parts) {
+        // Parts arrive as they are written, so a high bitrate no longer means
+        // waiting on large downloads; only repeated stalls call for this, and
+        // a second and a half more cushion rather than whole fragments.
+        player.config.liveMaxLatencyDuration = PARTS_STABLE_TARGET_LATENCY + 6;
+        player.targetLatency = PARTS_STABLE_TARGET_LATENCY;
+        return;
+      }
       // hls.js normally limits stall-driven target growth to one target
       // duration (about two seconds on Twitch). That is not enough when a
       // high-bitrate source repeatedly exhausts the three-second live cushion.
@@ -516,9 +583,12 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     });
     player.on(Events.ERROR, (_event, data) => {
       if (disposed) return;
+      // Messages can quote signed media URLs; the stats never show those.
+      const message = data.error?.message.replace(/https?:\/\/\S+/g, "(media URL)").slice(0, 120);
+      lastPlayerError = `${data.details}${data.fatal ? " (fatal)" : ""}${message ? `: ${message}` : ""}`;
       if (data.details === ErrorDetails.BUFFER_STALLED_ERROR) {
         stallRecoveries += 1;
-        if (video.videoHeight >= 1_400 || stallRecoveries >= 2) {
+        if (parts ? stallRecoveries >= 3 : video.videoHeight >= 1_400 || stallRecoveries >= 2) {
           enableStabilityProfile();
         }
       }
@@ -572,6 +642,68 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     video.addEventListener("pause", onPause);
     video.addEventListener("ended", onEnded);
 
+    const setSteering = (next: -1 | 0 | 1) => {
+      steering = next;
+      const rate = next === 1 ? CATCH_UP_RATE : next === -1 ? EASE_OFF_RATE : 1;
+      if (video.playbackRate !== rate) video.playbackRate = rate;
+    };
+    // Holds a parts stream at its target distance from live. It speeds up
+    // only once playback is clearly behind, eases off only once it is
+    // clearly too close to the edge, and holds either until the distance is
+    // nearly made up, so the rate changes a few times a minute at most rather
+    // than with every part.
+    const steerLatency = () => {
+      if (disposed) return;
+      const target = player.targetLatency;
+      const latency = player.latency;
+      const settled =
+        playbackRequested &&
+        !video.paused &&
+        !video.seeking &&
+        video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+      if (!settled || target === null || !(latency > 0)) {
+        smoothedLatency = null;
+        setSteering(0);
+        return;
+      }
+      smoothedLatency =
+        smoothedLatency === null ? latency : smoothedLatency + (latency - smoothedLatency) * 0.2;
+      const distance = smoothedLatency - target;
+      if (distance > PARTS_RESYNC_DISTANCE) {
+        // Seconds behind — after a long stall, or back from a hidden window.
+        // Catching that up at a few percent would take minutes.
+        smoothedLatency = null;
+        setSteering(0);
+        seekToLive();
+        return;
+      }
+      const ahead = forwardBuffer(video);
+      if (startJumpUntil === null) startJumpUntil = performance.now() + START_JUMP_WINDOW_MS;
+      if (performance.now() < startJumpUntil && distance > START_JUMP_DISTANCE) {
+        // Playback starts at a key frame, which can be a second or more
+        // earlier than the target; closing that at a few percent takes most
+        // of a minute. Just after the first frame, one jump to the target
+        // within what is already buffered goes unnoticed.
+        const sync = player.liveSyncPosition;
+        if (sync !== null && sync > video.currentTime && sync < video.currentTime + ahead - 0.5) {
+          startJumpUntil = 0;
+          smoothedLatency = null;
+          setSteering(0);
+          video.currentTime = sync;
+          return;
+        }
+      }
+      let next = steering;
+      if (steering === 1 && (distance < 0.1 || ahead < 1)) next = 0;
+      else if (steering === -1 && distance > -0.1) next = 0;
+      if (next === 0) {
+        if (distance > 0.5 && ahead > 1.2) next = 1;
+        else if (distance < -0.5) next = -1;
+      }
+      setSteering(next);
+    };
+    const steerTimer = parts ? window.setInterval(steerLatency, 250) : null;
+
     const statsTimer = window.setInterval(() => {
       if (disposed || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
       const now = performance.now();
@@ -591,6 +723,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       disposed = true;
       if (recoveryTimer !== null) window.clearTimeout(recoveryTimer);
       window.clearInterval(statsTimer);
+      if (steerTimer !== null) window.clearInterval(steerTimer);
       cancelPendingVideoFrame();
       removeCommandListener();
       video.removeEventListener("play", onPlay);
@@ -611,6 +744,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     };
   }, [
     hlsLatencyMode,
+    hlsLowLatencyParts,
     hlsMediaTransport,
     hlsPlaylistUrl,
     hlsSessionId,

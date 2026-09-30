@@ -163,6 +163,7 @@ advertisement.mp4
 
   it("keeps media sequences stable when Twitch renews signed segment URLs", async () => {
     let playlistRequest = 0;
+    const requestedSegments: string[] = [];
     const upstream = createServer((request, response) => {
       if (request.url?.startsWith("/index.m3u8")) {
         const generation = playlistRequest++;
@@ -182,6 +183,7 @@ segment-${segment}.ts?signature=${generation}`;
 `);
         return;
       }
+      requestedSegments.push(request.url ?? "");
       response.writeHead(200, { "Content-Type": "video/mp2t" });
       response.end("media");
     });
@@ -206,6 +208,29 @@ segment-${segment}.ts?signature=${generation}`;
       expect(second).toContain("#EXT-X-MEDIA-SEQUENCE:12");
       expect(second.match(/#EXTINF:/g)).toHaveLength(18);
       expect(second).toContain("2026-08-14T17:45:29.000Z");
+      // A segment keeps the address it was first listed with, even though its
+      // signed URL was renewed; hls.js fails a stream whose URIs change.
+      const addresses = (playlist: string) =>
+        new Map(
+          playlist
+            .split("\n")
+            .flatMap((line, index, lines) =>
+              line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")
+                ? [[line, lines[index + 2]] as const]
+                : [],
+            ),
+        );
+      const before = addresses(first);
+      const after = addresses(second);
+      const shared = [...after.keys()].filter((date) => before.has(date));
+      expect(shared.length).toBeGreaterThan(10);
+      for (const date of shared) expect(after.get(date)).toBe(before.get(date));
+      // The renewed URL is the one the relay fetches.
+      const media = await fetch(new URL(after.get(shared[0])!, playlistUrl), {
+        headers: { Origin: "http://localhost:5173" },
+      });
+      expect(media.status).toBe(200);
+      expect(requestedSegments.at(-1)).toMatch(/signature=1$/);
     } finally {
       await relay.close();
       await new Promise<void>((resolve) => upstream.close(() => resolve()));
