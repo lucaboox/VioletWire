@@ -12,7 +12,11 @@
  * audio or video packet still open at the cut is parsed as it stands and the
  * rest of it, arriving in the next part, is thrown away. So a part only ever
  * ends where a video frame begins and nothing else is half-written — every
- * frame and every run of audio is whole in exactly one part. Durations come
+ * frame and every run of audio is whole in exactly one part. A video packet
+ * with a timestamp is not always a frame's beginning: some encoders (xQc's,
+ * for one) carry the end of the previous frame into it ahead of the next
+ * frame's start code, and a cut there cost that frame its last bytes and
+ * smeared the picture until the next key frame. Durations come
  * from the video's own timestamps rather than from arrival timing; a fragment
  * usually arrives faster than it plays, so wall-clock timing would be wrong.
  */
@@ -33,6 +37,12 @@ export interface TsPart {
 interface PesStart {
   pid: number;
   video: boolean;
+  /**
+   * Whether its payload opens with an Annex B start code. Some encoders let
+   * a frame's last bytes run on into the next PES packet, ahead of the next
+   * frame's start code; those packets do not begin a frame.
+   */
+  opensFrame: boolean;
   /** Bytes of the PES packet after this transport packet, or null if unbounded. */
   remaining: number | null;
   /** Decode time in seconds (the presentation time when there is none). */
@@ -84,9 +94,18 @@ function readPesStart(data: Uint8Array, payload: PacketPayload): PesStart | null
     const hasDecodeTime = (data[at + 7] & 0xc0) === 0xc0 && payload.length >= 19;
     time = readTimestamp(data, at + (hasDecodeTime ? 14 : 9)) / PTS_UNITS_PER_SECOND;
   }
+  // The elementary stream starts after the PES header's own length byte.
+  const body = payload.length >= 9 ? at + 9 + data[at + 8] : Number.POSITIVE_INFINITY;
+  const end = at + payload.length;
+  const opensFrame =
+    body + 3 <= end &&
+    data[body] === 0 &&
+    data[body + 1] === 0 &&
+    (data[body + 2] === 1 || (body + 4 <= end && data[body + 2] === 0 && data[body + 3] === 1));
   return {
     pid: payload.pid,
     video: streamId >= 0xe0 && streamId <= 0xef,
+    opensFrame,
     remaining,
     time,
   };
@@ -140,7 +159,7 @@ export function planTsParts(
       const seconds: number = partStart === null ? pes.time : unwrap(pes.time, partStart);
       if (partStart === null) {
         partStart = seconds;
-      } else if (open.size === 0 && seconds - partStart >= targetSeconds) {
+      } else if (open.size === 0 && pes.opensFrame && seconds - partStart >= targetSeconds) {
         // This frame opens the next part, so the part being measured ends here.
         parts.push({ end: offset, duration: Number((seconds - partStart).toFixed(3)) });
         partStart = seconds;

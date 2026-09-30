@@ -4,6 +4,14 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Low latency mode no longer smears blocky patches across the picture on some
+  Twitch channels, such as xQc. Their stream sometimes carries the end of one
+  video frame into the start of the next, and cutting it into pieces there cost
+  that frame its last bytes; the damage then spread until the next key frame.
+  Pieces are now only cut where a frame really begins.
+
 ## [0.3.4-alpha.21] - 2026-09-29
 
 ### Additions

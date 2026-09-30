@@ -25,16 +25,19 @@ function writeTimestamp(packet: Uint8Array, at: number, seconds: number, prefix:
 
 /**
  * A packet that opens a PES payload carrying `seconds` as its timestamp: a
- * video frame of unstated length unless told otherwise.
+ * video frame of unstated length, beginning with a start code, unless told
+ * otherwise.
  */
 function timedPacket(
   seconds: number,
-  { pid = VIDEO_PID, streamId = 0xe0, length = 0, decodeSeconds }: {
+  { pid = VIDEO_PID, streamId = 0xe0, length = 0, decodeSeconds, runsOn = false }: {
     pid?: number;
     streamId?: number;
     /** PES_packet_length: the bytes after the length field, 0 for unbounded. */
     length?: number;
     decodeSeconds?: number;
+    /** The payload opens with the previous frame's last bytes, not a start code. */
+    runsOn?: boolean;
   } = {},
 ): Uint8Array {
   const packet = new Uint8Array(TS_PACKET_SIZE);
@@ -59,6 +62,9 @@ function timedPacket(
     writeTimestamp(packet, 13, seconds, 0x3);
     writeTimestamp(packet, 18, decodeSeconds, 0x1);
   }
+  // The elementary stream: an access unit delimiter, or run-on slice bytes.
+  const body = 13 + packet[12];
+  packet.set(runsOn ? [0x3d, 0x43, 0xd7, 0x14, 0x00, 0x00, 0x00, 0x01, 0x09] : [0x00, 0x00, 0x00, 0x01, 0x09], body);
   return packet;
 }
 
@@ -178,6 +184,19 @@ describe("planTsParts", () => {
     const parts = planTsParts(data, 0, 0.5);
 
     expect(parts).toEqual([{ end: TS_PACKET_SIZE * 5, duration: 1.1 }]);
+  });
+
+  it("never cuts where the previous frame runs on into the next packet", () => {
+    // The packet at one second carries the tail of the frame before it ahead
+    // of its own start code; cutting there would cost that frame its end.
+    const data = stream(
+      timedPacket(0),
+      timedPacket(1, { runsOn: true }),
+      continuationPacket(),
+      timedPacket(1.02),
+    );
+
+    expect(planTsParts(data, 0, 0.5)).toEqual([{ end: TS_PACKET_SIZE * 3, duration: 1.02 }]);
   });
 
   it("measures by decode time when a frame carries one", () => {
