@@ -95,6 +95,28 @@ segment-2.ts
     );
   });
 
+  it("numbers each fragment the way Twitch does, in-progress ones included", () => {
+    const playlist = parseTwitchMediaPlaylist(
+      `#EXTM3U
+#EXT-X-TARGETDURATION:2
+#EXT-X-MEDIA-SEQUENCE:4108
+#EXT-X-PROGRAM-DATE-TIME:2026-08-02T06:21:40.000Z
+#EXTINF:2.000,live
+segment-1.ts
+#EXT-X-PROGRAM-DATE-TIME:2026-08-02T06:21:42.000Z
+#EXTINF:2.000,live
+segment-2.ts
+#EXT-X-TWITCH-PREFETCH:segment-3.ts
+#EXT-X-TWITCH-PREFETCH:segment-4.ts
+`,
+      "https://video.example/live/index.m3u8",
+    );
+
+    expect(playlist.segments.map((segment) => segment.upstreamSequence)).toEqual([
+      4108, 4109, 4110, 4111,
+    ]);
+  });
+
   it("can omit in-progress Twitch prefetch entries for balanced playback", () => {
     const playlist = parseTwitchMediaPlaylist(
       `#EXTM3U

@@ -27,6 +27,8 @@ interface ParsedSegment {
   tags: string[];
   ad: boolean;
   prefetch: boolean;
+  /** Twitch's media sequence number for it, when the playlist states one. */
+  upstreamSequence?: number;
 }
 
 interface RelaySegment {
@@ -58,6 +60,8 @@ interface PartedFragment {
   sourceKey: string;
   /** The media sequence it has in the relay's playlist, now and once complete. */
   sequence: number;
+  /** Twitch's media sequence number for it, which it keeps once complete. */
+  upstreamSequence?: number;
   url: string;
   date?: number;
   /** How long Twitch's fragments run; what it will say once it lists this one. */
@@ -230,6 +234,11 @@ export function parseTwitchMediaPlaylist(
   let discontinuity = false;
   let currentMapTag: string | undefined;
   let currentKeyTag: string | undefined;
+  // Twitch numbers every fragment, the ones it is still writing included, and
+  // the number stays with a fragment from reload to reload.
+  let upstreamSequence: number | undefined;
+  const takeUpstreamSequence = (): number | undefined =>
+    upstreamSequence === undefined ? undefined : upstreamSequence++;
 
   const appendPrefetchSegment = (rawUri: string): void => {
     if (segments.length === 0) return;
@@ -267,6 +276,7 @@ export function parseTwitchMediaPlaylist(
       tags: prefetchTags,
       ad,
       prefetch: true,
+      upstreamSequence: takeUpstreamSequence(),
     });
   };
 
@@ -306,6 +316,11 @@ export function parseTwitchMediaPlaylist(
       }
       continue;
     }
+    if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+      const sequence = Number.parseInt(line.slice("#EXT-X-MEDIA-SEQUENCE:".length), 10);
+      if (Number.isSafeInteger(sequence) && sequence >= 0) upstreamSequence = sequence;
+      continue;
+    }
     if (line.startsWith("#")) continue;
     if (duration === undefined || !Number.isFinite(duration)) continue;
 
@@ -327,6 +342,7 @@ export function parseTwitchMediaPlaylist(
       ],
       ad,
       prefetch: false,
+      upstreamSequence: takeUpstreamSequence(),
     });
     segmentTags = [];
     duration = undefined;
@@ -1039,9 +1055,21 @@ export class FilteredHlsRelay {
    * Gives a newly listed complete fragment the sequence it already had as
    * parts. Twitch names a fragmented MP4 fragment by a different URL while it
    * is being written than once it is listed complete; only its date carries
-   * over, and the date of a fragment still being written is itself inferred.
+   * over, and the date of a fragment still being written is itself inferred
+   * (from the average fragment length), so Twitch's own number for it comes
+   * first; the date is for a playlist without one.
    */
   private adoptPartedSequence(segment: ParsedSegment, segmentKey: string): number | undefined {
+    if (segment.upstreamSequence !== undefined) {
+      for (const fragment of this.partedFragments.values()) {
+        if (fragment.upstreamSequence !== segment.upstreamSequence) continue;
+        this.segmentSequences.set(segmentKey, fragment.sequence);
+        return fragment.sequence;
+      }
+      // With Twitch's numbers to go by, a date that happens to be close
+      // belongs to some other fragment.
+      return undefined;
+    }
     if (segment.date === undefined) return undefined;
     for (const fragment of this.partedFragments.values()) {
       if (fragment.date === undefined) continue;
@@ -1133,7 +1161,12 @@ export class FilteredHlsRelay {
    */
   private startPartedFragments(prefetched: ParsedSegment[]): void {
     for (const segment of prefetched.slice(0, 2)) {
-      const key = getSegmentKey(segment);
+      // Its inferred date moves between reloads whenever fragment lengths
+      // vary, so the number is what says it is the same fragment.
+      const key =
+        segment.upstreamSequence === undefined
+          ? getSegmentKey(segment)
+          : `msn:${segment.upstreamSequence}`;
       if (this.relaySegments.some((candidate) => candidate.sourceKey === key)) continue;
       const existing = this.partedFragments.get(key);
       // A request that failed before a single byte came is tried again.
@@ -1156,6 +1189,7 @@ export class FilteredHlsRelay {
       this.beginPartedFragment({
         sourceKey: key,
         sequence,
+        upstreamSequence: segment.upstreamSequence,
         url: segment.uri,
         date: segment.date,
         duration: segment.duration,

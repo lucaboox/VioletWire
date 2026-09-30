@@ -12,8 +12,10 @@ All notable changes to VioletWire are documented in this file.
   to the player a third of a second at a time instead of waiting two seconds
   for it to finish, and playback holds itself two seconds behind the newest
   piece. A stream reaches that distance within a few seconds of opening, and
-  gently speeds up by a few percent if it ever falls behind. Balanced mode and
-  Kick are unchanged.
+  gently speeds up by a few percent if it ever falls behind. After a stall it
+  keeps a little more in hand, and hands that back half a second at a time
+  once it has played a minute without another, so a long session does not
+  creep seconds behind. Balanced mode and Kick are unchanged.
 - The stream stats show the last error the player reported.
 
 ### Fixes

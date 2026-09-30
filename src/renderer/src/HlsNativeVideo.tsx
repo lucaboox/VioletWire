@@ -90,6 +90,9 @@ const PARTS_RESYNC_DISTANCE = 3;
  */
 const START_JUMP_DISTANCE = 0.4;
 const START_JUMP_WINDOW_MS = 8_000;
+/** How long a parts stream plays without stalling before it gives back cushion, and how much. */
+const CUSHION_RELAX_INTERVAL_MS = 60_000;
+const CUSHION_RELAX_STEP = 0.5;
 /** The rates used to close the distance to the target, either way. */
 const CATCH_UP_RATE = 1.04;
 const EASE_OFF_RATE = 0.96;
@@ -251,6 +254,11 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     let hls: Hls | null = null;
     let displayedLatency = 0;
     let stallRecoveries = 0;
+    // Parts mode gives back the cushion stalls added once playback has been
+    // steady for a while; these say how recently it has had to add any.
+    let recentStalls = 0;
+    let lastStallAt = 0;
+    let lastRelaxAt = 0;
     // The most recent error hls.js reported, for the stats overlay.
     let lastPlayerError = "None";
     let stabilityProfile = false;
@@ -588,7 +596,9 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       lastPlayerError = `${data.details}${data.fatal ? " (fatal)" : ""}${message ? `: ${message}` : ""}`;
       if (data.details === ErrorDetails.BUFFER_STALLED_ERROR) {
         stallRecoveries += 1;
-        if (parts ? stallRecoveries >= 3 : video.videoHeight >= 1_400 || stallRecoveries >= 2) {
+        recentStalls += 1;
+        lastStallAt = performance.now();
+        if (parts ? recentStalls >= 3 : video.videoHeight >= 1_400 || stallRecoveries >= 2) {
           enableStabilityProfile();
         }
       }
@@ -665,6 +675,23 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         smoothedLatency = null;
         setSteering(0);
         return;
+      }
+      const now = performance.now();
+      if (
+        target > PARTS_TARGET_LATENCY + 0.01 &&
+        now - Math.max(lastStallAt, lastRelaxAt) >= CUSHION_RELAX_INTERVAL_MS
+      ) {
+        // Every stall adds to the cushion, and without this none of it ever
+        // came back: an evening's odd hiccup left a stream seconds behind for
+        // good. A minute without a stall gives half a second back.
+        lastRelaxAt = now;
+        const relaxed = Math.max(PARTS_TARGET_LATENCY, target - CUSHION_RELAX_STEP);
+        player.targetLatency = relaxed;
+        if (relaxed <= PARTS_TARGET_LATENCY) {
+          stabilityProfile = false;
+          recentStalls = 0;
+          player.config.liveMaxLatencyDuration = PARTS_TARGET_LATENCY + 6;
+        }
       }
       smoothedLatency =
         smoothedLatency === null ? latency : smoothedLatency + (latency - smoothedLatency) * 0.2;

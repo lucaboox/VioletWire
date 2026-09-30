@@ -10,12 +10,18 @@ const ORIGIN = "http://localhost:5173";
  * A stand-in for Twitch's edge: two complete fragments, and two named as
  * in progress that are written only when a test says so. Like Twitch, it
  * names a fragment differently while it is being written than once it is
- * listed complete, so only its date links the two.
+ * listed complete, so only its number (and roughly its date) links the two.
  */
 class FakeTwitchEdge {
   readonly server: Server;
   /** How long the initialisation segment takes to arrive. */
   initDelayMs = 0;
+  /** Whether the playlist states Twitch's media sequence numbers. */
+  numbered = true;
+  /** Milliseconds Twitch's listing of a complete fragment is stamped off by. */
+  readonly dateShiftMs = new Map<number, number>();
+  /** How many times each in-progress fragment has been asked for. */
+  readonly requests = new Map<number, number>();
   private completed = 2;
   private readonly writing = new Map<number, ServerResponse>();
   private readonly waiting = new Map<number, (response: ServerResponse) => void>();
@@ -40,6 +46,7 @@ class FakeTwitchEdge {
         const index = Number(pending[1]);
         response.writeHead(200, { "Content-Type": "video/mp4" });
         response.flushHeaders();
+        this.requests.set(index, (this.requests.get(index) ?? 0) + 1);
         this.writing.set(index, response);
         this.waiting.get(index)?.(response);
         return;
@@ -74,11 +81,13 @@ class FakeTwitchEdge {
   }
 
   private playlist(): string {
-    const date = (index: number) => new Date(Date.UTC(2026, 8, 29, 12, 0, (index - 1) * 2)).toISOString();
+    const date = (index: number) =>
+      new Date(Date.UTC(2026, 8, 29, 12, 0, (index - 1) * 2) + (this.dateShiftMs.get(index) ?? 0)).toISOString();
     return [
       "#EXTM3U",
       "#EXT-X-VERSION:6",
       "#EXT-X-TARGETDURATION:2",
+      ...(this.numbered ? ["#EXT-X-MEDIA-SEQUENCE:1"] : []),
       '#EXT-X-MAP:URI="init.mp4"',
       ...Array.from({ length: this.completed }, (_, offset) => [
         `#EXT-X-PROGRAM-DATE-TIME:${date(offset + 1)}`,
@@ -119,9 +128,10 @@ function write(response: ServerResponse, pieces: Uint8Array[]): void {
 let edge: FakeTwitchEdge;
 let relay: FilteredHlsRelay;
 
-async function startRelay(publishParts = true, initDelayMs = 0): Promise<string> {
+async function startRelay(publishParts = true, initDelayMs = 0, numbered = true): Promise<string> {
   edge = new FakeTwitchEdge();
   edge.initDelayMs = initDelayMs;
+  edge.numbered = numbered;
   const source = await edge.listen();
   relay = new FilteredHlsRelay(() => ORIGIN, "twitch", { publishParts });
   return relay.start(source);
@@ -316,6 +326,43 @@ describe("FilteredHlsRelay parts", () => {
     const playlist = await getText(playlistUrl);
     expect(partLines(playlist)).toHaveLength(7);
     expect(playlist).toContain('URI="hint/3/0"');
+  });
+
+  it("lists a fragment once, and streams the next once, when Twitch dates it differently", async () => {
+    // Twitch's date for a complete fragment can sit away from the one inferred
+    // while it was written, and the next fragment's inferred date moves with
+    // it. Twitch's own numbers still say which fragment is which.
+    const playlistUrl = await startRelay();
+    await getText(playlistUrl);
+    const writing = await edge.stream(3);
+    write(writing, fragmentPieces(4));
+    writing.end();
+    await waitFor(async () => ((await getText(playlistUrl)).match(/#EXTINF:/g)?.length === 3 ? true : undefined));
+    edge.dateShiftMs.set(3, 600);
+    edge.complete(3);
+    await new Promise((resolve) => setTimeout(resolve, 1_300));
+
+    const after = await getText(playlistUrl);
+    expect(after.match(/#EXTINF:/g)).toHaveLength(3);
+    expect(after).toContain('URI="hint/3/0"');
+    expect(edge.requests.get(4)).toBe(1);
+  });
+
+  it("matches a complete fragment by date when the playlist has no numbers", async () => {
+    const playlistUrl = await startRelay(true, 0, false);
+    await getText(playlistUrl);
+    const writing = await edge.stream(3);
+    write(writing, fragmentPieces(4));
+    writing.end();
+    await waitFor(async () => ((await getText(playlistUrl)).match(/#EXTINF:/g)?.length === 3 ? true : undefined));
+    // Within the tolerance of the date inferred for it.
+    edge.dateShiftMs.set(3, 200);
+    edge.complete(3);
+    await new Promise((resolve) => setTimeout(resolve, 1_300));
+
+    const after = await getText(playlistUrl);
+    expect(after.match(/#EXTINF:/g)).toHaveLength(3);
+    expect(after.match(/#EXT-X-PROGRAM-DATE-TIME:2026-09-29T12:00:04.200Z/g)).toHaveLength(1);
   });
 
   it("does not answer for parts it no longer holds", async () => {
