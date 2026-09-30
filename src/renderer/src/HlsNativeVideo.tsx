@@ -127,6 +127,28 @@ function playbackStats(
   };
 }
 
+/**
+ * How far behind the broadcaster the picture is, and what the stream is made
+ * of. "Latency" above is only distance from the newest fragment in the
+ * playlist; this is measured from the broadcast time Twitch stamps on every
+ * fragment (PROGRAM-DATE-TIME), to the frame on screen now — the same idea as
+ * the "Latency To Broadcaster" figure in Twitch's own player, so the two can
+ * be compared directly. The container matters as much as the number: MPEG-TS
+ * and fragmented MP4 behave completely differently at the live edge.
+ */
+function broadcastStats(hls: Hls | null): Record<string, string> {
+  if (!hls) return {};
+  const playing = hls.playingDate;
+  const details = hls.levels[hls.currentLevel]?.details ?? hls.latestLevelDetails;
+  const fragmented = details?.fragments.some((fragment) => fragment.initSegment) ?? false;
+  return {
+    "Latency to broadcaster":
+      playing === null ? "Measuring" : `${((Date.now() - playing.getTime()) / 1000).toFixed(2)}s`,
+    Container: details ? (fragmented ? "Fragmented MP4 (CMAF)" : "MPEG-TS") : "Measuring",
+    "Fragment length": details ? `${details.targetduration}s target` : "Measuring",
+  };
+}
+
 export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pausedFrameRef = useRef<HTMLCanvasElement>(null);
@@ -295,6 +317,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
               source.latencyMode,
               source.mediaTransport,
               ),
+              ...broadcastStats(hls),
               "Stall recoveries": String(stallRecoveries),
               "Buffer profile": stabilityProfile
                 ? "Adaptive stability"
