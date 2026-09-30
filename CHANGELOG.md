@@ -4,6 +4,22 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.21] - 2026-09-29
+
+### Additions
+
+- Press ? anywhere outside a text box for a list of every keyboard shortcut.
+  The same list lives in a new card under Settings > Interface.
+- Once you have saved a multistream preset, the Multistream button in the top
+  bar gets a menu that opens any preset straight away, or swaps it in for the
+  grid you already have open.
+- Mention alerts now work in multistream, using your name on each tile's own
+  service. A chat tab that is not on screen shows a dot when new messages come
+  in and a red @ when somebody mentions you; opening the tab clears it.
+- The stream stats show how far behind the broadcaster the picture is (the
+  same figure as "Latency To Broadcaster" in Twitch's own player), whether the
+  stream is MPEG-TS or fragmented MP4, and the last error the player reported.
+
 ### Improvements
 
 - Low latency mode now plays Twitch streams about three seconds behind the
@@ -16,12 +32,41 @@ All notable changes to VioletWire are documented in this file.
   keeps a little more in hand, and hands that back half a second at a time
   once it has played a minute without another, so a long session does not
   creep seconds behind. Balanced mode and Kick are unchanged.
-- The stream stats show the last error the player reported.
+- A busy chat in a multistream tab you are not reading no longer makes the
+  rest of the app redraw with every message.
+- While multistream is open, the sidebar says that clicking a channel adds it
+  to the grid, or that the grid is full.
+- The playback engine is updated (hls.js 1.7), bringing its fixes for
+  low-latency stalls and for recovering a stream that stops unexpectedly.
 
 ### Fixes
 
-- A Twitch segment whose address Twitch renews while it is listed no longer
-  stops the stream; the player now keeps the address it was first given.
+- When part of the window fails to draw, VioletWire now shows what went wrong
+  with Reload and Try to carry on, instead of leaving an empty window that only
+  a restart would fix. Reloading also stops the previous stream and chats,
+  which used to keep running unseen in the background.
+- A setting that cannot be saved now says so. Before, the screen showed the
+  new value and the old one quietly came back the next time VioletWire
+  started.
+- Messages typed into a Kick tile's chat in multistream go to that tile's
+  channel. They could fail, or land in a different Kick channel opened earlier.
+- Closing a Kick stream disconnects its chat. It stayed connected in the
+  background and could play the mention sound with nothing on screen.
+- Kick chat recognises mentions of your Kick name rather than your Twitch
+  name, for the highlight, the alert and the chat over the video.
+- In multistream, the chat box on a Kick tile checks your Kick sign-in; it was
+  checking Twitch's instead. The chat there no longer claims to be connecting
+  to Twitch chat either.
+- A stream added after closing a tile goes after the others instead of taking
+  the closed one's place, and a line-up that finishes loading after you have
+  left multistream no longer pops back up.
+- Your Kick session is no longer handed to Streamlink on its command line,
+  where other programs on the PC could read it. The window that shows a Kick
+  channel page now stays on Kick and opens other links in your browser.
+- A Twitch stream no longer stops when Twitch renews the address of a segment
+  it has already listed.
+- The component VioletWire uses to read its update feed (js-yaml) is updated
+  to clear a high-severity security advisory.
 
 ## [0.3.4-alpha.20] - 2026-09-15
 
