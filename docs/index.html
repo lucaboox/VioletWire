@@ -6,7 +6,7 @@
     <title>VioletWire — a better way to watch Twitch and Kick on Windows</title>
     <meta
       name="description"
-      content="VioletWire is an unofficial Twitch and Kick desktop client for Windows with followed channels, native playback, multistream, search, and chat with 7TV, FFZ, and BetterTTV emotes."
+      content="VioletWire is a free Twitch and Kick app for Windows: low-latency playback, up to four streams at once, your followed channels from both, and chat with 7TV, FFZ, and BetterTTV emotes."
     />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0a0a0e" />
@@ -397,10 +397,50 @@
         font-size: 13.5px;
       }
 
+      .hero-note a {
+        color: var(--text-dim);
+      }
+
+      /* Four quick facts under the buttons. */
+      .hero-stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        max-width: 760px;
+        margin: 34px auto 0;
+        padding: 0;
+        list-style: none;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: #101016b3;
+      }
+
+      .hero-stats li {
+        padding: 14px 10px;
+      }
+
+      .hero-stats li + li {
+        border-left: 1px solid var(--border);
+      }
+
+      .hero-stats strong {
+        display: block;
+        color: var(--text);
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+
+      .hero-stats span {
+        color: var(--text-faint);
+        font-size: 13px;
+      }
+
       /* Screenshot presented in a small faux app window. */
       .shot-frame {
         position: relative;
-        margin-top: 56px;
+        /* All four sides: a <figure> otherwise keeps the browser's 40px
+           side margins, which shrank the screenshot on a phone. */
+        margin: 56px 0 0;
         border: 1px solid var(--border-hi);
         border-radius: var(--radius);
         background: var(--bg-raised);
@@ -443,10 +483,14 @@
           box-shadow var(--ease);
       }
 
-      .feature:hover {
-        border-color: #3d3555;
-        transform: translateY(-2px);
-        box-shadow: 0 14px 34px -22px #a855f7;
+      /* Only where there is a pointer to hover with; on a phone the lift
+         stuck on whichever card was last tapped. */
+      @media (hover: hover) {
+        .feature:hover {
+          border-color: #3d3555;
+          transform: translateY(-2px);
+          box-shadow: 0 14px 34px -22px #a855f7;
+        }
       }
 
       .feature-icon {
@@ -470,6 +514,17 @@
         margin: 8px 0 0;
         color: var(--text-dim);
         font-size: 14.5px;
+      }
+
+      .feature code,
+      .feature kbd {
+        padding: 1px 6px;
+        border: 1px solid var(--border-hi);
+        border-radius: 6px;
+        color: var(--text);
+        background: #ffffff0a;
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 13px;
       }
 
       /* ---------------------------- screenshots ---------------------------- */
@@ -737,15 +792,29 @@
         margin-top: 20px;
       }
 
-      .notes {
-        margin-top: 24px;
-        padding-left: 20px;
-        color: var(--text-faint);
-        font-size: 14px;
+      /* "Good to know": short answers to what people ask before installing. */
+      .faq {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px 28px;
+        margin: 40px 0 0;
       }
 
-      .notes li + li {
-        margin-top: 7px;
+      .faq div {
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+      }
+
+      .faq dt {
+        color: var(--text);
+        font-size: 15px;
+        font-weight: 650;
+      }
+
+      .faq dd {
+        margin: 6px 0 0;
+        color: var(--text-dim);
+        font-size: 14.5px;
       }
 
       /* ------------------------------ support ------------------------------ */
@@ -841,7 +910,7 @@
           position: absolute;
           left: 12px;
           right: 12px;
-          top: 62px;
+          top: calc(100% + 6px);
           flex-direction: column;
           align-items: stretch;
           gap: 2px;
@@ -865,6 +934,18 @@
           width: 100%;
         }
 
+        .hero-stats {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .hero-stats li:nth-child(3) {
+          border-left: 0;
+        }
+
+        .hero-stats li:nth-child(n + 3) {
+          border-top: 1px solid var(--border);
+        }
+
         .shot-frame {
           margin-top: 38px;
         }
@@ -874,8 +955,14 @@
         .showcase-tabs {
           flex-wrap: nowrap;
           overflow-x: auto;
-          padding-bottom: 6px;
-          scrollbar-width: thin;
+          /* Scrolls with a finger; a scrollbar under the pills only looked
+             broken. The fading edge says there is more to the right. */
+          scrollbar-width: none;
+          mask-image: linear-gradient(90deg, #000 85%, transparent);
+        }
+
+        .showcase-tabs::-webkit-scrollbar {
+          display: none;
         }
 
         .showcase-nav {
@@ -906,6 +993,10 @@
           text-align: left;
         }
 
+        .faq {
+          grid-template-columns: 1fr;
+        }
+
         .footer-links {
           margin-left: 0;
         }
@@ -925,7 +1016,7 @@
 
         .btn:hover,
         .feature:hover {
-          transform: none;
+          transform: none !important;
         }
       }
     </style>
@@ -982,10 +1073,10 @@
           <p class="tagline">A better way to watch Twitch and Kick on Windows.</p>
 
           <p class="lede">
-            A desktop client for Twitch and Kick, built with Electron and React,
-            that behaves like a real Windows app instead of a browser in a box.
-            Followed channels from both, native playback, up to four streams at
-            once, search and browse, and chat with the emotes you actually use.
+            Your followed channels from both services in one place, streams
+            about three seconds behind live, up to four at once, and chat with
+            the emotes you actually use. A real Windows app, not a website in a
+            window.
           </p>
 
           <div class="hero-actions">
@@ -1015,15 +1106,25 @@
 
           <p class="hero-note">
             Windows 10 and 11 · Free and open source ·
-            <span data-version-label>alpha</span>
+            <!-- Pointed at the latest release's notes by the script below. -->
+            <a data-release-notes href="https://github.com/lucaboox/VioletWire/releases/latest"
+              ><span data-version-label>alpha</span></a
+            >
           </p>
+
+          <ul class="hero-stats">
+            <li><strong>~3 s</strong><span>behind live</span></li>
+            <li><strong>4</strong><span>streams at once</span></li>
+            <li><strong>Twitch + Kick</strong><span>in one app</span></li>
+            <li><strong>7TV · FFZ · BTTV</strong><span>emotes</span></li>
+          </ul>
 
           <figure class="shot-frame">
             <img
               src="assets/home.jpg"
               alt="VioletWire home screen listing followed live channels as cards with thumbnails, titles, categories, and viewer counts"
               width="1600"
-              height="882"
+              height="900"
               fetchpriority="high"
             />
           </figure>
@@ -1037,7 +1138,7 @@
             <span class="eyebrow">Features</span>
             <h2>Everything you need, nothing you don't</h2>
             <p>
-              Built around how people actually watch: check who's live, open a
+              Built around how people actually watch: see who's live, open a
               stream fast, and keep chat readable.
             </p>
           </div>
@@ -1046,46 +1147,28 @@
             <article class="feature">
               <div class="feature-icon" aria-hidden="true">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
+                </svg>
+              </div>
+              <h3>Close to live</h3>
+              <p>
+                Streams play about three seconds behind the broadcaster, level
+                with or a little ahead of Twitch's own player, and stay there
+                without stutter. Twitch's player is still one setting away.
+              </p>
+            </article>
+
+            <article class="feature">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 17.75 5.83 21l1.18-6.88L2 9.24l6.91-1L12 2l3.09 6.24 6.91 1-5.01 4.88L18.17 21z" />
                 </svg>
               </div>
               <h3>Twitch and Kick, together</h3>
               <p>
-                Follow channels on both services and see them in one sidebar,
-                filtered to Twitch, Kick, or both. Each split into live and
-                offline with thumbnails, categories, viewers, and uptime.
-                Right-click to favorite one and it pins to the top.
-              </p>
-            </article>
-
-            <article class="feature">
-              <div class="feature-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2Z" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-              </div>
-              <h3>Sign in the proper way</h3>
-              <p>
-                Twitch's official Device Code flow, so you never type a password
-                into VioletWire, plus a separate Kick sign-in. Tokens are
-                encrypted with Windows DPAPI, and signing out removes them.
-                Public streams on either service work without an account at all.
-              </p>
-            </article>
-
-            <article class="feature">
-              <div class="feature-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="2" y="4" width="20" height="15" rx="2" />
-                  <path d="m10 9 5 3-5 3z" />
-                </svg>
-              </div>
-              <h3>Playback that stays out of the way</h3>
-              <p>
-                Quality selection, theater mode, fullscreen, keyboard controls,
-                and a volume level that's remembered between streams. Controls
-                fade out on their own, with a delay you can set.
+                Everyone you follow on both services in one sidebar, live first,
+                favorites on top. Browse and search either one, or type
+                <code>twitch:name</code> to jump straight to a channel.
               </p>
             </article>
 
@@ -1098,12 +1181,11 @@
                   <rect x="13" y="13" width="8" height="8" rx="1.5" />
                 </svg>
               </div>
-              <h3>Two player modes, plus multistream</h3>
+              <h3>Up to four streams at once</h3>
               <p>
-                Use Twitch's own player for maximum compatibility, or the
-                low-latency Native player built on Streamlink and hls.js, which
-                also plays Kick. Native mode runs up to four streams in one
-                grid — Twitch and Kick mixed — with audio on the tile you pick.
+                Mix Twitch and Kick in one grid and pick which one you hear.
+                Drag tiles to rearrange them, and save a line-up as a preset to
+                open again in one click.
               </p>
             </article>
 
@@ -1113,29 +1195,11 @@
                   <path d="M21 11.5a8.38 8.38 0 0 1-9 8.32 8.5 8.5 0 0 1-3.8-.9L3 20.5l1.9-4.1A8.38 8.38 0 0 1 3.9 12a8.5 8.5 0 0 1 8.6-8.5 8.38 8.38 0 0 1 8.5 8Z" />
                 </svg>
               </div>
-              <h3>Chat that isn't an afterthought</h3>
+              <h3>Chat, with every emote</h3>
               <p>
-                Read and send on Twitch and Kick, with badges, colors, reply
-                threads, and moderation events. Click a name for a profile card,
-                get autocomplete for users and emotes, and pick a sound for
-                mentions.
-              </p>
-            </article>
-
-            <article class="feature">
-              <div class="feature-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" />
-                  <path d="M9 9.5h.01M15 9.5h.01" />
-                </svg>
-              </div>
-              <h3>7TV, FFZ, BetterTTV, and native emotes</h3>
-              <p>
-                Global and channel emotes in a searchable picker grouped by
-                provider, with favorites and an adjustable size — 7TV, FFZ,
-                BetterTTV, and Twitch emotes, plus Kick's own emotes and 7TV.
-                Hover any emote to see where it came from.
+                Read and send on both services with 7TV, FrankerFaceZ,
+                BetterTTV, and native emotes in one searchable picker. Replies,
+                profile cards, link previews, and a sound when you're mentioned.
               </p>
             </article>
 
@@ -1146,29 +1210,27 @@
                   <path d="m9 12 2 2 4-4" />
                 </svg>
               </div>
-              <h3>Local-first, no accounts of ours</h3>
+              <h3>Private by design</h3>
               <p>
-                There is no VioletWire server and no VioletWire user database.
-                Settings live in a file on your PC, and the app talks to Twitch,
-                Kick, and the emote providers directly — nothing is routed
-                through us.
+                Official sign-in, so your password never touches VioletWire, and
+                tokens encrypted by Windows. There's no VioletWire server or
+                account: the app talks to Twitch, Kick, and the emote services
+                directly.
               </p>
             </article>
 
             <article class="feature">
               <div class="feature-icon" aria-hidden="true">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 8v5M12 16h.01" />
+                  <rect x="2" y="4" width="20" height="14" rx="2" />
+                  <path d="M8 21h8M12 18v3" />
                 </svg>
               </div>
-              <h3>About ads</h3>
+              <h3>Feels like Windows</h3>
               <p>
-                VioletWire does not include an ad blocker and does not route
-                playback through a third-party proxy. Twitch stitches ads into
-                the stream itself, so expect to see them in both player modes.
-                Turbo and channel subscriptions are the supported way to avoid
-                them.
+                A dark Windows 11-style interface with a true-black OLED option,
+                keyboard shortcuts throughout (press <kbd>?</kbd> to see them),
+                and updates that download themselves and ask before restarting.
               </p>
             </article>
           </div>
@@ -1192,7 +1254,7 @@
                 </svg>
               </button>
 
-              <div class="showcase-frames" id="showcaseFrames" role="tabpanel" aria-live="polite">
+              <div class="showcase-frames" id="showcaseFrames" role="tabpanel">
             <figure
               class="showcase-frame is-active"
               data-full="screenshots/home.jpg"
@@ -1221,7 +1283,7 @@
                   alt="VioletWire browse page showing a grid of Twitch categories with box art and viewer counts"
                   width="1600"
                   height="900"
-                  loading="eager"
+                  loading="lazy"
                 />
               </button>
             </figure>
@@ -1237,7 +1299,7 @@
                   alt="VioletWire playing a stream in the standard Twitch player with chat docked beside it"
                   width="1600"
                   height="900"
-                  loading="eager"
+                  loading="lazy"
                 />
               </button>
             </figure>
@@ -1253,7 +1315,7 @@
                   alt="VioletWire playing a stream in its Native player with chat docked beside it"
                   width="1600"
                   height="900"
-                  loading="eager"
+                  loading="lazy"
                 />
               </button>
             </figure>
@@ -1269,7 +1331,7 @@
                   alt="VioletWire multistream showing four streams in a two-by-two grid, with tabs above the chat panel for each channel"
                   width="1600"
                   height="900"
-                  loading="eager"
+                  loading="lazy"
                 />
               </button>
             </figure>
@@ -1282,7 +1344,7 @@
               </button>
             </div>
 
-            <p class="showcase-meta">
+            <p class="showcase-meta" aria-live="polite">
               <strong id="shotTitle">Followed live channels</strong>
               <span id="shotText">Everyone you follow who&rsquo;s live right now</span>
               <span class="showcase-count" id="shotCount">1 / 5</span>
@@ -1356,8 +1418,8 @@
             <span class="eyebrow">Download</span>
             <h2>Get VioletWire</h2>
             <p>
-              A standard Windows installer. VioletWire is alpha software — things
-              work, but expect rough edges.
+              A standard Windows installer with everything included. VioletWire
+              is alpha software: it works, but expect the odd rough edge.
             </p>
           </div>
 
@@ -1369,9 +1431,7 @@
                 <span class="pill" data-version-label>alpha</span>
               </h3>
               <p>
-                Windows 10 or 11, 64-bit. The installer bundles the Streamlink
-                runtime the Native player needs, so there's nothing else to set
-                up.
+                Windows 10 or 11, 64-bit. Nothing else to install.
               </p>
               <p class="release-meta" data-release-meta aria-live="polite">
                 Checking the latest release...
@@ -1404,22 +1464,38 @@
             </a>
           </div>
 
-          <ul class="notes">
-            <li>
-              The alpha installer isn't code signed yet, so Windows may show an
-              unknown-publisher warning. Signing is planned before a wider
-              release.
-            </li>
-            <li>
-              Installed builds check GitHub for updates on launch and every six
-              hours, and ask before restarting.
-            </li>
-            <li>
-              Windows only for now. Linux support may come later, but it isn't
-              being worked on yet — the Native player leans on Windows-specific
-              graphics APIs.
-            </li>
-          </ul>
+          <dl class="faq">
+            <div>
+              <dt>Will Windows warn me when I install it?</dt>
+              <dd>
+                Probably. The alpha installer isn't code signed yet, so
+                SmartScreen may say the publisher is unknown. Signing is planned
+                before a wider release.
+              </dd>
+            </div>
+            <div>
+              <dt>How do updates work?</dt>
+              <dd>
+                VioletWire checks GitHub when it starts and every six hours,
+                downloads updates in the background, and asks before restarting.
+              </dd>
+            </div>
+            <div>
+              <dt>Does it block ads?</dt>
+              <dd>
+                No. Twitch puts ads into the stream itself, so you'll see them
+                as you would on the website. Turbo and channel subscriptions are
+                the supported way to skip them.
+              </dd>
+            </div>
+            <div>
+              <dt>Mac or Linux?</dt>
+              <dd>
+                Windows only for now. Other platforms may come later, but nobody
+                is working on them yet.
+              </dd>
+            </div>
+          </dl>
         </div>
       </section>
 
@@ -1448,8 +1524,7 @@
                 One-off or monthly, handled entirely through GitHub with no extra
                 account to make.
               </p>
-              <!-- LINK: GitHub Sponsors. Not set up yet — create it at
-                   github.com/sponsors/accounts, then swap this URL. -->
+              <!-- LINK: GitHub Sponsors -->
               <a class="btn btn-sm" href="https://github.com/sponsors/lucaboox">
                 Sponsor on GitHub
               </a>
@@ -1561,8 +1636,15 @@
         }
       };
 
-      const formatDownloads = (count) =>
-        new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(count);
+      const formatDate = (iso) => {
+        const date = new Date(iso);
+        return Number.isNaN(date.getTime())
+          ? null
+          : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+      };
+
+      const formatSize = (bytes) =>
+        Number.isFinite(bytes) && bytes > 0 ? `${Math.round(bytes / 1_000_000)} MB` : null;
 
       const readCachedRelease = () => {
         try {
@@ -1606,12 +1688,21 @@
           }
         }
 
-        const downloads = Number(installer?.download_count);
+        // The release's own download count reads as "0 downloads" for the
+        // first hours after every release, so say when it came out instead.
+        const released = formatDate(release.published_at);
+        const size = formatSize(Number(installer?.size));
         setReleaseMeta(
-          Number.isFinite(downloads)
-            ? `${formatDownloads(downloads)} installer download${downloads === 1 ? "" : "s"} on GitHub`
-            : "Available now on GitHub",
+          [released && `Released ${released}`, size].filter(Boolean).join(" · ") ||
+            "Available now on GitHub",
         );
+
+        if (typeof release.html_url === "string" && release.html_url.startsWith(`${REPO_URL}/releases/`)) {
+          for (const link of document.querySelectorAll("[data-release-notes]")) {
+            link.href = release.html_url;
+            link.title = `What's new in ${version}`;
+          }
+        }
       };
 
       const loadLatestRelease = async () => {
@@ -1668,6 +1759,19 @@
 
       siteNav.addEventListener("click", (event) => {
         if (event.target.closest("a")) setNavOpen(false);
+      });
+
+      // An open menu also closes on Escape or a tap anywhere else.
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && siteNav.classList.contains("open")) {
+          setNavOpen(false);
+          navToggle.focus();
+        }
+      });
+      document.addEventListener("click", (event) => {
+        if (siteNav.classList.contains("open") && !event.target.closest("#siteNav, #navToggle")) {
+          setNavOpen(false);
+        }
       });
 
       // Screenshot showcase.
@@ -1734,6 +1838,33 @@
 
       showShot(0);
 
+      // Swipe between screenshots on a touch screen. Some browsers follow a
+      // swipe with a click on the image, which should not open it; others
+      // send none, so the flag clears itself rather than eating the next tap.
+      const stage = showcase.querySelector(".showcase-frames");
+      let swipeStart = null;
+      let suppressOpen = false;
+      stage.addEventListener("touchstart", (event) => {
+        const touch = event.touches[0];
+        swipeStart = { x: touch.clientX, y: touch.clientY };
+      }, { passive: true });
+      stage.addEventListener("touchend", (event) => {
+        if (!swipeStart) return;
+        const touch = event.changedTouches[0];
+        const dx = touch.clientX - swipeStart.x;
+        const dy = touch.clientY - swipeStart.y;
+        swipeStart = null;
+        // Mostly sideways and far enough to mean it; otherwise it was a tap
+        // (which opens the image) or a scroll.
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          suppressOpen = true;
+          setTimeout(() => {
+            suppressOpen = false;
+          }, 400);
+          showShot(currentShot + (dx < 0 ? 1 : -1));
+        }
+      });
+
       // Screenshot lightbox.
       const lightbox = document.getElementById("lightbox");
       const lightboxImage = document.getElementById("lightboxImage");
@@ -1746,6 +1877,10 @@
       for (const frame of frames) {
         const trigger = frame.querySelector(".showcase-open");
         trigger.addEventListener("click", () => {
+          if (suppressOpen) {
+            suppressOpen = false;
+            return;
+          }
           const full = frame.dataset.full;
           if (!full || !lightbox.showModal) return;
 

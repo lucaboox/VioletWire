@@ -5,7 +5,7 @@
 <h1 align="center">VioletWire</h1>
 
 <p align="center">
-  A native-feeling Twitch and Kick viewer for Windows with official and high-performance native playback, plus multistream.
+  Watch Twitch and Kick on Windows: low-latency playback, up to four streams at once, and chat with the emotes you actually use.
 </p>
 
 <p align="center">
@@ -29,12 +29,10 @@
 
 ## What is VioletWire?
 
-VioletWire is an Electron, React, and TypeScript client for **Twitch and
-Kick.com**, designed to feel like a focused Windows application instead of a
-generic browser wrapper. Public streams on either service can be watched without
-signing in. Signing in unlocks followed channels, account-aware chat, following,
-subscription status, and other authenticated data — through Twitch's OAuth and,
-separately, a Kick sign-in.
+VioletWire is a desktop app for watching **Twitch and Kick** on Windows, built to
+feel like a real Windows app rather than a website in a window. Public streams
+work without an account; sign in to either service, or both, to get your
+followed channels and chat.
 
 VioletWire is an independent project and is not affiliated with, endorsed by, or
 sponsored by Twitch, Kick, 7TV, FrankerFaceZ, BetterTTV, or Streamlink.
@@ -82,87 +80,58 @@ sponsored by Twitch, Kick, 7TV, FrankerFaceZ, BetterTTV, or Streamlink.
 
 ## Features
 
-### Two services
+### Watching
 
-- Watch **Twitch and Kick** channels side by side in one app
-- Followed lists from both services, filtered to Twitch, Kick, or both, with each avatar ringed by its service colour
-- Kick chat, followed channels, sign-in, following, and native/7TV emotes, alongside the full Twitch feature set
-
-### Browse and discover
-
-- Followed channels separated into live and offline groups, with offline ones dimmed
-- Favorite channels, set from a right-click menu, marked with a star and pinned to the top of their group
-- Live channel cards with thumbnails, titles, categories, viewers, and uptime
-- Browse popular categories on Twitch or Kick, highest-viewer-first, and open one to view its live streams
-- A dedicated search page for channels and categories across Twitch and Kick, with an independent service scope
-- Type `twitch:` or `kick:` in the search box to jump straight to a channel on that service
-- Collapse the followed-channels sidebar to icons
-- Infinite pagination with loading and error states
-
-### Playback
-
-- Twitch's official player for maximum website compatibility
-- Low-latency Streamlink + hls.js Native player, which also plays Kick streams
-- Automatic and manual quality selection
-- Source quality when Twitch exposes it
-- Volume, mute, pause, fullscreen, theater mode, and picture-in-picture where available
-- Volume remembered between streams and across sessions
-- Go-live state and low-latency-oriented native playback
-- Optional dynamic audio compression
-- Floating mini player that keeps a stream playing while you browse, draggable and resizable
-- Create Twitch clips from the player controls
-- Resizable side chat and a movable, resizable chat overlay
-- Controls that hide automatically, with a configurable one-to-ten-second delay
+- **Low latency.** The Native player runs about three seconds behind the
+  broadcaster, level with or a little ahead of Twitch's own player, and plays
+  Kick too. Twitch's own player is one setting away.
+- Any quality up to Source, plus theater mode, fullscreen, picture-in-picture,
+  and a mini player that keeps playing while you browse.
+- Clip a Twitch stream from the player, keep your volume between streams, and
+  turn on an audio compressor for loud streams.
 
 ### Multistream
 
-- Watch up to four Native streams at once in a grid that adapts to the tile count
-- Audio focus so only the tile you pick plays sound; click another tile to move it
-- Per-tile mute, volume, audio compressor, and quality
-- Theater mode and fullscreen that hide the app chrome so the grid fills the window
-- Mix Twitch and Kick streams in the same grid, each tile labelled with its service
-- Tabbed Stream Chat with every tile's chat connected at once (Twitch or Kick), so switching tabs is instant
+- Up to four streams in one grid, Twitch and Kick mixed.
+- Sound comes from the tile you pick, and each tile has its own volume and
+  quality.
+- Drag tiles to rearrange them, and save a line-up as a preset to open from the
+  top bar.
+- One chat panel with a tab per stream; tabs show when there are new messages
+  or someone mentions you.
 
-### Chat and emotes
+### Chat
 
-- Native Twitch and Kick chat, reading and sending
-- Twitch badges, colors, emotes, replies, subscription notices, moderation events, and deleted messages
-- Kick chat with history on connect, its native emotes and badges (moderator, verified, VIP, sub gifter, subscriber tiers), and follower/subscriber chat restrictions
-- Clickable reply threads that keep their conversation context
-- Clickable usernames with an in-app profile card and that user's recent messages
-- Username and emote autocomplete
-- Mention highlighting with an optional notification sound and a choice of four alert tones
-- 7TV global and channel emotes on both Twitch and Kick
-- FrankerFaceZ and BetterTTV global and channel emotes on Twitch
-- Channel-aware Twitch emote picker with favorites and resizing
-- Searchable Twitch, 7TV, FrankerFaceZ, and BetterTTV emote groups
-- Rich emote tooltips with provider attribution
-- Hover cards for Twitch clip links, YouTube links, and image links
-- Configurable timestamps and recent-message history
-- Pause autoscroll while reading older messages
-- Bounded message history to prevent unbounded memory growth
-- Safe text rendering without arbitrary chat HTML
+- Read and send on Twitch and Kick, with badges, replies, and moderation events.
+- 7TV, FrankerFaceZ, BetterTTV, and each service's own emotes, in a searchable
+  picker with favorites.
+- Name and emote autocomplete, profile cards with a user's recent messages, and
+  previews for clips, YouTube, and image links.
+- Mentions are highlighted, with a choice of alert sounds.
+
+### Finding streams
+
+- Followed channels from both services in one sidebar, live first, with
+  favorites pinned to the top.
+- Browse categories and search channels on either service. Type `twitch:name`
+  or `kick:name` to jump straight to a channel.
 
 ### Account and privacy
 
-- Official Twitch Device Code OAuth flow
-- Separate Kick sign-in in its own isolated session, for following and account-aware Kick chat
-- Follow and subscribe on either service — subscribing opens the channel's real subscribe page in an in-app modal
-- Minimum-purpose Twitch scopes
-- Tokens encrypted using Electron `safeStorage` and Windows DPAPI
-- Separate, optional Twitch website playback session
-- Complete sign-out and credential removal
-- No Twitch passwords, copied browser cookies, or hardcoded personal tokens
+- Twitch's official sign-in, so you never type your password into VioletWire,
+  and a separate Kick sign-in. Tokens are encrypted by Windows.
+- Follow and subscribe on either service without leaving the app.
+- There is no VioletWire server or account. The app talks directly to Twitch,
+  Kick, the emote providers, a few public community services (chat history and
+  link previews), and GitHub for updates.
+- Signing out removes the stored credentials.
 
-### Windows experience
+### A real Windows app
 
-- Windows 11-inspired dark interface
-- OLED true-black mode
-- High-DPI and multi-monitor support
-- Keyboard controls
-- In-app changelog viewer
-- NSIS installer
-- GitHub Releases automatic updates
+- A dark Windows 11-style interface, with an optional true-black OLED mode.
+- Keyboard shortcuts throughout; press `?` to see them all.
+- Automatic updates from GitHub that ask before restarting, and an in-app
+  changelog.
 
 ## Installation
 
@@ -175,42 +144,34 @@ unknown-publisher warning. Code signing is planned before a wider release.
 
 ## Native player
 
-The Windows installer includes a pinned, checksum-verified Streamlink runtime,
-so the Native player works without installing anything else. Custom developer
-builds can still supply Streamlink with:
+The installer includes everything the Native player needs, including a pinned,
+checksum-verified copy of Streamlink. To use your own Streamlink instead (for
+development, say), set:
 
 ```text
 VIOLETWIRE_STREAMLINK_PATH=C:\path\to\streamlink.exe
 ```
 
-The override takes priority over the bundled Streamlink runtime. Without it,
-VioletWire prefers its bundled copy and then falls back to `PATH` and common
-system installation locations.
+Without it, VioletWire uses its bundled copy, then `PATH`, then the usual
+install locations.
 
 ## Twitch sign-in
 
-VioletWire uses Twitch's official public Device Code flow. A Client Secret is not
-stored or required.
+VioletWire uses Twitch's official Device Code sign-in, so it never sees your
+password and needs no client secret. It asks for:
 
-Requested scopes:
+- **Follows, subscriptions, and emotes:** `user:read:follows`,
+  `user:read:subscriptions`, `user:read:emotes`
+- **Chat:** `user:read:chat`, `user:write:chat`, `user:manage:chat_color`
+- **Clips:** `clips:edit`
+- **Moderation**, for moderation tools still being built, and only ever in
+  channels you moderate: `user:read:moderated_channels`,
+  `moderator:manage:banned_users`, `moderator:manage:chat_messages`,
+  `moderator:manage:announcements`, `moderator:manage:chat_settings`,
+  `moderator:manage:warnings`, `moderator:manage:shield_mode`
 
-- `user:read:follows`
-- `user:read:subscriptions`
-- `clips:edit`
-- `user:read:chat`
-- `user:write:chat`
-- `user:read:emotes`
-- `user:manage:chat_color`
-- `user:read:moderated_channels`
-- `moderator:manage:banned_users`
-- `moderator:manage:chat_messages`
-- `moderator:manage:announcements`
-- `moderator:manage:chat_settings`
-- `moderator:manage:warnings`
-- `moderator:manage:shield_mode`
-
-Follow and subscription purchases still open Twitch-controlled pages because
-Twitch does not provide public APIs for those mutations.
+Following a channel and buying a subscription open Twitch's own pages, since
+Twitch has no public API for either.
 
 ## Development
 
@@ -246,13 +207,12 @@ Artifacts are written to `release/`.
 
 ## Automatic updates
 
-Installed GitHub release builds check for updates shortly after launch and every
-six hours afterward. Updates download in the background and prompt before
-restarting. Development builds and local installers without a configured release
-feed do not contact an update server.
+Installed builds check GitHub for updates shortly after launch and every six
+hours. Updates download in the background and ask before restarting. Development
+builds never contact an update server.
 
-Pushing a version tag such as `v0.1.0-alpha.1` runs the Windows release workflow.
-The tag must match the version in `package.json`.
+Pushing a version tag such as `v0.1.0-alpha.1` runs the Windows release
+workflow; the tag must match the version in `package.json`.
 
 ## Third-party software and attribution
 
