@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.22] - 2026-09-30
+
 ### Fixes
 
 - Low latency mode no longer smears blocky patches across the picture on some
