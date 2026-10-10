@@ -113,8 +113,9 @@ sponsored by Twitch, Kick, 7TV, FrankerFaceZ, BetterTTV, or Streamlink.
 
 - Followed channels from both services in one sidebar, live first, with
   favorites pinned to the top.
-- Browse categories and search channels on either service. Type `twitch:name`
-  or `kick:name` to jump straight to a channel.
+- Browse categories with how many are watching each, and search channels on
+  either service. Type `twitch:name` or `kick:name` to jump straight to a
+  channel.
 
 ### Account and privacy
 

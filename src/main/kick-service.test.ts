@@ -232,3 +232,42 @@ describe("KickService authentication", () => {
     );
   });
 });
+
+describe("KickService categories", () => {
+  beforeEach(() => {
+    electronState.cookiesGet.mockReset().mockResolvedValue([]);
+    electronState.fetch.mockReset();
+    electronState.fromPartition.mockReset().mockReturnValue({
+      clearStorageData: electronState.clearStorageData,
+      clearCache: electronState.clearCache,
+      flushStorageData: electronState.flushStorageData,
+      cookies: { get: electronState.cookiesGet },
+      fetch: electronState.fetch,
+    });
+  });
+
+  it("keeps the viewer count Kick sends with each category", async () => {
+    electronState.fetch.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            current_page: 1,
+            next_page_url: "https://kick.com/api/v1/subcategories?page=2",
+            data: [
+              { id: 15, name: "Just Chatting", slug: "just-chatting", viewers: 238_460, banner: null },
+              { id: 7, name: "Slots", slug: "slots", banner: null },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+
+    const page = await new KickService().getCategories("");
+
+    expect(page.items.map(({ name, viewerCount }) => [name, viewerCount])).toEqual([
+      ["Just Chatting", 238_460],
+      ["Slots", undefined],
+    ]);
+    expect(page.cursor).toBe("2");
+  });
+});

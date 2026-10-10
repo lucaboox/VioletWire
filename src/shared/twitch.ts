@@ -125,6 +125,8 @@ export interface BrowseCategory {
   id: string;
   name: string;
   boxArtUrl: string;
+  /** People watching it right now, when the service says. */
+  viewerCount?: number;
 }
 
 export interface BrowseStream {

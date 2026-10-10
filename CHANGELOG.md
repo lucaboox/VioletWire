@@ -4,6 +4,13 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Additions
+
+- Browse shows how many people are watching each category, on Twitch and Kick.
+  Twitch's official API never says, so the count comes from the same source
+  Twitch's own site uses; if that is ever unavailable, the cards simply go
+  without it.
+
 ## [0.3.4-alpha.22] - 2026-09-30
 
 ### Fixes

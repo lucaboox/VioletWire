@@ -477,6 +477,7 @@ const kickCategorySchema = z.object({
   id: z.number().nullish(),
   name: z.string().nullish(),
   slug: z.string().nullish(),
+  viewers: z.number().int().nonnegative().nullish(),
   banner: kickBannerSchema,
 });
 
@@ -543,6 +544,7 @@ function mapKickCategory(entry: z.infer<typeof kickCategorySchema>): BrowseCateg
       entry.banner?.url,
       entry.banner?.src,
     ),
+    viewerCount: entry.viewers ?? undefined,
   };
 }
 

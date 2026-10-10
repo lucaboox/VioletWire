@@ -252,6 +252,62 @@ describe("TwitchService stream tags", () => {
   });
 });
 
+describe("TwitchService browse categories", () => {
+  const topGames = {
+    data: [
+      { id: "509658", name: "Just Chatting", box_art_url: "https://example.com/{width}x{height}.jpg" },
+      { id: "32982", name: "Grand Theft Auto V", box_art_url: "https://example.com/{width}x{height}.jpg" },
+    ],
+    pagination: { cursor: "next" },
+  };
+
+  function signedIn() {
+    const { service, internals } = createService();
+    internals.account = testAccount;
+    internals.validatedAt = Date.now();
+    return service;
+  }
+
+  it("adds how many are watching each category", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/games/top")) return json(topGames);
+      if (url === "https://gql.twitch.tv/gql") {
+        return json({
+          data: {
+            c0: { id: "509658", viewersCount: 235_544 },
+            c1: { id: "32982", viewersCount: 100_773 },
+          },
+        });
+      }
+      return defaultRoutes(url);
+    });
+
+    const result = await signedIn().getBrowseCategories();
+
+    expect(result.items.map(({ name, viewerCount }) => [name, viewerCount])).toEqual([
+      ["Just Chatting", 235_544],
+      ["Grand Theft Auto V", 100_773],
+    ]);
+    expect(result.cursor).toBe("next");
+  });
+
+  it("still lists the categories when their viewer counts are unavailable", async () => {
+    installFetch((url) => {
+      if (url.includes("/helix/games/top")) return json(topGames);
+      if (url === "https://gql.twitch.tv/gql") return json({ error: "Server Error" }, 500);
+      return defaultRoutes(url);
+    });
+
+    const result = await signedIn().getBrowseCategories();
+
+    expect(result.items.map((category) => category.name)).toEqual([
+      "Just Chatting",
+      "Grand Theft Auto V",
+    ]);
+    expect(result.items.every((category) => category.viewerCount === undefined)).toBe(true);
+  });
+});
+
 describe("TwitchService authentication", () => {
   it("reuses a successful validation within the cache interval", async () => {
     installFetch(defaultRoutes);

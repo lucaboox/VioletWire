@@ -25,6 +25,7 @@ import {
   type TwitchSearchResults,
 } from "../shared/twitch";
 import type { ChatMessage, TwitchChatAssets } from "../shared/chat";
+import { fetchCategoryViewerCounts } from "./twitch-category-viewers";
 
 // Twitch documents Client IDs as public identifiers that may be embedded in
 // client applications. VioletWire's public Device Code client never uses a secret.
@@ -531,11 +532,15 @@ export class TwitchService {
       `${endpoint}?${parameters.toString()}`,
       categoriesResponseSchema,
     );
+    // Helix has no viewer totals for a category; these come separately, and
+    // the page is the same without them.
+    const viewers = await fetchCategoryViewerCounts(response.data.map((category) => category.id));
     return {
       items: response.data.map((category) => ({
         id: category.id,
         name: category.name,
         boxArtUrl: resizeTwitchBoxArt(category.box_art_url),
+        viewerCount: viewers.get(category.id),
       })),
       cursor: response.pagination.cursor,
     };

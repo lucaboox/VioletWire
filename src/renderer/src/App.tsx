@@ -5474,7 +5474,11 @@ export function App() {
                         <span><Play fill="currentColor" size={24} /></span>
                       </span>
                       <strong>{category.name}</strong>
-                      <small>View live channels</small>
+                      <small>
+                        {category.viewerCount === undefined
+                          ? "View live channels"
+                          : `${compactViewerFormatter.format(category.viewerCount)} viewers`}
+                      </small>
                     </button>
                   ))}
                 </div>
