@@ -52,6 +52,35 @@ describe("KickService authentication", () => {
     );
   });
 
+  it("discovers the current public chat app without account credentials", async () => {
+    electronState.fetch.mockResolvedValue(new Response(JSON.stringify({
+      data: { mode: "websocket", connections: [
+        { provider: "pusher", credentials: { app_key: "currentKey", cluster: "us2" } },
+      ] },
+    })));
+    await expect(new KickService().getChatConnection("42")).resolves.toEqual({
+      appKey: "currentKey", cluster: "us2",
+    });
+    const [url, options] = electronState.fetch.mock.calls[0];
+    expect(url).toBe("https://web.kick.com/api/v1/realtime/channels/42/chat/connection");
+    expect(options.method).toBe("POST");
+    expect(JSON.parse(options.body)).toMatchObject({
+      client: { type: "web" }, capabilities: { accepted_providers: [{ provider: "pusher" }] },
+    });
+    expect(options.headers.Authorization).toBeUndefined();
+  });
+
+  it.each([
+    { app_key: "key/elsewhere", cluster: "us2" },
+    { app_key: "valid", cluster: "us2.evil.example/path" },
+    { cluster: "us2" },
+  ])("rejects invalid chat connection settings: %j", async (credentials) => {
+    electronState.fetch.mockResolvedValue(new Response(JSON.stringify({
+      data: { mode: "websocket", connections: [{ provider: "pusher", credentials }] },
+    })));
+    await expect(new KickService().getChatConnection("42")).resolves.toBeNull();
+  });
+
   it("does not report a read-only identity as a usable signed-in account", async () => {
     const service = new KickService();
 

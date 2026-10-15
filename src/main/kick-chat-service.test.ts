@@ -1,10 +1,110 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { KickService } from "./kick-service";
 import {
   kickBadges,
+  KickChatService,
   parseKickEmotes,
   parseKickModerationEvent,
   parseKickReply,
 } from "./kick-chat-service";
+
+class FakeKickSocket {
+  static instances: FakeKickSocket[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  send = vi.fn();
+  close = vi.fn();
+
+  constructor(readonly url: string) {
+    FakeKickSocket.instances.push(this);
+  }
+
+  frame(event: string, data: unknown = {}, channel?: string): void {
+    this.onmessage?.({ data: JSON.stringify({ event, data: JSON.stringify(data), channel }) });
+  }
+}
+
+describe("KickChatService connection", () => {
+  let service: KickChatService;
+
+  afterEach(() => {
+    service.disconnect();
+    FakeKickSocket.instances = [];
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  async function setup() {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeKickSocket);
+    const api = {
+      getChannel: vi.fn().mockResolvedValue({ id: "42", chatroomId: "99" }),
+      getChatConnection: vi.fn().mockResolvedValue({ appKey: "currentKey", cluster: "us2" }),
+      getChatHistory: vi.fn().mockResolvedValue([]),
+    };
+    const onMessage = vi.fn();
+    const onState = vi.fn();
+    service = new KickChatService(() => api as unknown as KickService, onMessage, onState, vi.fn());
+    await service.connect("example");
+    await Promise.resolve();
+    return { api, onMessage, onState, socket: FakeKickSocket.instances[0] };
+  }
+
+  it("uses the channel's current app and waits for subscription confirmation", async () => {
+    const { api, socket, onState, onMessage } = await setup();
+    expect(api.getChatConnection).toHaveBeenCalledWith("42");
+    expect(socket.url).toContain("ws-us2.pusher.com/app/currentKey?");
+    socket.onopen?.();
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(onState).not.toHaveBeenCalledWith("connected");
+    socket.frame("pusher:connection_established", { socket_id: "1.2" });
+    expect(JSON.parse(socket.send.mock.calls[0][0])).toEqual({
+      event: "pusher:subscribe", data: { auth: "", channel: "chatrooms.99.v2" },
+    });
+    socket.frame("pusher_internal:subscription_succeeded", {}, "chatrooms.99.v2");
+    expect(onState).toHaveBeenLastCalledWith("connected");
+    socket.frame("App\\Events\\ChatMessageEvent", {
+      id: "live-message", content: "hello", sender: { username: "Viewer" },
+    }, "chatrooms.99.v2");
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ id: "live-message", text: "hello" }));
+  });
+
+  it("answers application heartbeats even when they have no data", async () => {
+    const { socket } = await setup();
+    socket.onmessage?.({ data: JSON.stringify({ event: "pusher:ping" }) });
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ event: "pusher:pong", data: {} }));
+  });
+
+  it("refreshes the descriptor after rejection and backs off until subscribed", async () => {
+    const { socket, api, onState } = await setup();
+    socket.frame("pusher:error", { code: 4001 });
+    expect(socket.close).toHaveBeenCalled();
+    expect(onState).toHaveBeenLastCalledWith("reconnecting");
+    api.getChatConnection.mockResolvedValue({ appKey: "replacement", cluster: "eu" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const next = FakeKickSocket.instances[1];
+    expect(next.url).toContain("ws-eu.pusher.com/app/replacement?");
+    next.onopen?.();
+    next.frame("pusher:error", { code: 4001 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeKickSocket.instances).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeKickSocket.instances).toHaveLength(3);
+  });
+
+  it("does not open a stale connection after disconnecting during lookup", async () => {
+    const { api } = await setup();
+    let resolve!: (value: { appKey: string; cluster: string }) => void;
+    api.getChatConnection.mockReturnValue(new Promise((done) => { resolve = done; }));
+    await service.connect("other");
+    service.disconnect();
+    resolve({ appKey: "stale", cluster: "us2" });
+    await Promise.resolve();
+    expect(FakeKickSocket.instances).toHaveLength(1);
+  });
+});
 
 describe("parseKickEmotes", () => {
   it("leaves a message without emotes untouched", () => {

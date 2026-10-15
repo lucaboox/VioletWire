@@ -1,5 +1,6 @@
 import { BrowserWindow, session, type Session } from "electron";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import type {
   BrowseCategory,
   BrowseStream,
@@ -53,6 +54,24 @@ const COOKIE_WAIT_MS = 2_500;
 // Long enough that the followed poll rarely refetches details, short enough
 // that a thumbnail does not go stale while watching.
 const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const kickChatConnectionSchema = z.object({
+  data: z.object({
+    mode: z.literal("websocket"),
+    connections: z.array(z.object({
+      provider: z.string(),
+      credentials: z.object({
+        app_key: z.string().regex(/^[a-zA-Z0-9]+$/).optional(),
+        cluster: z.string().regex(/^[a-z0-9-]+$/).optional(),
+      }),
+    })),
+  }),
+});
+
+export interface KickChatConnection {
+  appKey: string;
+  cluster: string;
+}
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -1614,6 +1633,39 @@ export class KickService {
       await kickSession.flushStorageData();
     } catch {
       // Nothing stored.
+    }
+  }
+
+  /** Kick now assigns chat apps per room; the old global Pusher key is retired. */
+  async getChatConnection(channelId: string): Promise<KickChatConnection | null> {
+    try {
+      const response = await this.kickSession().fetch(
+        `${KICK_WEB_ORIGIN}/api/v1/realtime/channels/${encodeURIComponent(channelId)}/chat/connection`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": this.userAgent(),
+            Referer: `${KICK_ORIGIN}/`,
+          },
+          body: JSON.stringify({
+            client: { id: randomUUID(), type: "web" },
+            capabilities: { accepted_providers: [{ provider: "pusher" }] },
+          }),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        },
+      );
+      if (!response.ok) return null;
+      const parsed = kickChatConnectionSchema.safeParse(await response.json());
+      if (!parsed.success) return null;
+      const connection = parsed.data.data.connections.find(
+        (entry) => entry.provider === "pusher" && entry.credentials.app_key && entry.credentials.cluster,
+      );
+      if (!connection?.credentials.app_key || !connection.credentials.cluster) return null;
+      return { appKey: connection.credentials.app_key, cluster: connection.credentials.cluster };
+    } catch {
+      return null;
     }
   }
 

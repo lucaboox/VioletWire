@@ -23,12 +23,6 @@ type StateListener = (state: ChatConnectionState) => void;
  * itself uses is Pusher, and that accepts anonymous subscribers, so reading a
  * public channel's chat needs no account and no key of our own.
  */
-const PUSHER_APP_KEY = "32cbd69e4b950bf97679";
-const PUSHER_CLUSTER = "us2";
-const PUSHER_URL =
-  `wss://ws-${PUSHER_CLUSTER}.pusher.com/app/${PUSHER_APP_KEY}` +
-  "?protocol=7&client=violetwire&version=1.0";
-
 // Pusher sends its own pings; treat a long silence as a dead connection the way
 // the Twitch service does, rather than trusting close events to always arrive.
 const WATCHDOG_INTERVAL = 30_000;
@@ -372,6 +366,7 @@ export class KickChatService {
   private socket: WebSocket | null = null;
   private channel: string | null = null;
   private chatroomId: string | null = null;
+  private channelId: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempt = 0;
   private manuallyClosed = false;
@@ -406,13 +401,14 @@ export class KickChatService {
     if (generation !== this.connectGeneration || this.manuallyClosed) return;
 
     if (!channel?.chatroomId) {
-      this.onState("disconnected");
+      this.scheduleReconnect();
       return;
     }
+    this.channelId = channel.id;
     this.chatroomId = channel.chatroomId;
     this.subscriberBadges = channel.subscriberBadges ?? [];
     if (channel.restrictions) this.onRestrictions(channel.restrictions);
-    this.openSocket();
+    void this.openSocket(generation);
     // Load recent chat once the socket is opening, so history and live messages
     // both flow to the same buffer. The channel id, not the chatroom id, keys
     // the message route.
@@ -492,6 +488,7 @@ export class KickChatService {
     this.clearTimers();
     this.reconnectAttempt = 0;
     this.chatroomId = null;
+    this.channelId = null;
     this.channel = null;
     this.replyTargets.clear();
     const socket = this.socket;
@@ -510,21 +507,30 @@ export class KickChatService {
     this.onState("disconnected");
   }
 
-  private openSocket(): void {
-    const socket = new WebSocket(PUSHER_URL);
+  private async openSocket(generation: number): Promise<void> {
+    if (this.channelId === null) return;
+    const connection = await this.getKickService().getChatConnection(this.channelId);
+    if (generation !== this.connectGeneration || this.manuallyClosed) return;
+    if (connection === null) {
+      this.scheduleReconnect();
+      return;
+    }
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(
+        `wss://ws-${connection.cluster}.pusher.com/app/${connection.appKey}` +
+        "?protocol=7&client=violetwire&version=1.0",
+      );
+    } catch {
+      this.scheduleReconnect();
+      return;
+    }
     this.socket = socket;
     this.lastActivityAt = Date.now();
 
     socket.onopen = () => {
       if (this.socket !== socket || this.chatroomId === null) return;
       this.lastActivityAt = Date.now();
-      // v2 carries the identity fields (colour and badges) that v1 omits.
-      this.send(socket, {
-        event: "pusher:subscribe",
-        data: { auth: "", channel: `chatrooms.${this.chatroomId}.v2` },
-      });
-      this.reconnectAttempt = 0;
-      this.onState("connected");
       this.startWatchdog();
     };
 
@@ -545,10 +551,36 @@ export class KickChatService {
 
   private handleFrame(raw: string): void {
     if (raw.length === 0) return;
-    let frame: { event?: string; data?: unknown };
+    let frame: UnknownRecord | null;
     try {
-      frame = JSON.parse(raw) as { event?: string; data?: unknown };
+      frame = record(JSON.parse(raw));
     } catch {
+      return;
+    }
+    if (frame === null || typeof frame.event !== "string") return;
+
+    if (frame.event === "pusher:ping") {
+      if (this.socket) this.send(this.socket, { event: "pusher:pong", data: {} });
+      return;
+    }
+    if (frame.event === "pusher:connection_established") {
+      if (this.socket && this.chatroomId) {
+        this.send(this.socket, {
+          event: "pusher:subscribe",
+          data: { auth: "", channel: `chatrooms.${this.chatroomId}.v2` },
+        });
+      }
+      return;
+    }
+    if (frame.event === "pusher_internal:subscription_succeeded") {
+      if (frame.channel === `chatrooms.${this.chatroomId}.v2`) {
+        this.reconnectAttempt = 0;
+        this.onState("connected");
+      }
+      return;
+    }
+    if (frame.event === "pusher:error" || frame.event === "pusher:subscription_error") {
+      this.scheduleReconnect();
       return;
     }
 
@@ -680,8 +712,12 @@ export class KickChatService {
     this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.manuallyClosed || this.chatroomId === null) return;
-      this.openSocket();
+      if (this.manuallyClosed || this.channel === null) return;
+      if (this.chatroomId === null) {
+        void this.connect(this.channel);
+      } else {
+        void this.openSocket(this.connectGeneration);
+      }
     }, delay);
     this.reconnectTimer.unref();
   }
