@@ -4,12 +4,22 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.23] - 2026-10-14
+
 ### Additions
 
 - Browse shows how many people are watching each category, on Twitch and Kick.
   Twitch's official API never says, so the count comes from the same source
   Twitch's own site uses; if that is ever unavailable, the cards simply go
   without it.
+
+### Fixes
+
+- Kick live chat displays messages again after Kick changed its chat connection
+  settings. Chat now discovers the current settings automatically, refreshes
+  them when reconnecting, and responds to connection heartbeats.
+- Kick chat only shows as connected once the server confirms the chat
+  subscription, and retries rejected connections automatically.
 
 ## [0.3.4-alpha.22] - 2026-09-30
 
