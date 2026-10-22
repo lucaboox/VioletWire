@@ -4,6 +4,13 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Security update: VioletWire now runs on Electron 43.8.3, which no longer
+  trusts the compromised eMudhra intermediate certificates and brings
+  Chromium and V8 security fixes, with its built-in Node.js updated to
+  24.22.0.
+
 ## [0.3.4-alpha.23] - 2026-10-14
 
 ### Additions
