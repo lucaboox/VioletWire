@@ -2,7 +2,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { FilteredHlsRelay } from "./filtered-hls-relay";
-import { fragmentPieces, initSegment, join } from "./test-support/fmp4-fixtures";
+import { CHUNK_SECONDS, fragmentPieces, initSegment, join } from "./test-support/fmp4-fixtures";
 
 const ORIGIN = "http://localhost:5173";
 
@@ -251,10 +251,13 @@ describe("FilteredHlsRelay parts", () => {
       const text = await getText(playlistUrl);
       return text.match(/#EXTINF:/g)?.length === 3 ? text : undefined;
     });
-    // Its parts come before its EXTINF, and its closing part covers the rest.
+    // Its parts come before its EXTINF, which gives the length its video
+    // really runs (nineteen chunks of 0.107s), and its closing part covers
+    // the rest.
     const lines = finished.trimEnd().split("\n");
-    const extinf = lines.lastIndexOf("#EXTINF:2.000,live");
-    expect(lines[extinf - 1]).toMatch(/^#EXT-X-PART:DURATION=0\.074,URI="part\//);
+    const extinf = lines.lastIndexOf("#EXTINF:2.033,live");
+    expect(extinf).toBeGreaterThan(0);
+    expect(lines[extinf - 1]).toMatch(/^#EXT-X-PART:DURATION=0\.107,URI="part\//);
     expect(partLines(finished)).toHaveLength(7);
 
     // Twitch lists it complete under another name. The relay reads the list
@@ -309,6 +312,30 @@ describe("FilteredHlsRelay parts", () => {
       return text.includes('URI="hint/3/2"') ? text : undefined;
     });
     expect(partLines(playlist)).toHaveLength(9);
+  });
+
+  it("keeps cutting after a fragment shorter than usual, and lists both at their real length", async () => {
+    // What an IRL stream does every so often: a one-second fragment between
+    // two-second ones. Measured against "two seconds on", the next looked
+    // like an advertisement and was left whole, and playback stalled for it.
+    const playlistUrl = await startRelay();
+    await getText(playlistUrl);
+    const third = await edge.stream(3);
+    write(third, fragmentPieces(4, [0], 9));
+    third.end();
+    const fourth = await edge.stream(4);
+    write(fourth, fragmentPieces(4 + 9 * CHUNK_SECONDS).slice(0, 8));
+
+    const playlist = await waitFor(async () => {
+      const text = await getText(playlistUrl);
+      return text.includes('URI="hint/3/2"') ? text : undefined;
+    });
+
+    // The short fragment: three parts, listed at the 0.963s its video runs.
+    expect(playlist).toContain("#EXTINF:0.963,live");
+    expect(partLines(playlist)).toHaveLength(5);
+    // The next starts where it really ends, not two seconds after it began.
+    expect(playlist).toContain("#EXT-X-PROGRAM-DATE-TIME:2026-09-29T12:00:04.963Z");
   });
 
   it("leaves a fragment whole when its timestamps do not carry on", async () => {

@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   looksLikeFragmentedMp4,
   mp4StartsIndependent,
+  mp4VideoSpan,
   planMp4Parts,
   readMp4Tracks,
 } from "./fmp4-parts";
-import { AUDIO_TRACK as AUDIO, VIDEO_TRACK as VIDEO, box, fragmentPieces, initSegment, join } from "./test-support/fmp4-fixtures";
+import { AUDIO_TRACK as AUDIO, CHUNK_SECONDS, VIDEO_TRACK as VIDEO, box, fragmentPieces, initSegment, join } from "./test-support/fmp4-fixtures";
 
 const tracks = readMp4Tracks(initSegment());
 
@@ -90,6 +91,17 @@ describe("planMp4Parts", () => {
 
   it("cuts nothing without the tracks from the initialisation segment", () => {
     expect(planMp4Parts(fragment().data, 0, 0.3, new Map())).toEqual([]);
+  });
+});
+
+describe("mp4VideoSpan", () => {
+  it("measures a fragment by its chunks, short ones included", () => {
+    const full = mp4VideoSpan(join(...fragmentPieces(100)), tracks);
+    expect(full?.first).toBeCloseTo(100, 4);
+    expect(full!.last - full!.first + full!.frame).toBeCloseTo(19 * CHUNK_SECONDS, 3);
+
+    const short = mp4VideoSpan(join(...fragmentPieces(100, [0], 9)), tracks);
+    expect(short!.last - short!.first + short!.frame).toBeCloseTo(9 * CHUNK_SECONDS, 3);
   });
 });
 

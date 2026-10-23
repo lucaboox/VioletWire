@@ -18,6 +18,8 @@
  * the sample flags here rather than assumed.
  */
 
+import { videoSpan, type VideoSpan } from "./ts-parts";
+
 interface Mp4Box {
   type: string;
   /** Offset of the box header. */
@@ -248,6 +250,21 @@ export function firstMp4ChunkTime(data: Uint8Array, tracks: Map<number, Mp4Track
     return readChunk(data, box, tracks)?.seconds ?? null;
   }
   return null;
+}
+
+/**
+ * How much a whole fragment holds, from its chunks' decode times (of its
+ * video, where there is one): first, last and the usual spacing, so it lasts
+ * last - first + frame. Twitch's fragments are not always two seconds long.
+ */
+export function mp4VideoSpan(data: Uint8Array, tracks: Map<number, Mp4Track>): VideoSpan | null {
+  const times: number[] = [];
+  for (const box of boxes(data, 0, data.length)) {
+    if (box.type !== "moof") continue;
+    const chunk = readChunk(data, box, tracks);
+    if (chunk) times.push(chunk.seconds);
+  }
+  return videoSpan(times);
 }
 
 /**

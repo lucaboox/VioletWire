@@ -6,12 +6,19 @@ import {
   firstMp4ChunkTime,
   looksLikeFragmentedMp4,
   mp4StartsIndependent,
+  mp4VideoSpan,
   planMp4Parts,
   readMp4Tracks,
   type Mp4Track,
 } from "./fmp4-parts";
 import type { HlsMediaTransport } from "./hls-media-transport";
-import { firstTsVideoTime, looksLikeTransportStream, planTsParts } from "./ts-parts";
+import {
+  firstTsVideoTime,
+  looksLikeTransportStream,
+  planTsParts,
+  tsVideoSpan,
+  type VideoSpan,
+} from "./ts-parts";
 
 interface AdRange {
   start: number;
@@ -132,6 +139,9 @@ const PARTED_DATE_TOLERANCE_MS = 400;
 // has not marked yet, a restarted encoder) is left to arrive whole, where the
 // usual advertisement and discontinuity handling sees it.
 const TIMELINE_TOLERANCE_SECONDS = 0.5;
+// The longest a Twitch fragment runs, with room to spare; its advertised
+// target is six seconds, and real ones are about two.
+const LONGEST_FRAGMENT_SECONDS = 6;
 
 export function isDirectTwitchMediaUrl(rawUrl: string): boolean {
   try {
@@ -444,7 +454,12 @@ export class FilteredHlsRelay {
   private upstreamPoll: NodeJS.Timeout | null = null;
   // Where the newest streamed fragment began in media time, to check that the
   // next continues it.
-  private timeline: { sequence: number; start: number; duration: number } | null = null;
+  private timeline: {
+    sequence: number;
+    start: number;
+    /** Where its video ends, once the whole fragment has arrived. */
+    end?: number;
+  } | null = null;
   private refreshedOnce = false;
   // Players waiting on a blocking playlist request for a part not yet written.
   private readonly playlistWaiters = new Set<() => void>();
@@ -851,6 +866,12 @@ export class FilteredHlsRelay {
               existing.duration = segment.duration;
               existing.lines = completedLines;
               existing.prefetch = false;
+              // With Twitch's own date and length for this one, the fragment
+              // being written after it starts exactly where Twitch says.
+              if (this.partsEnabled && segment.date !== undefined) {
+                const next = this.partedFragmentWithSequence(existing.sequence + 1);
+                if (next && !next.finished) next.date = segment.date + segment.duration * 1_000;
+              }
             }
           }
           continue;
@@ -1275,7 +1296,7 @@ export class FilteredHlsRelay {
       fragment.timelineChecked = true;
       const continues = this.continuesTimeline(fragment.sequence, start);
       if (!this.timeline || fragment.sequence > this.timeline.sequence) {
-        this.timeline = { sequence: fragment.sequence, start, duration: fragment.duration };
+        this.timeline = { sequence: fragment.sequence, start };
       }
       if (!continues) {
         fragment.container = "unsupported";
@@ -1305,12 +1326,31 @@ export class FilteredHlsRelay {
     this.notifyPlaylistWaiters();
   }
 
-  /** Whether a fragment starting at `start` carries on the stream's timeline. */
+  /**
+   * Whether a fragment starting at `start` carries on the stream's timeline.
+   * Twitch's fragments are usually two seconds, but not always (an IRL stream
+   * can make one a second long, another two and a half), so the comparison is
+   * with where the previous fragment's video really ended, not with where two
+   * seconds on would be. Before that is known, it only has to start after the
+   * previous one and within the longest a fragment could plausibly run.
+   */
   private continuesTimeline(sequence: number, start: number): boolean {
     const previous = this.timeline;
-    if (!previous || sequence <= previous.sequence) return previous === null;
-    const expected = previous.start + (sequence - previous.sequence) * previous.duration;
-    return Math.abs(start - expected) <= TIMELINE_TOLERANCE_SECONDS;
+    if (!previous) return true;
+    if (sequence <= previous.sequence) return false;
+    const steps = sequence - previous.sequence;
+    if (previous.end !== undefined && steps === 1) {
+      return Math.abs(start - previous.end) <= TIMELINE_TOLERANCE_SECONDS;
+    }
+    return start > previous.start && start - previous.start <= steps * LONGEST_FRAGMENT_SECONDS;
+  }
+
+  /** How long a finished fragment's video really runs, if it can be read. */
+  private measureFragment(fragment: PartedFragment): VideoSpan | null {
+    const view = fragment.buffer.subarray(0, fragment.length);
+    if (fragment.container === "ts") return tsVideoSpan(view);
+    if (fragment.container === "fmp4") return mp4VideoSpan(view, this.mp4Tracks);
+    return null;
   }
 
   /**
@@ -1326,6 +1366,17 @@ export class FilteredHlsRelay {
       return;
     }
     const view = fragment.buffer.subarray(0, fragment.length);
+    // Its duration so far was a guess (the average of Twitch's recent
+    // fragments). With every byte here, use what its video actually holds,
+    // so the playlist never says one length and then Twitch's listing another.
+    const span = this.measureFragment(fragment);
+    const measured = span ? span.last - span.first + span.frame : null;
+    if (measured !== null && measured > 0.05 && measured < LONGEST_FRAGMENT_SECONDS * 2) {
+      fragment.duration = Number(measured.toFixed(3));
+    }
+    if (span && this.timeline?.sequence === fragment.sequence) {
+      this.timeline.end = span.last + span.frame;
+    }
     if (fragment.length > fragment.cut) {
       const used = fragment.parts.reduce((total, part) => total + part.duration, 0);
       const independent =
@@ -1361,6 +1412,12 @@ export class FilteredHlsRelay {
       prefetch: true,
       parts: fragment.parts,
     });
+    // The next fragment's date was inferred from that same guess; it starts
+    // where this one really ends.
+    if (fragment.date !== undefined) {
+      const next = this.partedFragmentWithSequence(fragment.sequence + 1);
+      if (next && !next.finished) next.date = fragment.date + fragment.duration * 1_000;
+    }
     this.notifyPlaylistWaiters();
   }
 

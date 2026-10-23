@@ -184,6 +184,45 @@ export function firstTsVideoTime(data: Uint8Array): number | null {
   return null;
 }
 
+/**
+ * How much video a whole fragment holds: its first and last frames' decode
+ * times and the usual gap between frames, so it lasts last - first + frame.
+ * Twitch's fragments are not always two seconds; this is the real length.
+ */
+export function tsVideoSpan(data: Uint8Array): VideoSpan | null {
+  const times: number[] = [];
+  for (let offset = 0; offset + TS_PACKET_SIZE <= data.length; offset += TS_PACKET_SIZE) {
+    if (data[offset] !== TS_SYNC_BYTE) break;
+    const payload = readPayload(data, offset);
+    if (!payload?.start) continue;
+    const pes = readPesStart(data, payload);
+    if (pes?.video && pes.time !== null) {
+      times.push(times.length === 0 ? pes.time : unwrap(pes.time, times[0]));
+    }
+  }
+  return videoSpan(times);
+}
+
+export interface VideoSpan {
+  first: number;
+  last: number;
+  /** The usual time from one frame to the next. */
+  frame: number;
+}
+
+/** First, last and typical spacing of a set of frame times, in any order. */
+export function videoSpan(times: readonly number[]): VideoSpan | null {
+  if (times.length < 2) return null;
+  const sorted = [...times].sort((left, right) => left - right);
+  const gaps = sorted
+    .slice(1)
+    .map((time, index) => time - sorted[index])
+    .filter((gap) => gap > 0)
+    .sort((left, right) => left - right);
+  if (gaps.length === 0) return null;
+  return { first: sorted[0], last: sorted[sorted.length - 1], frame: gaps[Math.floor(gaps.length / 2)] };
+}
+
 /** Whether the buffer begins with a plausible transport stream. */
 export function looksLikeTransportStream(data: Uint8Array): boolean {
   return data.length >= TS_PACKET_SIZE && data[0] === TS_SYNC_BYTE;

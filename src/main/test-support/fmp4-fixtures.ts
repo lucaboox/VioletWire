@@ -85,13 +85,14 @@ export function chunk(seconds: number, keyFrame: boolean, mediaBytes = 32): Uint
 }
 
 /**
- * A two-second fragment as a list of pieces in the order they are written:
- * an event message, then nineteen chunks with a key frame in the ones listed.
+ * A fragment as a list of pieces in the order they are written: an event
+ * message, then its chunks (nineteen, about two seconds, unless told
+ * otherwise) with a key frame in the ones listed.
  */
-export function fragmentPieces(start: number, keyFrames: number[] = [0]): Uint8Array[] {
+export function fragmentPieces(start: number, keyFrames: number[] = [0], chunks = 19): Uint8Array[] {
   return [
     box("emsg", new Uint8Array(16)),
-    ...Array.from({ length: 19 }, (_, index) =>
+    ...Array.from({ length: chunks }, (_, index) =>
       chunk(start + index * CHUNK_SECONDS, keyFrames.includes(index)),
     ),
   ];

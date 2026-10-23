@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firstTsVideoTime, looksLikeTransportStream, planTsParts } from "./ts-parts";
+import { firstTsVideoTime, looksLikeTransportStream, planTsParts, tsVideoSpan, videoSpan } from "./ts-parts";
 
 const TS_PACKET_SIZE = 188;
 const VIDEO_PID = 0x100;
@@ -239,6 +239,35 @@ describe("firstTsVideoTime", () => {
 
   it("waits for a video frame to arrive", () => {
     expect(firstTsVideoTime(stream(audioStart(4.9, 1)))).toBeNull();
+  });
+});
+
+describe("tsVideoSpan", () => {
+  it("measures how long a fragment's video runs, frames in decode order", () => {
+    // Three frames a sixtieth of a second apart, then a fourth, with audio between.
+    const data = stream(
+      timedPacket(10, { decodeSeconds: 10 }),
+      audioStart(10.01, 1),
+      timedPacket(10.05, { decodeSeconds: 10 + 1 / 60 }),
+      timedPacket(10.0333, { decodeSeconds: 10 + 2 / 60 }),
+      timedPacket(10.0667, { decodeSeconds: 10 + 3 / 60 }),
+    );
+
+    const span = tsVideoSpan(data);
+
+    expect(span?.first).toBeCloseTo(10, 4);
+    expect(span?.last).toBeCloseTo(10.05, 4);
+    expect(span?.frame).toBeCloseTo(1 / 60, 4);
+  });
+
+  it("cannot measure a single frame", () => {
+    expect(tsVideoSpan(stream(timedPacket(10)))).toBeNull();
+  });
+});
+
+describe("videoSpan", () => {
+  it("takes the usual gap, so one dropped frame does not stretch it", () => {
+    expect(videoSpan([3, 1, 2, 5, 4, 7])).toEqual({ first: 1, last: 7, frame: 1 });
   });
 });
 

@@ -4,6 +4,14 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Low latency mode no longer stutters every 20 to 30 seconds on streams whose
+  video comes in uneven lengths, which is common for IRL streams. After a
+  shorter or longer piece than usual, the next was mistaken for an
+  advertisement and held back until it was complete, so playback briefly ran
+  dry. Each piece is now measured by the video it holds.
+
 ## [0.3.4-alpha.23] - 2026-10-14
 
 ### Additions
