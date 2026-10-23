@@ -11,6 +11,10 @@ All notable changes to VioletWire are documented in this file.
   shorter or longer piece than usual, the next was mistaken for an
   advertisement and held back until it was complete, so playback briefly ran
   dry. Each piece is now measured by the video it holds.
+- Security update: VioletWire now runs on Electron 43.8.3, which no longer
+  trusts the compromised eMudhra intermediate certificates and brings
+  Chromium and V8 security fixes, with its built-in Node.js updated to
+  24.22.0.
 
 ## [0.3.4-alpha.23] - 2026-10-14
 
