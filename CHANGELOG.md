@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.24] - 2026-10-23
+
 ### Fixes
 
 - Low latency mode no longer stutters every 20 to 30 seconds on streams whose
