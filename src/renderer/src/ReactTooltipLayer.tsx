@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import type { LinkPreview } from "../../shared/link-preview";
 import "./react-tooltip.css";
+import { placeTooltip } from "./tooltip-position";
 
 const TOOLTIP_ATTRIBUTE = "data-violetwire-tooltip";
 // Optional enlarged image shown above the tooltip text (badge zooms, link
@@ -18,8 +19,6 @@ const TOOLTIP_IMAGE_HEIGHT_ATTRIBUTE = "data-violetwire-tooltip-image-height";
 const TOOLTIP_LARGE_ATTRIBUTE = "data-violetwire-tooltip-large";
 const LINK_PREVIEW_ATTRIBUTE = "data-violetwire-link-preview";
 const TOOLTIP_DELAY = 320;
-const VIEWPORT_MARGIN = 10;
-const TOOLTIP_GAP = 8;
 
 interface TooltipState {
   text: string;
@@ -91,7 +90,11 @@ function tooltipTarget(eventTarget: EventTarget | null): HTMLElement | null {
 // Measured against the window the tooltip is drawn in. Chat can be in a window
 // of its own, and clamping to this window's width would put a tooltip outside
 // a narrower one entirely.
-function positionTooltip(tooltip: TooltipState, view: Window): CSSProperties {
+function positionTooltip(
+  tooltip: TooltipState,
+  view: Window,
+  measuredSize?: { width: number; height: number },
+): CSSProperties {
   const targetBounds = tooltip.target.getBoundingClientRect();
   const longestTextLine = Math.max(...tooltip.text.split("\n").map((line) => line.length));
   const estimatedWidth = tooltip.linkPreview
@@ -101,17 +104,14 @@ function positionTooltip(tooltip: TooltipState, view: Window): CSSProperties {
       ? 340
       : 120
     : Math.min(320, Math.max(70, longestTextLine * 7.2 + 22));
-  const left = Math.min(
-    view.innerWidth - VIEWPORT_MARGIN - estimatedWidth / 2,
-    Math.max(VIEWPORT_MARGIN + estimatedWidth / 2, targetBounds.left + targetBounds.width / 2),
-  );
-  // Image tooltips are taller; flip below sooner so they stay on screen.
-  const flipThreshold = tooltip.linkPreview || tooltip.large ? 340 : tooltip.imageUrl ? 110 : 52;
-  const showBelow = targetBounds.top < flipThreshold;
+  // Caption controls are React content too, so tooltips may cover the title bar.
+  const position = placeTooltip(targetBounds, measuredSize ?? {
+    width: estimatedWidth,
+    height: tooltip.linkPreview || tooltip.large ? 340 : tooltip.imageUrl ? 110 : tooltip.text.split("\n").length * 18 + 16,
+  }, { width: view.innerWidth, height: view.innerHeight });
   return {
-    left,
-    top: showBelow ? targetBounds.bottom + TOOLTIP_GAP : targetBounds.top - TOOLTIP_GAP,
-    transform: showBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)",
+    ...position,
+    overflow: "hidden",
   };
 }
 
@@ -121,6 +121,28 @@ export function ReactTooltipLayer({
   extraRoot,
 }: ReactTooltipLayerProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const tooltipElement = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const element = tooltipElement.current;
+    const view = tooltip?.target.ownerDocument.defaultView;
+    if (!element || !tooltip || !view) return;
+    const reposition = () => {
+      const position = positionTooltip(tooltip, view, {
+        width: element.offsetWidth,
+        height: element.offsetHeight,
+      });
+      element.style.left = `${position.left}px`;
+      element.style.top = `${position.top}px`;
+      element.style.maxHeight = `${position.maxHeight}px`;
+    };
+    reposition();
+    // Images and fetched previews can change the height after the first paint.
+    // The tooltip can be in the pop-out chat window, so the observer comes
+    // from that window rather than this one's global.
+    const observer = new (element.ownerDocument.defaultView ?? view).ResizeObserver(reposition);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [tooltip]);
   const roots = useMemo(
     () => (extraRoot ? [document, extraRoot] : [document]),
     [extraRoot],
@@ -370,6 +392,7 @@ export function ReactTooltipLayer({
               : "violetwire-react-tooltip"
           }
           role="tooltip"
+          ref={tooltipElement}
           style={positionTooltip(
             tooltip,
             tooltip.target.ownerDocument.defaultView ?? window,
