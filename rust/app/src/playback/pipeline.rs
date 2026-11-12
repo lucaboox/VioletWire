@@ -51,6 +51,12 @@ impl Drop for Children {
 }
 
 impl Pipeline {
+    pub fn set_paused(&self, paused: bool) {
+        self.shared.set_paused(paused);
+    }
+    pub fn set_audio(&self, muted: bool, volume: f64) {
+        self.shared.set_gain(if muted { 0. } else { volume });
+    }
     pub fn start(login: &str) -> Result<Self> {
         if !is_login(login) {
             bail!("That is not a Twitch channel name.");
@@ -60,7 +66,8 @@ impl Pipeline {
         let shared = Arc::new(Shared::new(output.sample_rate(), output.channels()));
 
         // FFmpeg connects here to deliver audio. Loopback only.
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).context("Could not open the audio channel.")?;
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .context("Could not open the audio channel.")?;
         let audio_url = format!("tcp://127.0.0.1:{}", listener.local_addr()?.port());
 
         let job = Job::new()?;
@@ -84,8 +91,16 @@ impl Pipeline {
         job.assign(&children.0[0])?;
 
         let mut ffmpeg = Command::new(&tools.ffmpeg)
-            .args(ffmpeg_arguments(&audio_url, shared.sample_rate, shared.channels))
-            .stdin(transport.map(Stdio::from).context("Streamlink has no output.")?)
+            .args(ffmpeg_arguments(
+                &audio_url,
+                shared.sample_rate,
+                shared.channels,
+            ))
+            .stdin(
+                transport
+                    .map(Stdio::from)
+                    .context("Streamlink has no output.")?,
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .creation_flags(CREATE_NO_WINDOW)
@@ -110,7 +125,9 @@ impl Pipeline {
         }
         if let Some(errors) = streamlink_errors {
             let shared = shared.clone();
-            spawn("vw-streamlink-log", move || read_streamlink_log(&shared, errors))?;
+            spawn("vw-streamlink-log", move || {
+                read_streamlink_log(&shared, errors)
+            })?;
         }
 
         let sound = output.start(shared.clone())?;
@@ -200,17 +217,45 @@ fn ffmpeg_arguments(audio_url: &str, sample_rate: u32, channels: usize) -> Vec<S
     );
     let audio_filter = format!("aresample={sample_rate}:async=1:first_pts=0");
     [
-        "-hide_banner", "-nostats", "-loglevel", "info",
+        "-hide_banner",
+        "-nostats",
+        "-loglevel",
+        "info",
         // Start quickly on a live stream.
-        "-fflags", "nobuffer", "-probesize", "1000000", "-analyzeduration", "1000000",
-        "-hwaccel", "auto",
-        "-i", "pipe:0",
+        "-fflags",
+        "nobuffer",
+        "-probesize",
+        "1000000",
+        "-analyzeduration",
+        "1000000",
+        "-hwaccel",
+        "auto",
+        "-i",
+        "pipe:0",
         // Video: constant rate, so frame N belongs at N / fps.
-        "-map", "0:v:0", "-vf", &video_filter, "-fps_mode", "cfr",
-        "-pix_fmt", "bgra", "-f", "rawvideo", "pipe:1",
+        "-map",
+        "0:v:0",
+        "-vf",
+        &video_filter,
+        "-fps_mode",
+        "cfr",
+        "-pix_fmt",
+        "bgra",
+        "-f",
+        "rawvideo",
+        "pipe:1",
         // Audio: the sound card's rate and channels, gaps filled from zero.
-        "-map", "0:a:0", "-af", &audio_filter, "-ac", &channels.to_string(),
-        "-flush_packets", "1", "-f", "f32le", audio_url,
+        "-map",
+        "0:a:0",
+        "-af",
+        &audio_filter,
+        "-ac",
+        &channels.to_string(),
+        "-flush_packets",
+        "1",
+        "-f",
+        "f32le",
+        audio_url,
     ]
     .iter()
     .map(|argument| argument.to_string())
@@ -323,8 +368,12 @@ fn read_ffmpeg_log(shared: &Shared, errors: ChildStderr) {
 fn parse_size(line: &str) -> Option<(u32, u32)> {
     line.split([' ', ','])
         .filter_map(|token| token.split_once('x'))
-        .filter_map(|(width, height)| Some((width.parse::<u32>().ok()?, height.parse::<u32>().ok()?)))
-        .find(|(width, height)| (16..=MAX_WIDTH).contains(width) && (16..=MAX_HEIGHT).contains(height))
+        .filter_map(|(width, height)| {
+            Some((width.parse::<u32>().ok()?, height.parse::<u32>().ok()?))
+        })
+        .find(|(width, height)| {
+            (16..=MAX_WIDTH).contains(width) && (16..=MAX_HEIGHT).contains(height)
+        })
 }
 
 fn read_streamlink_log(shared: &Shared, errors: ChildStderr) {
@@ -363,14 +412,22 @@ mod tests {
         let line = "  Stream #0:0: Video: rawvideo (BGRA / 0x41524742), bgra(pc, gbr/bt709/bt709, progressive), \
                     1280x720 [SAR 1:1 DAR 16:9], q=2-31, 1769472 kb/s, 59.94 fps, 59.94 tbn";
         assert_eq!(parse_fps(line), Some(59.94));
-        assert_eq!(parse_fps("Stream #0:1: Audio: pcm_f32le, 48000 Hz, stereo"), None);
+        assert_eq!(
+            parse_fps("Stream #0:1: Audio: pcm_f32le, 48000 Hz, stereo"),
+            None
+        );
         assert_eq!(parse_size(line), Some((1280, 720)));
-        assert_eq!(parse_size("Video: rawvideo (BGRA / 0x41524742), bgra"), None);
+        assert_eq!(
+            parse_size("Video: rawvideo (BGRA / 0x41524742), bgra"),
+            None
+        );
     }
 
     #[test]
     fn hides_urls_from_messages() {
-        let message = redact("error: Unable to open URL: https://usher.ttvnw.net/x.m3u8?sig=abc&token=secret (403)");
+        let message = redact(
+            "error: Unable to open URL: https://usher.ttvnw.net/x.m3u8?sig=abc&token=secret (403)",
+        );
         assert!(!message.contains("secret"));
         assert!(message.contains("[link]"));
     }
@@ -378,8 +435,19 @@ mod tests {
     #[test]
     fn asks_ffmpeg_for_the_device_format() {
         let arguments = ffmpeg_arguments("tcp://127.0.0.1:5000", 44_100, 2);
-        assert!(arguments.iter().any(|argument| argument == "aresample=44100:async=1:first_pts=0"));
-        assert!(arguments.windows(2).any(|pair| pair[0] == "-ac" && pair[1] == "2"));
-        assert_eq!(arguments.last().map(String::as_str), Some("tcp://127.0.0.1:5000"));
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "aresample=44100:async=1:first_pts=0")
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair[0] == "-ac" && pair[1] == "2")
+        );
+        assert_eq!(
+            arguments.last().map(String::as_str),
+            Some("tcp://127.0.0.1:5000")
+        );
     }
 }

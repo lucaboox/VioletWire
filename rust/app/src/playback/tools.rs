@@ -23,16 +23,30 @@ pub fn find() -> Result<Tools> {
     let ffmpeg = env::var_os("VIOLETWIRE_FFMPEG_PATH")
         .map(PathBuf::from)
         .into_iter()
-        .chain(roots.iter().map(|root| root.join("ffmpeg").join("ffmpeg.exe")))
+        .chain(
+            roots
+                .iter()
+                .map(|root| root.join("ffmpeg").join("ffmpeg.exe")),
+        )
         .chain(search_path("ffmpeg.exe"))
         .find(|path| path.is_file());
     let Some(ffmpeg) = ffmpeg else {
-        bail!("FFmpeg was not found. Streamlink's Windows installer includes it, or set VIOLETWIRE_FFMPEG_PATH.");
+        bail!(
+            "FFmpeg was not found. Streamlink's Windows installer includes it, or set VIOLETWIRE_FFMPEG_PATH."
+        );
     };
     Ok(Tools {
         streamlink_python: root.join("Python").join("python.exe"),
         ffmpeg,
     })
+}
+
+pub fn streamlink_python() -> Result<PathBuf> {
+    streamlink_roots()
+        .iter()
+        .find(|root| is_streamlink_root(root))
+        .map(|root| root.join("Python").join("python.exe"))
+        .ok_or_else(|| anyhow::anyhow!("Streamlink was not found."))
 }
 
 fn streamlink_roots() -> Vec<PathBuf> {
@@ -53,7 +67,11 @@ fn streamlink_roots() -> Vec<PathBuf> {
 
 fn is_streamlink_root(root: &Path) -> bool {
     root.join("Python").join("python.exe").is_file()
-        && root.join("pkgs").join("streamlink_cli").join("__main__.py").is_file()
+        && root
+            .join("pkgs")
+            .join("streamlink_cli")
+            .join("__main__.py")
+            .is_file()
 }
 
 fn search_path(program: &str) -> Option<PathBuf> {

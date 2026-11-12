@@ -34,18 +34,119 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
   follow order, plus a Home grid of live cards with thumbnails, viewer counts and
   uptime. Both refresh every two minutes. Thumbnails are re-fetched every Twitch
   thumbnail period, and the old frame stays on screen until the new one arrives.
-- Images are loaded only from `static-cdn.jtvnw.net` over HTTPS. Their format is
+- Home/sidebar images are loaded only from `static-cdn.jtvnw.net` over HTTPS. Their format is
   checked from their bytes, and each one is capped at 4 MB.
 
-- In-app playback (first version). Clicking a channel plays it with sound.
-  Streamlink pipes the stream into FFmpeg, FFmpeg decodes it (on the GPU when it
-  can), and each frame is drawn as a GPUI image, timed by the audio clock. A Windows
-  Job object holds both processes, so they stop with the player and even when the app
-  is force-killed. Playback is anonymous for now, so no subscriber or Turbo
-  benefits.
+- In-app GPU-surface playback on Windows. Streamlink resolves the playlist once,
+  then Windows Media Engine handles decoding, audio and playback timing in the
+  app. Its GPU-processed BGRA texture is sampled directly by GPUI; frames never
+  travel through CPU memory or GPUI's image atlas. FFmpeg is not used on this path.
+  Playback remains anonymous; subscriber/Turbo benefits are not implemented.
+- A loopback playlist relay (`playback/relay.rs`) puts playback near the live
+  edge. Media Engine starts at the oldest segment of Twitch's ~30 s window, which
+  left streams about 28 s behind; the relay's first response lists only the
+  newest ~5 s, so playback now sits 4–6 s behind. It also declares the real 2 s
+  target duration (Twitch says 6 s, so Media Engine refreshed too rarely and the
+  buffer ran dry near the edge) and drops Twitch's prefetch hints. Only playlist
+  text crosses the socket, behind a random per-process secret; segments still come
+  straight from Twitch's CDN.
+- Player controls as in Electron: the live indicator ("Live", "Behind live" —
+  click to return — or "Paused"), video stats (latency read-out on the bar, a hover
+  summary, and a panel with latency, buffer, resolution, framerate, bitrate,
+  dropped frames, quality and stall recoveries; optional FPS in the corner), the
+  stream quality menu (Auto plays the highest quality; a change builds the new
+  stream silently and swaps when its first frame is ready, so the picture never
+  stops), and audio compression — a Media Foundation effect matching Electron's
+  WebAudio compressor (−18 dB, 12 dB knee, 4:1, 20/250 ms, WebAudio's make-up gain).
+- A freeze watchdog: four seconds without a new frame returns to the live edge;
+  if that does not help, it reconnects with a fresh playlist (up to three times).
+  Playback that drifts more than six seconds past its target catches up.
+- The previous Streamlink → FFmpeg → CPU-image player remains a compatibility
+  fallback. Use `cargo run -- --cpu-video --play <channel>` to compare it explicitly.
+  Its Windows Job object still stops all helpers when playback closes or the app
+  is killed. The GPU path uses one job-managed Streamlink resolver warmed at
+  launch, reusing its HTTP connections between channels. A bounded private pipe
+  carries signed URLs; cancellation and worker failure retain a CLI fallback.
+- Live Twitch chat with correctly cased display names, name colors, badges when
+  signed in, native Twitch emotes and 7TV/BTTV/FFZ channel/global emotes. GIF and
+  WebP animations retain their frame timing. Native emote ranges respect Unicode.
+  Chat reconnects automatically and applies message deletion, timeout/ban and
+  room-clear events. The virtualized list keeps at most 500 messages; scrolling
+  up pauses following and offers a Jump to live button.
+  Emotes reserve their layout space before image download; image completion
+  repaints without resetting the list. Provider dimensions preserve wide emotes,
+  and a displayed message retains its geometry through image eviction/retry.
+- A searchable emote picker and a native text composer with selection, clipboard,
+  Unicode editing and IME support. Sign in to send through Twitch's official chat
+  API. The picker includes the account's available native emotes, including
+  subscriber emotes and the current room's follower emotes. Sending requires an
+  explicit Enter or Chat action; failed sends preserve the draft.
+- Fullscreen, theater mode, hideable sidebar chat and translucent chat over the
+  video. Pause/resume, mute, a draggable volume slider and Go live sit in a control
+  overlay that hides after inactivity and stays visible while hovered or paused.
+  Double-clicking the video toggles fullscreen. Resuming GPU playback returns to
+  the live edge; Go live explicitly seeks there.
+- Electron's top bar: Home and Browse, a search box with a dropdown as you type
+  (go to the typed channel, matching categories, matching channels with live
+  state, viewers and uptime) and a results page on Enter, the account chip with
+  sign-out, and settings. Signed out, Enter opens a typed channel login directly.
+- Browse: Twitch's top categories with live viewer totals (anonymous GraphQL,
+  as in Electron), category search as you type, each category's live streams,
+  and Load more. Home and stream cards carry the language and tag chips.
+- The UI uses the Electron client's logo, Lucide geometry, OLED/dark colors,
+  30 px title bar, 68 px navigation, 244 px followed rail and compact icon controls.
+  Stream title/category/viewers/uptime share a 54 px header aligned with chat.
+  The rail can collapse, including automatically in narrow windows. Controls
+  adapt to the actual video pane width instead of the whole window width.
+- Chat has inline text/emote/badge layout, aspect-correct emotes, safe URL clicks,
+  7TV zero-width layers, colored `/me` text, first-time chatter and mention
+  highlighting, local timestamps, subscription notices and reply previews.
+  Hover to reply; right-click to copy a message, reply or open a profile.
+  Reply sends use Twitch's parent-message field and preserve drafts on failure.
+- Recent chat uses the same optional public log sources as Electron, without
+  account credentials. History and live messages merge by ID/time. History
+  loading is cancelled on racing moderation events so it cannot restore a
+  message a moderator has just removed. Unavailable history does not block IRC.
+- The emote picker has provider filters and a virtualized grid for the complete
+  set. Only visible thumbnails load, as stills; message emotes retain animation.
+  Sorting/filtering is cached and image requests reuse HTTP connections.
+- Native settings cover OLED, timestamps, chat text/emote size, recent-message
+  count, sidebar width, overlay opacity and control hide delay. Visual preferences
+  initially import from Electron's `twitch-windows-viewer/preferences.json`;
+  Rust saves independently in `%APPDATA%/VioletWireRust/preferences.json`.
+  The old preference file is never written. Volume and rail collapse also persist.
 
 `cargo run -- --play <channel>` opens a channel at launch without signing in,
 which is handy for working on playback.
+
+### Player shortcuts
+
+| Key | Action |
+| --- | --- |
+| F / F11 | Toggle fullscreen |
+| Escape | Exit fullscreen |
+| T | Toggle theater mode |
+| C | Show/hide chat |
+| O | Switch sidebar/overlay chat |
+| Space | Pause/resume |
+| M | Mute/unmute |
+| Up / Down | Adjust volume by 5% |
+| G | Return to live |
+
+Player letter/volume shortcuts are suppressed while typing in the channel field,
+composer or emote search. F11 and Escape remain available. Fullscreen hides the
+title/navigation bars; chat can stay beside the video, overlay it, or be hidden.
+
+Chat reads use anonymous, certificate-verified TLS IRC; account tokens never go
+to IRC or third-party emote providers. Authenticated chat sends, badges and account
+emotes use fixed Twitch Helix endpoints with bearer headers. Chat images use an
+exact HTTPS CDN allowlist with redirects disabled. Downloads are capped at 512 KiB,
+65,536 pixels per frame (up to 1,536×256 for wide emotes), 120 frames and 2 MiB decoded per emote (longer animations become a
+still). The per-chat cache holds at most 160 images and 32 MiB of decoded pixels,
+with four image workers. Eviction/channel close removes their atlas entries.
+Pending downloads carry a cache generation, so an evicted request cannot
+overwrite a newer entry. Failed downloads back off before retry; readable emote
+codes remain in the message when an image is unavailable.
 
 ## Layout
 
@@ -58,6 +159,10 @@ which is handy for working on playback.
 | `app/src/twitch/helix.rs` | Helix followed channels, streams, users | `twitch-service.ts` (Helix parts) |
 | `app/src/twitch/token_store.rs` | Credential Manager storage | Electron `safeStorage` token file |
 | `app/src/images.rs` | CDN image download for GPUI | `emote-image-store.ts` (later) |
+| `app/src/chat/` | TLS IRC, moderation events, bounded emote cache, picker/composer, Helix sends | Chat services and chat views |
+| `app/src/input.rs` | Native Unicode text input and clipboard/IME handling | React inputs |
+| `app/src/ui.rs`, `app/assets/` | Shared buttons, tooltips and embedded Lucide/logo assets | Lucide React, controls and tooltip CSS |
+| `app/src/settings.rs`, `app/src/preferences.rs` | Native settings and separate visual preference persistence | Preferences service and settings views |
 | `app/src/player.rs` | Video view; redraws only when a frame is due | `HlsNativeVideo.tsx` |
 | `app/src/playback/` | Streamlink → FFmpeg pipeline, audio clock, sound output, process job | `hls-native-player.ts`, hls.js |
 | `app/src/theme.rs` | Colours and fonts | `styles.css` |
@@ -67,41 +172,47 @@ never waits on the network.
 
 ## Roadmap
 
-1. **Browse.** Categories (with the viewer totals), a category's streams,
-   search, channel pages, and React-style tooltips as a GPUI tooltip view.
-2. **Playback.** The hard part; see the next section.
-3. **Chat.** Twitch IRC over WebSocket, Twitch/7TV/BTTV/FFZ emotes and badges,
-   sending, replies, mentions and moderation actions. GPUI can play animated GIF
-   and WebP frames. It cannot decode AVIF, so 7TV's WebP variants would be used.
+1. **Channel extras.** Clip creation, favourites, channel pages and
+   picture-in-picture.
+2. **Playback parity.** Authenticated resolution (subscriber/Turbo), ad
+   filtering and LL-HLS parts in the relay; see the next section.
+3. **Advanced chat.** User cards, moderation commands, room modes, editable emote
+   chips in the composer, rich selection and pop-out windows. The live reader,
+   history, regular/layered emotes, picker, replies, mentions, timestamps, sending
+   and basic moderation events work now.
 4. **Multistream.** Up to four tiles with the same resource clean-up rules as
    `MultiStreamManager`.
-5. **Kick, link previews, settings, updates and packaging.**
+5. **Kick, link previews, the remaining settings, updates and packaging.**
 
 ## Playback design
 
 GPUI has no video element. Its macOS `surface()` element draws a CoreVideo
 buffer, but on Windows 0.2.2's DirectX renderer leaves `draw_surfaces` empty.
-The parts that are not tied to Electron carry over unchanged in design:
+This workspace now patches GPUI 0.2.2 locally to draw
+Windows GPU textures; see [the patch notes](vendor/GPUI-PATCH.md).
+Remaining pieces to port from Electron:
 
-- **Streamlink** resolves the authenticated playlist through the same warm
-  worker pipe. It is spawned with an argument array, never through a shell.
-- **The relay logic**: ad filtering, LL-HLS parts, keyframe-safe cuts,
-  `EXT-X-START`, and the lessons in the engine notes. With the player in the same
-  process, this no longer needs a localhost HTTP server. Segments can go
-  straight from the relay to the decoder.
+- **Authenticated resolution.** The current warm Rust lookup is anonymous;
+  playback authentication still needs to be ported. Process
+  arguments contain no credentials, and processes are spawned without a shell.
+- **The rest of the relay logic**: ad filtering, LL-HLS parts, keyframe-safe
+  cuts, and the lessons in the engine notes. The Rust relay so far only positions
+  the start, fixes the target duration and drops prefetch hints. Media Engine
+  ignores `EXT-X-START`; it always begins at the first listed segment, which is
+  what the relay's trimmed first response relies on.
 
 What is new is getting decoded frames onto the screen:
 
 | Option | How | Trade-off |
 | --- | --- | --- |
 | A. CPU frames | Decode (FFmpeg or Media Foundation), convert to BGRA, hand GPUI a new `RenderImage` per frame | Works on stock GPUI. About 500 MB/s of uploads at 1080p60, and four tiles would be heavy. Good for a first spike. |
-| B. GPU surface in a GPUI fork | Implement `draw_surfaces` for D3D11 NV12 textures from a hardware decoder (FFmpeg `d3d11va` or the Media Foundation H.264 MFT), on GPUI's own D3D11 device | Zero-copy and the right long-term answer. It means keeping a small fork of GPUI's Windows renderer. |
+| B. GPU surface in a GPUI fork (implemented) | Windows Media Engine decodes and GPU-converts video into a reusable BGRA texture on GPUI's D3D11 device; GPUI samples it directly | No CPU readback/upload; one GPU video-processing blit remains. Requires the local GPUI patch. |
 | C. DirectComposition visual | Put a video swap chain or `MediaPlayer` surface in GPUI's DComp tree | Native compositing, but it needs the same fork. UI drawn over the video (controls, tooltips) needs care. |
 | D. WebView2 + hls.js | Embed the existing `HlsNativeVideo` in a WebView2 child | Fastest way to reuse today's player. It brings back a browser engine, which undercuts the rewrite. |
 
 libmpv stays retired.
 
-**Status:** option A is built (see `playback/`). Other GPUI projects do the
+**Original baseline:** option A (see `playback/pipeline.rs`). Other GPUI projects do the
 same on Windows: [gpui-video-player](https://lib.rs/crates/gpui-video-player)
 (GStreamer) and Zed's screen sharing both push frames through GPUI's image atlas.
 
@@ -120,6 +231,103 @@ the CPU, converts it to BGRA, sends it through a pipe and uploads it again:
 roughly 500 MB/s of copying at 1080p60. Redrawing only when a frame is due
 already cut the app's own share from a full core to 12% on a 30 fps stream.
 
-**Next: option B.** Decode on the GPU into D3D11 textures and draw them directly
-in a small fork of GPUI's Windows renderer. That removes every copy and the
-FFmpeg process, and it is how the Rust build can beat Electron on CPU and memory.
+## GPU-surface implementation and measurements
+
+Option B is now the default. It uses Windows Media Engine frame-server mode,
+`MF_MEDIA_ENGINE_DXGI_MANAGER`, `OnVideoStreamTick`, and `TransferVideoFrame`.
+The device manager uses GPUI's own multithread-protected D3D11 device. A single
+BGRA texture and shader view are reused until resolution/device changes. Only a
+new decoder frame notifies the player view. Native audio and video share a clock.
+Shutdown stops the media engine before releasing its surfaces/device references.
+
+This removes CPU frame copying and the separate FFmpeg process. It still performs
+one GPU color-conversion blit, so calling it literally zero-copy would be misleading.
+The actual renderer changes are listed in [GPUI-PATCH.md](vendor/GPUI-PATCH.md).
+
+A new release-build comparison on 2026-11-12, summit1g, sequential 35-second
+hidden/muted **video-only probes**, with 10 seconds warmup and a 15-second steady
+sample. CPU and private memory include each probe's descendant processes:
+
+| Path | CPU (% of one core) | Private memory | Steady processes |
+| --- | ---: | ---: | ---: |
+| Old Rust CPU frames / FFmpeg | 81.9% | 939.0 MiB | 5 |
+| Native GPU surfaces | 2.7% | 210.2 MiB | 1 |
+
+The GPU probe transferred 1,782 frames, approximately 60 fps after startup.
+An additional UFDTech probe transferred 363 frames at 1920×1080 in 20 seconds
+(including startup), also without CPU frame uploads.
+These results show a substantial improvement over the old Rust video path.
+They are **not a new apples-to-apples comparison with the full Electron client**:
+the probe omits sidebar/auth/chat, GPU memory is excluded, and the older Electron
+numbers above came from a different run. Full-app CPU, total GPU memory, live
+latency, audio synchronization and visual quality still need a paired review.
+The existing Electron ad filtering and custom LL-HLS relay are not ported by this
+change; Media Engine currently consumes the resolved upstream playlist directly.
+
+### Reproduce
+
+```powershell
+cd rust
+cargo build --release
+# Normal player (no automation or desktop input):
+cargo run --release -- --play summit1g
+# Old path, for comparison:
+cargo run --release -- --cpu-video --play summit1g
+# Bounded, hidden, muted probe. Nonzero exit if no frames played:
+.\target\release\violetwire.exe --play summit1g --video-probe-seconds 35 --mute-video
+# Measures only the process trees it starts, never kills by program name:
+.\scripts\benchmark-video.ps1 -Channel summit1g
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
+The GPU probe never silently changes to the CPU backend. Normal playback can
+fall back if native media playback fails; the reason is printed without a stream
+URL. Probe logs are under `target/video-benchmark`. Signed media URLs stay on the
+private lookup stdout pipe/in memory and are not logged or placed in argv.
+
+### Chat/UI validation
+
+```powershell
+# Public read-only chat check (counts only; never logs message bodies):
+.\target\release\violetwire.exe --play summit1g --chat-probe
+# Compare the previous CLI lookup with three warm lookups (timings only):
+.\target\release\violetwire.exe --play ufdtech --resolver-probe
+# Hidden, muted complete UI check; no desktop input or chat sends:
+.\target\release\violetwire.exe --play summit1g --ui-probe-seconds 30 --mute-video
+# Save the test window's own render target (no desktop screenshots/input):
+.\target\release\violetwire.exe --play summit1g --ui-probe-seconds 47 --mute-video --ui-snapshot-dir target/ui-check
+# Check compact layout at 760x480 logical pixels:
+.\target\release\violetwire.exe --play summit1g --ui-probe-seconds 15 --ui-probe-small --mute-video --ui-snapshot-dir target/ui-small
+```
+
+The UI probe exercises sidebar/overlay chat, the emote picker, theater and the
+fullscreen **layout**, settings and reply menus without changing desktop window
+state. Settings/menu stages run in the extended 47-second snapshot check. It exits nonzero
+unless caption hit testing permits native dragging/buttons, video frames,
+a connected chat, emote metadata and a usable chat viewport
+were observed. It renders at a bounded 10 Hz, so its frame count is not an FPS
+benchmark. Normal playback remains paced by display/decoder frames.
+
+An anonymous UFDTech resolver check measured the old CLI at 2,433 ms and reused
+worker lookups at 734 and 606 ms. The first lookup in that worker took 1,870 ms;
+warming Python at launch does not eliminate Twitch's first network handshake.
+A separate fresh-launch UI probe resolved in 2,128 ms and displayed its first
+GPU frame at 3,795 ms. These are individual live-network samples, not guaranteed
+startup times. Probe diagnostics report lookup and first-frame times separately.
+
+Snapshots explicitly read the **test window's** render target back to CPU memory
+only when `--ui-snapshot-dir` is supplied with a UI probe. Normal rendering and
+playback do not use this path. Hidden probe windows are explicitly sized because
+GPUI's Windows implementation otherwise defers placement until a window is shown.
+The resize operation preserves desktop focus and window stacking.
+
+Embedded icon assets include Lucide's ISC license. Regenerate them from the
+Electron dependency and existing logo with `node rust/scripts/sync-ui-assets.mjs`
+from the repository root.
+
+Live reads and image downloads have been exercised together with GPU video.
+Sending is implemented against Twitch's documented API but live message sends
+are deliberately excluded from automated checks. Physical fullscreen transitions,
+IME composition and pointer interactions still need hands-on review. This is a
+Twitch UI increment; Kick and full Electron feature parity remain on the roadmap.

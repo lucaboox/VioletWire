@@ -53,6 +53,7 @@ where
 {
     let mut played = 0u64;
     let mut scratch: Vec<f32> = Vec::new();
+    let muted = std::env::args().any(|arg| arg == "--mute-video");
     device
         .build_output_stream::<T, _, _>(
             config,
@@ -60,7 +61,7 @@ where
                 scratch.resize(output.len(), 0.0);
                 shared.fill_audio(&mut scratch, &mut played);
                 for (slot, sample) in output.iter_mut().zip(&scratch) {
-                    *slot = T::from_sample(*sample);
+                    *slot = T::from_sample(if muted { 0.0 } else { *sample });
                 }
             },
             // Device changes and glitches surface as silence; nothing to log

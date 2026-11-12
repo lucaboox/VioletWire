@@ -37,6 +37,9 @@ struct ClockState {
 }
 
 pub struct Shared {
+    paused: AtomicBool,
+    paused_clock: AtomicU64,
+    gain: AtomicU64,
     pub sample_rate: u32,
     pub channels: usize,
     stop: AtomicBool,
@@ -64,6 +67,9 @@ pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 impl Shared {
     pub fn new(sample_rate: u32, channels: usize) -> Self {
         Self {
+            paused: AtomicBool::new(false),
+            paused_clock: AtomicU64::new(0),
+            gain: AtomicU64::new(1f64.to_bits()),
             sample_rate,
             channels,
             stop: AtomicBool::new(false),
@@ -108,7 +114,8 @@ impl Shared {
 
     pub fn set_fps(&self, fps: f64) {
         if fps.is_finite() && (1.0..=240.0).contains(&fps) {
-            self.fps_millis.store((fps * 1000.0).round() as u64, Ordering::SeqCst);
+            self.fps_millis
+                .store((fps * 1000.0).round() as u64, Ordering::SeqCst);
         }
     }
 
@@ -142,6 +149,9 @@ impl Shared {
 
     /// Seconds of media played, smoothed between audio callbacks.
     pub fn clock(&self) -> f64 {
+        if self.paused.load(Ordering::Acquire) {
+            return f64::from_bits(self.paused_clock.load(Ordering::Acquire));
+        }
         let state = *lock(&self.clock);
         let rate = f64::from(self.sample_rate);
         let since = state
@@ -174,14 +184,19 @@ impl Shared {
             // has passed are stale either way.
             if let Some(fps) = self.fps() {
                 let clock = self.clock();
-                while queue.front().is_some_and(|frame| frame.index as f64 / fps < clock) {
+                while queue
+                    .front()
+                    .is_some_and(|frame| frame.index as f64 / fps < clock)
+                {
                     queue.pop_front();
                 }
             }
             // Video is full but audio ran dry: FFmpeg is blocked writing
             // video, so it cannot produce the audio the clock needs. Let a
             // frame go rather than stall both.
-            if queue.len() >= VIDEO_QUEUE_FRAMES && self.audio_len.load(Ordering::SeqCst) < self.samples_for(0.1) {
+            if queue.len() >= VIDEO_QUEUE_FRAMES
+                && self.audio_len.load(Ordering::SeqCst) < self.samples_for(0.1)
+            {
                 queue.pop_front();
             }
         }
@@ -214,7 +229,10 @@ impl Shared {
         let clock = self.clock();
         let mut queue = lock(&self.video);
         let mut due = None;
-        while queue.front().is_some_and(|frame| frame.index as f64 / fps <= clock) {
+        while queue
+            .front()
+            .is_some_and(|frame| frame.index as f64 / fps <= clock)
+        {
             due = queue.pop_front();
         }
         self.video_len.store(queue.len(), Ordering::SeqCst);
@@ -247,6 +265,10 @@ impl Shared {
     /// Fills one sound-card buffer and advances the clock. `played` is the
     /// callback's running total of sample frames.
     pub fn fill_audio(&self, output: &mut [f32], played: &mut u64) {
+        if self.paused.load(Ordering::Acquire) {
+            output.fill(0.);
+            return;
+        }
         let channels = self.channels;
         let mut queue = lock(&self.audio);
         if !self.playing() {
@@ -268,8 +290,9 @@ impl Shared {
         }
         let available = queue.len().min(output.len());
         let available = available - available % channels;
+        let gain = f64::from_bits(self.gain.load(Ordering::Relaxed)) as f32;
         for (slot, sample) in output.iter_mut().zip(queue.drain(..available)) {
-            *slot = sample;
+            *slot = sample * gain;
         }
         output[available..].fill(0.0);
         self.audio_len.store(queue.len(), Ordering::SeqCst);
@@ -283,6 +306,18 @@ impl Shared {
             at: Some(Instant::now()),
         };
         *played += frames;
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        if paused && !self.paused.load(Ordering::Acquire) {
+            self.paused_clock
+                .store(self.clock().to_bits(), Ordering::Release);
+        }
+        self.paused.store(paused, Ordering::Release);
+    }
+    pub fn set_gain(&self, gain: f64) {
+        self.gain
+            .store(gain.clamp(0., 1.).to_bits(), Ordering::Release);
     }
 }
 
@@ -328,10 +363,17 @@ mod tests {
         // 250 ms played: frames 0, 1 and 2 (0, 100, 200 ms) are due.
         let mut output = vec![0.0; 250];
         shared.fill_audio(&mut output, &mut played);
-        *lock(&shared.clock) = ClockState { base: 250, span: 0, at: None };
+        *lock(&shared.clock) = ClockState {
+            base: 250,
+            span: 0,
+            at: None,
+        };
         let due = shared.take_due_frame().expect("a frame is due");
         assert_eq!(lock(&shared.video).len(), 2);
-        assert_eq!(lock(&shared.video).front().map(|frame| frame.index), Some(3));
+        assert_eq!(
+            lock(&shared.video).front().map(|frame| frame.index),
+            Some(3)
+        );
         drop(due);
     }
 
@@ -347,5 +389,30 @@ mod tests {
         // 2.5 s buffered -> trimmed to 0.8 s, then 0.1 s played.
         assert_eq!(played, 1_700 + 100);
         assert_eq!(lock(&shared.audio).len(), 700);
+    }
+
+    #[test]
+    fn pause_freezes_clock_and_mute_still_consumes_audio() {
+        let shared = Shared::new(1000, 1);
+        shared.set_fps(30.);
+        shared.push_video(frame(0));
+        shared.push_audio(&vec![0.5; 1000]);
+        let (mut played, mut output) = (0, [1.; 100]);
+        shared.set_paused(true);
+        let clock = shared.clock();
+        shared.fill_audio(&mut output, &mut played);
+        assert_eq!(output, [0.; 100]);
+        assert_eq!(played, 0);
+        assert_eq!(shared.clock(), clock);
+        assert_eq!(lock(&shared.audio).len(), 1000);
+        shared.set_paused(false);
+        shared.set_gain(0.);
+        shared.fill_audio(&mut output, &mut played);
+        assert_eq!(played, 100);
+        assert_eq!(lock(&shared.audio).len(), 900);
+        assert_eq!(output, [0.; 100]);
+        shared.set_gain(0.5);
+        shared.fill_audio(&mut output, &mut played);
+        assert_eq!(output, [0.25; 100]);
     }
 }

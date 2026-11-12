@@ -76,19 +76,42 @@ pub struct Followed {
 /// The followed list, renewing the token first if it is about to expire, or
 /// once if Twitch refuses it.
 pub fn followed(agent: &ureq::Agent, session: &Session) -> Result<Followed, Failure> {
+    let user_id = session.identity.user_id.clone();
+    let fetched = with_helix(agent, session, |helix| helix.followed_channels(&user_id))?;
+    Ok(Followed {
+        channels: fetched.value,
+        renewed: fetched.renewed,
+    })
+}
+
+/// A Helix result and, if the token had to be renewed for it, the new token.
+pub struct Fetched<T> {
+    pub value: T,
+    pub renewed: Option<Token>,
+}
+
+/// Runs a Helix call, renewing the token first if it is about to expire, or
+/// once if Twitch refuses it.
+pub fn with_helix<T>(
+    agent: &ureq::Agent,
+    session: &Session,
+    call: impl Fn(&Helix) -> Result<T>,
+) -> Result<Fetched<T>, Failure> {
     let mut token = session.token.clone();
     let mut renewed = None;
     if token.expires_within(RENEW_MARGIN_SECONDS) {
         token = renew(agent, &token, session.epoch)?.ok_or(Failure::SignedOut)?;
         renewed = Some(token.clone());
     }
-    let user_id = &session.identity.user_id;
-    match Helix::new(agent, &token.access_token).followed_channels(user_id) {
-        Ok(channels) => Ok(Followed { channels, renewed }),
+    match call(&Helix::new(agent, &token.access_token)) {
+        Ok(value) => Ok(Fetched { value, renewed }),
         Err(error) if error.is::<Unauthorized>() && renewed.is_none() => {
             let token = renew(agent, &token, session.epoch)?.ok_or(Failure::SignedOut)?;
-            let channels = Helix::new(agent, &token.access_token).followed_channels(user_id)?;
-            Ok(Followed { channels, renewed: Some(token) })
+            let value = call(&Helix::new(agent, &token.access_token))?;
+            Ok(Fetched {
+                value,
+                renewed: Some(token),
+            })
         }
         Err(error) => Err(error.into()),
     }
@@ -104,6 +127,20 @@ pub fn sign_out(agent: &ureq::Agent, token: &Token) -> Result<()> {
 /// Refresh and save in one step: Twitch rotates the refresh token, so the new
 /// one must reach Credential Manager before anything can refresh again.
 fn renew(agent: &ureq::Agent, token: &Token, epoch: u64) -> Result<Option<Token>> {
+    // Browse, search and the followed list can all find the token expiring at
+    // once. Twitch rotates refresh tokens, so only one renewal may run; one
+    // that waited reuses the token the first one saved.
+    static RENEWING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _renewing = RENEWING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if token_store::epoch() == epoch
+        && let Ok(Some(saved)) = token_store::load()
+        && saved.access_token != token.access_token
+        && !saved.expires_within(RENEW_MARGIN_SECONDS)
+    {
+        return Ok(Some(saved));
+    }
     let Some(refresh_token) = token.refresh_token.as_deref() else {
         return Ok(None);
     };

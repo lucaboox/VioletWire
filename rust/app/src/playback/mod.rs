@@ -2,8 +2,12 @@
 //! where it is heading.
 
 mod audio;
+mod compressor;
+pub mod gpu;
 mod job;
 mod pipeline;
+mod relay;
+pub mod resolver;
 mod shared;
 mod tools;
 

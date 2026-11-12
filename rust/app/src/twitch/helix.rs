@@ -1,4 +1,5 @@
-//! Helix (Twitch's official API) reads for the followed list.
+//! Helix (Twitch's official API) reads: the followed list, browsing
+//! categories and their live streams, and search.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -42,6 +43,35 @@ pub struct LiveStream {
     pub viewer_count: u64,
     pub started_at: String,
     pub thumbnail_url: Option<String>,
+    pub language: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Category {
+    pub id: String,
+    pub name: String,
+    pub box_art_url: Option<String>,
+    /// From Twitch's public GraphQL; absent when that is unavailable.
+    pub viewers: Option<u64>,
+}
+
+pub struct CategoryPage {
+    pub categories: Vec<Category>,
+    pub cursor: Option<String>,
+}
+
+/// Live streams in a category; each is a channel with its stream.
+pub struct StreamPage {
+    pub streams: Vec<FollowedChannel>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Default)]
+pub struct SearchResults {
+    /// Live ones carry their stream; offline ones have none.
+    pub channels: Vec<FollowedChannel>,
+    pub categories: Vec<Category>,
 }
 
 #[derive(Deserialize)]
@@ -76,6 +106,47 @@ struct Stream {
     started_at: String,
     #[serde(default)]
     thumbnail_url: String,
+    #[serde(default)]
+    language: String,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    user_login: String,
+    #[serde(default)]
+    user_name: String,
+}
+
+impl Stream {
+    fn into_live(self) -> LiveStream {
+        LiveStream {
+            thumbnail_url: sized_thumbnail(&self.thumbnail_url, 640, 360),
+            title: self.title,
+            game_name: self.game_name,
+            viewer_count: self.viewer_count,
+            started_at: self.started_at,
+            language: self.language,
+            tags: self.tags.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Game {
+    id: String,
+    name: String,
+    #[serde(default)]
+    box_art_url: String,
+}
+
+#[derive(Deserialize)]
+struct SearchChannel {
+    id: String,
+    broadcaster_login: String,
+    display_name: String,
+    #[serde(default)]
+    thumbnail_url: String,
+    #[serde(default)]
+    is_live: bool,
 }
 
 #[derive(Deserialize)]
@@ -113,13 +184,7 @@ impl<'a> Helix<'a> {
                 profile_image_url: images
                     .get(&item.broadcaster_id)
                     .and_then(|url| sized_profile_image(url, 70)),
-                stream: live.remove(&item.broadcaster_id).map(|stream| LiveStream {
-                    thumbnail_url: sized_thumbnail(&stream.thumbnail_url, 640, 360),
-                    title: stream.title,
-                    game_name: stream.game_name,
-                    viewer_count: stream.viewer_count,
-                    started_at: stream.started_at,
-                }),
+                stream: live.remove(&item.broadcaster_id).map(Stream::into_live),
                 id: item.broadcaster_id,
                 login: item.broadcaster_login,
                 display_name: item.broadcaster_name,
@@ -131,6 +196,102 @@ impl<'a> Helix<'a> {
             viewers(right).cmp(&viewers(left))
         });
         Ok(channels)
+    }
+
+    /// Top categories by viewers, or categories matching `query`, 30 a page.
+    pub fn categories(&self, query: &str, after: Option<&str>) -> Result<CategoryPage> {
+        let query = query.trim();
+        let mut params = vec![("first", "30")];
+        if !query.is_empty() {
+            params.push(("query", query));
+        }
+        if let Some(after) = after {
+            params.push(("after", after));
+        }
+        let path = if query.is_empty() { "/games/top" } else { "/search/categories" };
+        let page: Page<Game> = self.get(path, &params)?;
+        Ok(CategoryPage {
+            categories: page.data.into_iter().map(category).collect(),
+            cursor: page.pagination.cursor.filter(|cursor| !cursor.is_empty()),
+        })
+    }
+
+    /// A category's live streams, most watched first, 30 a page.
+    pub fn category_streams(&self, game_id: &str, after: Option<&str>) -> Result<StreamPage> {
+        let mut params = vec![("game_id", game_id), ("first", "30")];
+        if let Some(after) = after {
+            params.push(("after", after));
+        }
+        let page: Page<Stream> = self.get("/streams", &params)?;
+        let ids: Vec<&str> = page.data.iter().map(|stream| stream.user_id.as_str()).collect();
+        let images = self.profile_images(&ids)?;
+        let streams = page
+            .data
+            .into_iter()
+            .map(|stream| FollowedChannel {
+                id: stream.user_id.clone(),
+                login: stream.user_login.clone(),
+                display_name: stream.user_name.clone(),
+                profile_image_url: images
+                    .get(&stream.user_id)
+                    .and_then(|url| sized_profile_image(url, 70)),
+                stream: Some(stream.into_live()),
+            })
+            .collect();
+        Ok(StreamPage {
+            streams,
+            cursor: page.pagination.cursor.filter(|cursor| !cursor.is_empty()),
+        })
+    }
+
+    /// Channels and categories matching `query`. Live channels are filled in
+    /// with one batched streams request, since search omits viewer counts.
+    pub fn search(&self, query: &str, channels: usize, categories: usize) -> Result<SearchResults> {
+        let query = query.trim();
+        if query.chars().count() < 2 {
+            return Ok(SearchResults::default());
+        }
+        let first_channels = channels.clamp(1, 100).to_string();
+        let first_categories = categories.clamp(1, 100).to_string();
+        let found: Page<SearchChannel> = self.get(
+            "/search/channels",
+            &[("query", query), ("first", &first_channels), ("live_only", "false")],
+        )?;
+        let games: Page<Game> = self.get(
+            "/search/categories",
+            &[("query", query), ("first", &first_categories)],
+        )?;
+        let live_ids: Vec<(&str, &str)> = found
+            .data
+            .iter()
+            .filter(|channel| channel.is_live)
+            .map(|channel| ("user_id", channel.id.as_str()))
+            .take(100)
+            .collect();
+        let mut live: HashMap<String, Stream> = if live_ids.is_empty() {
+            HashMap::new()
+        } else {
+            let page: Page<Stream> = self.get("/streams", &live_ids)?;
+            page.data
+                .into_iter()
+                .map(|stream| (stream.user_id.clone(), stream))
+                .collect()
+        };
+        let channels = found
+            .data
+            .into_iter()
+            .map(|channel| FollowedChannel {
+                stream: live.remove(&channel.id).map(Stream::into_live),
+                profile_image_url: sized_profile_image(&channel.thumbnail_url, 70),
+                id: channel.id,
+                login: channel.broadcaster_login,
+                display_name: channel.display_name,
+            })
+            .collect();
+        Ok(SearchResults {
+            channels,
+            categories: games.data.into_iter().map(category).collect(),
+        })
     }
 
     fn profile_images(&self, ids: &[&str]) -> Result<HashMap<String, String>> {
@@ -192,6 +353,46 @@ impl<'a> Helix<'a> {
     }
 }
 
+fn category(game: Game) -> Category {
+    Category {
+        box_art_url: sized_box_art(&game.box_art_url, 285, 380),
+        id: game.id,
+        name: game.name,
+        viewers: None,
+    }
+}
+
+/// Box art comes either as a `{width}x{height}` template or at a fixed size
+/// such as `-52x72.jpg`; both are asked for at `width`×`height`.
+fn sized_box_art(url: &str, width: u32, height: u32) -> Option<String> {
+    let url = url
+        .replace("{width}", &width.to_string())
+        .replace("{height}", &height.to_string());
+    let sized = match url.rfind('-') {
+        Some(dash) => {
+            let tail = &url[dash + 1..];
+            match tail.split_once('.') {
+                Some((size, extension))
+                    if size
+                        .split_once('x')
+                        .is_some_and(|(w, h)| {
+                            !w.is_empty()
+                                && !h.is_empty()
+                                && w.bytes().all(|b| b.is_ascii_digit())
+                                && h.bytes().all(|b| b.is_ascii_digit())
+                        })
+                        && !extension.contains('/') =>
+                {
+                    format!("{}-{width}x{height}.{extension}", &url[..dash])
+                }
+                _ => url.clone(),
+            }
+        }
+        None => url.clone(),
+    };
+    is_twitch_image_url(&sized).then_some(sized)
+}
+
 /// Image URLs come from Twitch's API but are still untrusted input: only load
 /// HTTPS images from Twitch's static CDN.
 pub fn is_twitch_image_url(url: &str) -> bool {
@@ -245,5 +446,20 @@ mod tests {
             Some("https://static-cdn.jtvnw.net/jtv_user_pictures/abc-profile_image-70x70.png")
         );
         assert_eq!(sized_profile_image("https://example.com/a-300x300.png", 70), None);
+    }
+
+    #[test]
+    fn sizes_box_art_from_templates_and_fixed_sizes() {
+        assert_eq!(
+            sized_box_art("https://static-cdn.jtvnw.net/ttv-boxart/509658-{width}x{height}.jpg", 285, 380)
+                .as_deref(),
+            Some("https://static-cdn.jtvnw.net/ttv-boxart/509658-285x380.jpg")
+        );
+        assert_eq!(
+            sized_box_art("https://static-cdn.jtvnw.net/ttv-boxart/32982_IGDB-52x72.jpg", 285, 380)
+                .as_deref(),
+            Some("https://static-cdn.jtvnw.net/ttv-boxart/32982_IGDB-285x380.jpg")
+        );
+        assert_eq!(sized_box_art("https://example.com/a-52x72.jpg", 285, 380), None);
     }
 }

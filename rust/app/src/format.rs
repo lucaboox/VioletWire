@@ -42,6 +42,83 @@ pub fn uptime(started_at: &str, now: u64) -> Option<String> {
     })
 }
 
+/// Electron's labels: `best` → "Auto", `1080p60` → "1080p · 60 FPS".
+pub fn quality_label(name: &str) -> String {
+    match name {
+        "best" => return "Auto".into(),
+        "worst" => return "Lowest".into(),
+        "source" => return "Source".into(),
+        "audio_only" => return "Audio only".into(),
+        _ => {}
+    }
+    match name.split_once('p') {
+        Some((lines, rate))
+            if lines.len() >= 2 && lines.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            if rate.is_empty() {
+                format!("{lines}p")
+            } else if rate.bytes().all(|b| b.is_ascii_digit()) {
+                format!("{lines}p · {rate} FPS")
+            } else {
+                name.into()
+            }
+        }
+        _ => name.into(),
+    }
+}
+
+/// Source first, then by height and frame rate, audio only last — the
+/// Electron menu's order.
+pub fn sort_qualities(names: &mut [String]) {
+    fn rank(name: &str) -> (u8, u32, u32) {
+        match name {
+            "source" => (0, 0, 0),
+            "audio_only" => (2, 0, 0),
+            _ => {
+                let (lines, rate) = name.split_once('p').unwrap_or((name, ""));
+                let lines = lines.parse::<u32>().unwrap_or(0);
+                let rate = rate.parse::<u32>().unwrap_or(30);
+                (1, u32::MAX - lines, u32::MAX - rate)
+            }
+        }
+    }
+    names.sort_by_key(|name| rank(name));
+}
+
+/// A card's chips, as in Electron: the language code, then up to three of
+/// the channel's tags, skipping ones that repeat the language.
+pub fn visible_tags(language: &str, tags: &[String]) -> Vec<String> {
+    const NAMES: &[(&str, &str)] = &[
+        ("de", "german"), ("en", "english"), ("es", "spanish"), ("fr", "french"),
+        ("it", "italian"), ("ja", "japanese"), ("ko", "korean"), ("pl", "polish"),
+        ("pt", "portuguese"), ("ru", "russian"), ("tr", "turkish"), ("zh", "chinese"),
+    ];
+    let code = language.trim().to_ascii_lowercase();
+    let name = NAMES.iter().find(|(c, _)| *c == code).map(|(_, n)| *n);
+    let mut chips: Vec<String> = Vec::new();
+    if !code.is_empty() && code != "other" {
+        chips.push(code.to_ascii_uppercase());
+    }
+    let mut seen: Vec<String> = Vec::new();
+    for tag in tags {
+        let tag = tag.trim();
+        let normalized = tag.to_lowercase();
+        if normalized.is_empty()
+            || normalized == code
+            || Some(normalized.as_str()) == name
+            || seen.contains(&normalized)
+        {
+            continue;
+        }
+        seen.push(normalized);
+        chips.push(tag.to_owned());
+        if seen.len() == 3 {
+            break;
+        }
+    }
+    chips
+}
+
 /// Twitch logins are 1–25 ASCII letters, digits or underscores.
 pub fn is_login(text: &str) -> bool {
     (1..=25).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -74,6 +151,28 @@ mod tests {
         assert_eq!(uptime("2026-11-12T10:00:00Z", start + 42 * 60).as_deref(), Some("42m"));
         assert_eq!(uptime("2026-11-12T10:00:00Z", start + 3 * 3_600 + 7 * 60).as_deref(), Some("3h 07m"));
         assert_eq!(uptime("2026-11-12T10:00:00Z", start - 5), None);
+    }
+
+    #[test]
+    fn labels_and_orders_qualities_like_electron() {
+        assert_eq!(quality_label("best"), "Auto");
+        assert_eq!(quality_label("1080p60"), "1080p · 60 FPS");
+        assert_eq!(quality_label("720p"), "720p");
+        assert_eq!(quality_label("audio_only"), "Audio only");
+        let mut names: Vec<String> = ["160p", "audio_only", "720p60", "1080p60", "720p", "source"]
+            .map(String::from)
+            .to_vec();
+        sort_qualities(&mut names);
+        assert_eq!(names, ["source", "1080p60", "720p60", "720p", "160p", "audio_only"]);
+    }
+
+    #[test]
+    fn hides_tags_that_repeat_the_language() {
+        let tags: Vec<String> = ["English", "DropsEnabled", "en", "Furry", "furry", "Chill"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(visible_tags("en", &tags), ["EN", "DropsEnabled", "Furry", "Chill"]);
+        assert_eq!(visible_tags("", &[]), Vec::<String>::new());
     }
 
     #[test]

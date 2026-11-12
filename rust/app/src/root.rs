@@ -13,12 +13,16 @@ use gpui::{
     SharedString, Stateful, Task, Window, WindowControlArea, div, img, prelude::*, px, rgb, rgba,
 };
 
+mod browse;
+use browse::Section;
+
 use crate::format::{compact_count, is_login, uptime};
 use crate::player::Player;
 use crate::session::{self, Failure, Followed, Session};
 use crate::twitch::auth::{self, Poll};
 use crate::twitch::helix::FollowedChannel;
 use crate::twitch::token_store;
+use crate::ui::{self, ButtonStyle, Icon};
 use crate::{http, images, theme};
 
 /// How often the followed list (and its live state) refreshes.
@@ -27,7 +31,6 @@ const REFRESH_EVERY: Duration = Duration::from_secs(120);
 const IMAGE_WORKERS: usize = 6;
 /// Twitch regenerates live thumbnails about every five minutes.
 const THUMBNAIL_PERIOD_SECONDS: u64 = 300;
-const CARD_WIDTH: f32 = 320.0;
 
 enum Auth {
     Restoring,
@@ -60,6 +63,9 @@ struct Playing {
     login: String,
     name: SharedString,
     view: Entity<Player>,
+    chat: Entity<crate::chat::Chat>,
+    _controls: gpui::Subscription,
+    _chat_controls: gpui::Subscription,
 }
 
 pub struct Root {
@@ -73,6 +79,24 @@ pub struct Root {
     image_queue: Rc<RefCell<VecDeque<ImageJob>>>,
     image_workers: Rc<Cell<usize>>,
     playing: Option<Playing>,
+    chat_visible: bool,
+    overlay_chat: bool,
+    theater: bool,
+    probe_fullscreen: bool,
+    sidebar_collapsed: bool,
+    sidebar_force_expanded: bool,
+    settings_open: bool,
+    settings: Entity<crate::settings::Settings>,
+    _settings_close: gpui::Subscription,
+    focus: gpui::FocusHandle,
+    channel_input: Entity<crate::input::TextInput>,
+    channel_subscription: Option<gpui::Subscription>,
+    section: Section,
+    browse: browse::BrowseState,
+    search: browse::SearchState,
+    category_input: Entity<crate::input::TextInput>,
+    account_menu: bool,
+    input_observers: Vec<gpui::Subscription>,
     // A held task is cancelled when it is replaced or dropped.
     auth_task: Option<Task<()>>,
     followed_task: Option<Task<()>>,
@@ -80,13 +104,114 @@ pub struct Root {
 }
 
 impl Root {
+    pub fn probe_tick(
+        &mut self,
+        phase: u64,
+        keep_controls: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.overlay_chat = phase % 2 == 1;
+        self.theater = phase == 2 || phase == 3;
+        self.settings_open = keep_controls && phase == 4;
+        // Exercise the fullscreen layout offscreen without changing any desktop
+        // window state. Normal use follows Window::is_fullscreen exclusively.
+        self.probe_fullscreen = phase == 3;
+        // `--ui-probe-browse`: Browse, a category, the search dropdown, then
+        // the search page, one per phase.
+        if std::env::args().any(|arg| arg == "--ui-probe-browse")
+            && matches!(self.auth, Auth::SignedIn(_))
+            && self.loaded
+        {
+            self.overlay_chat = false;
+            self.theater = false;
+            self.probe_fullscreen = false;
+            match phase {
+                0 if self.section != Section::Browse => self.show_section(Section::Browse, window, cx),
+                1 if self.browse.selected.is_none() => {
+                    if let Some(category) = self.browse.categories.first().cloned() {
+                        self.open_category(category, window, cx);
+                    }
+                }
+                2 if !self.search.open => {
+                    self.show_section(Section::Home, window, cx);
+                    self.channel_input.update(cx, |input, cx| {
+                        input.clear(cx);
+                        input.append("summit", cx);
+                    });
+                }
+                3 if self.section != Section::Search => self.submit_search(window, cx),
+                _ => {}
+            }
+        }
+        if let Some(playing) = &self.playing {
+            playing.view.update(cx, |p, cx| {
+                if keep_controls {
+                    p.keep_controls_visible();
+                    p.probe_menus(phase == 1, phase == 2);
+                }
+                p.probe_tick(window, cx);
+            });
+            playing.chat.update(cx, |chat, cx| {
+                chat.probe_layout(phase == 1 || phase == 2, phase == 5, cx)
+            });
+        }
+        cx.notify();
+    }
+    pub fn probe_succeeded(&self, cx: &App) -> bool {
+        self.playing.as_ref().is_some_and(|playing| {
+            playing.view.read(cx).probe_succeeded() && playing.chat.read(cx).probe_succeeded()
+        })
+    }
+    pub fn home_probe_succeeded(&self) -> bool {
+        match self.auth {
+            Auth::SignedIn(_) => self.loaded,
+            Auth::SignedOut => true,
+            _ => false,
+        }
+    }
+    pub fn diagnostics(&self, cx: &App) -> String {
+        self.playing
+            .as_ref()
+            .map(|p| {
+                format!(
+                    "{} {} fullscreen_layout={} overlay={} theater={}",
+                    p.view.read(cx).diagnostics(),
+                    p.chat.read(cx).diagnostics(),
+                    self.probe_fullscreen,
+                    self.overlay_chat,
+                    self.theater
+                )
+            })
+            .unwrap_or_else(|| "no player".into())
+    }
     /// `play` opens a channel's player at once (the `--play` developer flag);
     /// it plays anonymously and does not need a sign-in.
     pub fn new(play: Option<String>, cx: &mut Context<Self>) -> Self {
-        let playing = play.filter(|login| is_login(login)).map(|login| Playing {
-            name: login.clone().into(),
-            view: cx.new(|_| Player::new(&login)),
-            login,
+        let playing = play.filter(|login| is_login(login)).map(|login| {
+            let view = cx.new(|cx| Player::new(&login, &crate::preferences::get(cx)));
+            let controls = cx.subscribe(
+                &view,
+                |this, _, action: &crate::player::PlayerAction, cx| this.player_action(action, cx),
+            );
+            let chat = cx.new(|cx| crate::chat::Chat::new(&login, None, cx));
+            let chat_controls = cx.subscribe(
+                &chat,
+                |this, _, action: &crate::player::PlayerAction, cx| this.player_action(action, cx),
+            );
+            Playing {
+                name: login.clone().into(),
+                chat,
+                view,
+                login,
+                _controls: controls,
+                _chat_controls: chat_controls,
+            }
+        });
+        let settings = cx.new(|_| crate::settings::Settings);
+        let settings_close = crate::settings::subscribe(&settings, cx, |this, cx| {
+            this.settings_open = false;
+            cx.notify();
         });
         let mut root = Self {
             agent: http::agent(),
@@ -99,6 +224,26 @@ impl Root {
             image_queue: Rc::default(),
             image_workers: Rc::default(),
             playing,
+            chat_visible: true,
+            overlay_chat: false,
+            theater: false,
+            probe_fullscreen: false,
+            sidebar_collapsed: crate::preferences::get(cx).sidebar_collapsed,
+            sidebar_force_expanded: false,
+            settings_open: false,
+            settings,
+            _settings_close: settings_close,
+            focus: cx.focus_handle(),
+            channel_input: cx.new(|cx| {
+                crate::input::TextInput::new("Search channels and categories", cx)
+            }),
+            channel_subscription: None,
+            section: Section::Home,
+            browse: Default::default(),
+            search: Default::default(),
+            category_input: cx.new(|cx| crate::input::TextInput::new("Search categories", cx)),
+            account_menu: false,
+            input_observers: Vec::new(),
             auth_task: None,
             followed_task: None,
             refresh_task: None,
@@ -152,7 +297,8 @@ impl Root {
             let device = match started {
                 Ok(device) => device,
                 Err(error) => {
-                    this.update(cx, |this, cx| this.sign_in_failed(error, cx)).ok();
+                    this.update(cx, |this, cx| this.sign_in_failed(error, cx))
+                        .ok();
                     return;
                 }
             };
@@ -179,7 +325,8 @@ impl Root {
                 cx.background_executor().timer(interval).await;
                 if Instant::now() >= deadline {
                     let expired = anyhow!("The sign-in code expired. Start again.");
-                    this.update(cx, |this, cx| this.sign_in_failed(expired, cx)).ok();
+                    this.update(cx, |this, cx| this.sign_in_failed(expired, cx))
+                        .ok();
                     return;
                 }
                 let device_code = device.device_code.clone();
@@ -190,7 +337,9 @@ impl Root {
                         anyhow::Ok(match auth::poll_device_flow(&agent, &device_code)? {
                             Poll::Pending => Step::Wait,
                             Poll::SlowDown => Step::SlowDown,
-                            Poll::Approved(token) => Step::Done(session::begin(&agent, token, epoch)?),
+                            Poll::Approved(token) => {
+                                Step::Done(session::begin(&agent, token, epoch)?)
+                            }
                         })
                     })
                     .await;
@@ -206,7 +355,8 @@ impl Root {
                         return;
                     }
                     Err(error) => {
-                        this.update(cx, |this, cx| this.sign_in_failed(error, cx)).ok();
+                        this.update(cx, |this, cx| this.sign_in_failed(error, cx))
+                            .ok();
                         return;
                     }
                 }
@@ -273,23 +423,64 @@ impl Root {
 
     // ----- Playback ------------------------------------------------------
 
-    fn play(&mut self, login: &str, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+    fn play(
+        &mut self,
+        login: &str,
+        name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !is_login(login) {
             return;
         }
         self.close_player(window, cx);
-        let view = cx.new(|_| Player::new(login));
+        let view = cx.new(|cx| Player::new(login, &crate::preferences::get(cx)));
+        let controls = cx.subscribe(
+            &view,
+            |this, _, action: &crate::player::PlayerAction, cx| this.player_action(action, cx),
+        );
+        let session = if let Auth::SignedIn(session) = &self.auth {
+            Some(session.clone())
+        } else {
+            None
+        };
+        let chat = cx.new(|cx| crate::chat::Chat::new(login, session, cx));
+        let chat_controls = cx.subscribe(
+            &chat,
+            |this, _, action: &crate::player::PlayerAction, cx| this.player_action(action, cx),
+        );
         self.playing = Some(Playing {
             login: login.to_string(),
             name,
             view,
+            chat,
+            _controls: controls,
+            _chat_controls: chat_controls,
         });
         cx.notify();
     }
 
+    fn player_action(&mut self, action: &crate::player::PlayerAction, cx: &mut Context<Self>) {
+        match action {
+            crate::player::PlayerAction::Settings => self.settings_open = true,
+            crate::player::PlayerAction::Chat => self.chat_visible = !self.chat_visible,
+            crate::player::PlayerAction::Overlay => {
+                self.overlay_chat = !self.overlay_chat;
+                self.chat_visible = true;
+            }
+            crate::player::PlayerAction::Theater => self.theater = !self.theater,
+        }
+        cx.notify();
+    }
     fn close_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.theater = false;
+        if window.is_fullscreen() {
+            window.toggle_fullscreen();
+        }
         if let Some(playing) = self.playing.take() {
-            playing.view.update(cx, |player, cx| player.close(window, cx));
+            playing
+                .view
+                .update(cx, |player, cx| player.close(window, cx));
             cx.notify();
         }
     }
@@ -313,11 +504,17 @@ impl Root {
                 .background_executor()
                 .spawn(async move { session::followed(&agent, &current) })
                 .await;
-            this.update(cx, |this, cx| this.followed_loaded(epoch, result, cx)).ok();
+            this.update(cx, |this, cx| this.followed_loaded(epoch, result, cx))
+                .ok();
         }));
     }
 
-    fn followed_loaded(&mut self, epoch: u64, result: Result<Followed, Failure>, cx: &mut Context<Self>) {
+    fn followed_loaded(
+        &mut self,
+        epoch: u64,
+        result: Result<Followed, Failure>,
+        cx: &mut Context<Self>,
+    ) {
         let Auth::SignedIn(current) = &mut self.auth else {
             return;
         };
@@ -359,7 +556,8 @@ impl Root {
             .iter()
             .filter_map(|channel| channel.profile_image_url.clone())
             .map(|url| (url, 0));
-        let wanted: Vec<(String, u64)> = thumbnails.chain(avatars).collect();
+        let mut wanted: Vec<(String, u64)> = thumbnails.chain(avatars).collect();
+        wanted.extend(self.browse_images(period));
 
         let keep: HashSet<&str> = wanted.iter().map(|(url, _)| url.as_str()).collect();
         self.images.retain(|url, _| keep.contains(url.as_str()));
@@ -384,7 +582,11 @@ impl Root {
             } else {
                 url.clone()
             };
-            queue.push_back(ImageJob { url, fetch_url, version });
+            queue.push_back(ImageJob {
+                url,
+                fetch_url,
+                version,
+            });
         }
         drop(queue);
         self.pump_images(cx);
@@ -407,7 +609,10 @@ impl Root {
                         .background_executor()
                         .spawn(async move { images::fetch(&agent, &fetch_url) })
                         .await;
-                    if this.update(cx, |this, cx| this.image_loaded(job, result, cx)).is_err() {
+                    if this
+                        .update(cx, |this, cx| this.image_loaded(job, result, cx))
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -417,7 +622,12 @@ impl Root {
         }
     }
 
-    fn image_loaded(&mut self, job: ImageJob, result: anyhow::Result<Arc<Image>>, cx: &mut Context<Self>) {
+    fn image_loaded(
+        &mut self,
+        job: ImageJob,
+        result: anyhow::Result<Arc<Image>>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(entry) = self.images.get_mut(&job.url) else {
             return;
         };
@@ -437,9 +647,13 @@ impl Root {
     // ----- Rendering ----------------------------------------------------
 
     fn title_bar(&self, window: &Window) -> impl IntoElement {
-        let maximize_glyph = if window.is_maximized() { "\u{E923}" } else { "\u{E922}" };
+        let maximize_glyph = if window.is_maximized() {
+            "\u{E923}"
+        } else {
+            "\u{E922}"
+        };
         div()
-            .h(px(32.))
+            .h(px(30.))
             .flex_none()
             .flex()
             .items_center()
@@ -453,45 +667,334 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .pl_3()
+                    .pl(px(19.))
+                    // Keep the root's focus-on-click listener from preventing
+                    // Windows' default non-client drag/double-click behavior.
+                    .occlude()
                     .window_control_area(WindowControlArea::Drag)
-                    .child(div().size(px(10.)).rounded_full().bg(theme::violet()))
-                    .child(div().text_xs().text_color(theme::text_dim()).child("VioletWire")),
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::text_secondary())
+                            .child("VioletWire"),
+                    ),
             )
-            .child(caption_button("minimize", "\u{E921}", WindowControlArea::Min))
-            .child(caption_button("maximize", maximize_glyph, WindowControlArea::Max))
-            .child(caption_button("close", "\u{E8BB}", WindowControlArea::Close))
+            .child(caption_button(
+                "minimize",
+                "\u{E921}",
+                WindowControlArea::Min,
+            ))
+            .child(caption_button(
+                "maximize",
+                maximize_glyph,
+                WindowControlArea::Max,
+            ))
+            .child(caption_button(
+                "close",
+                "\u{E8BB}",
+                WindowControlArea::Close,
+            ))
     }
 
-    fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let live = self.channels.iter().filter(|channel| channel.stream.is_some()).count();
+    fn navigation(&self, cx: &Context<Self>) -> impl IntoElement {
+        let signed_in = matches!(self.auth, Auth::SignedIn(_));
         let login = match &self.auth {
             Auth::SignedIn(session) => session.identity.login.clone(),
             _ => String::new(),
         };
+        let on_page = |section| self.playing.is_none() && self.section == section;
+        let nav_style = |active: bool| {
+            if active {
+                ButtonStyle::Selected
+            } else {
+                ButtonStyle::Ghost
+            }
+        };
         div()
-            .w(px(248.))
+            .h(px(68.))
+            .flex_none()
+            .px_5()
+            .gap_2()
+            .flex()
+            .items_center()
+            .bg(theme::topbar())
+            .border_b_1()
+            .border_color(theme::border())
+            .child(
+                ui::button("home-nav", "Home", Some(Icon::Home), nav_style(on_page(Section::Home)))
+                    .h(px(38.))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_section(Section::Home, window, cx)
+                    })),
+            )
+            .when(signed_in, |bar| {
+                bar.child(
+                    ui::button(
+                        "browse-nav",
+                        "Browse",
+                        Some(Icon::Compass),
+                        nav_style(on_page(Section::Browse)),
+                    )
+                    .h(px(38.))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_section(Section::Browse, window, cx)
+                    })),
+                )
+            })
+            .child(div().flex_1().min_w(px(12.)))
+            .child(
+                div()
+                    .relative()
+                    // Prefers Electron's width and gives way in narrow windows.
+                    .flex_basis(px(540.))
+                    .flex_shrink()
+                    .min_w(px(160.))
+                    // Clicking the box must not close its own dropdown.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(self.channel_input.clone())
+                    .when_some(self.search_dropdown(cx), |field, dropdown| {
+                        field.child(
+                            gpui::deferred(
+                                div()
+                                    .absolute()
+                                    .top(px(44.))
+                                    .left_0()
+                                    .right_0()
+                                    .child(dropdown),
+                            )
+                            .with_priority(1),
+                        )
+                    }),
+            )
+            .child(div().flex_1().min_w(px(12.)))
+            .when(signed_in, |bar| {
+                let initial = login
+                    .chars()
+                    .next()
+                    .map(|c| c.to_ascii_uppercase().to_string())
+                    .unwrap_or_default();
+                bar.child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(
+                            div()
+                                .id("account")
+                                .h(px(40.))
+                                .pl(px(6.))
+                                .pr(px(12.))
+                                .flex()
+                                .items_center()
+                                .gap(px(9.))
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(theme::button_border())
+                                .bg(theme::button())
+                                .cursor_pointer()
+                                .hover(|style| style.bg(theme::button_hover()))
+                                .child(
+                                    div()
+                                        .relative()
+                                        .size(px(28.))
+                                        .flex_none()
+                                        .rounded_full()
+                                        .bg(theme::selected())
+                                        .text_color(theme::accent_text())
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .text_size(px(13.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(initial)
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .right(px(-1.))
+                                                .bottom(px(-1.))
+                                                .size(px(9.))
+                                                .rounded_full()
+                                                .border_2()
+                                                .border_color(theme::button())
+                                                .bg(rgb(0x22c55e)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(13.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(theme::text())
+                                        .child(login.clone()),
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.account_menu = !this.account_menu;
+                                    this.search.open = false;
+                                    cx.notify();
+                                })),
+                        )
+                        .when(self.account_menu, |chip| {
+                            chip.child(
+                                gpui::deferred(
+                                    div()
+                                        .absolute()
+                                        .top(px(46.))
+                                        .right_0()
+                                        .w(px(220.))
+                                        .p(px(6.))
+                                        .rounded(px(10.))
+                                        .border_1()
+                                        .border_color(theme::button_border())
+                                        .bg(theme::popup())
+                                        .shadow_lg()
+                                        .child(
+                                            div()
+                                                .px(px(10.))
+                                                .py(px(8.))
+                                                .text_size(px(12.))
+                                                .text_color(theme::text_dim())
+                                                .child(format!("Signed in as {login}")),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("sign-out")
+                                                .h(px(36.))
+                                                .px(px(10.))
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(9.))
+                                                .rounded(px(7.))
+                                                .text_size(px(13.))
+                                                .cursor_pointer()
+                                                .hover(|style| style.bg(theme::selected()))
+                                                .child(ui::icon(Icon::SignOut, 15.))
+                                                .child("Sign out")
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.account_menu = false;
+                                                    this.close_player(window, cx);
+                                                    this.end_session(None, cx);
+                                                })),
+                                        ),
+                                )
+                                .with_priority(1),
+                            )
+                        }),
+                )
+            })
+            .when(!signed_in, |bar| {
+                bar.child(
+                    ui::button("sign-in-top", "Sign in", Some(Icon::SignIn), ButtonStyle::Primary)
+                        .h(px(38.))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.close_player(window, cx);
+                            this.begin_sign_in(cx);
+                        })),
+                )
+            })
+            .child(
+                ui::icon_button("top-settings", Icon::Settings, "Settings", self.settings_open)
+                    .size(px(40.))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.settings_open = true;
+                        this.account_menu = false;
+                        window.focus(&this.focus);
+                        cx.notify();
+                    })),
+            )
+    }
+    fn sidebar(&self, collapsed: bool, cx: &Context<Self>) -> impl IntoElement {
+        let live = self
+            .channels
+            .iter()
+            .filter(|channel| channel.stream.is_some())
+            .count();
+        div()
+            .w(px(if collapsed { 68. } else { 244. }))
             .flex_none()
             .h_full()
             .flex()
             .flex_col()
-            .bg(theme::title_bar())
+            .bg(theme::sidebar())
             .border_r_1()
             .border_color(theme::border())
             .child(
                 div()
+                    .h(px(68.))
                     .flex_none()
-                    .px_3()
-                    .pt_3()
+                    .px_4()
+                    .flex()
+                    .items_center()
+                    .gap_2p5()
+                    .child(ui::brand(30.))
+                    .when(!collapsed, |v| {
+                        v.child(
+                            div()
+                                .font_weight(FontWeight::BOLD)
+                                .text_size(px(19.))
+                                .child("VioletWire"),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .px_4()
+                    .pt_2()
                     .pb_2()
                     .flex()
                     .items_center()
                     .justify_between()
                     .text_xs()
                     .text_color(theme::text_dim())
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("FOLLOWED CHANNELS"))
-                    .when(self.loaded, |row| row.child(format!("{live} live"))),
+                    .when(!collapsed, |v| {
+                        v.child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("FOLLOWED CHANNELS"),
+                        )
+                    })
+                    .child(
+                        ui::icon_button(
+                            "collapse-sidebar",
+                            if collapsed {
+                                Icon::SidebarOpen
+                            } else {
+                                Icon::SidebarClose
+                            },
+                            if collapsed {
+                                "Expand sidebar"
+                            } else {
+                                "Collapse sidebar"
+                            },
+                            false,
+                        )
+                        .w(px(24.))
+                        .h(px(24.))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.sidebar_collapsed = !collapsed;
+                            this.sidebar_force_expanded = collapsed;
+                            crate::preferences::update(cx, |prefs| {
+                                prefs.sidebar_collapsed = this.sidebar_collapsed
+                            });
+                            cx.notify();
+                        })),
+                    ),
             )
+            .when(!collapsed, |v| {
+                v.child(
+                    div()
+                        .px_5()
+                        .pt_2()
+                        .pb_2()
+                        .flex()
+                        .justify_between()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_dim())
+                        .child("LIVE")
+                        .child(format!("{live}")),
+                )
+            })
             .child(
                 div()
                     .id("followed")
@@ -502,35 +1005,69 @@ impl Root {
                     .pb_2()
                     .flex()
                     .flex_col()
-                    .children(self.channels.iter().map(|channel| self.channel_row(channel, cx))),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .border_t_1()
-                    .border_color(theme::border())
-                    .child(div().min_w_0().truncate().text_xs().text_color(theme::text_dim()).child(login))
-                    .child(
-                        button("sign-out", "Sign out", false)
-                            .on_click(cx.listener(|this, _, _, cx| this.end_session(None, cx))),
+                    .children(
+                        self.channels
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(index, channel)| {
+                                let mut rows = Vec::new();
+                                if !collapsed
+                                    && channel.stream.is_none()
+                                    && (index == 0 || self.channels[index - 1].stream.is_some())
+                                {
+                                    rows.push(
+                                        div()
+                                            .px_3()
+                                            .pt_4()
+                                            .pb_2()
+                                            .mt_1()
+                                            .border_t_1()
+                                            .border_color(theme::border())
+                                            .text_size(px(11.))
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(theme::text_dim())
+                                            .flex()
+                                            .justify_between()
+                                            .child("OFFLINE")
+                                            .child(format!("{}", self.channels.len() - live))
+                                            .into_any_element(),
+                                    );
+                                }
+                                rows.push(
+                                    self.channel_row(channel, collapsed, cx).into_any_element(),
+                                );
+                                rows
+                            }),
                     ),
             )
     }
 
-    fn channel_row(&self, channel: &FollowedChannel, cx: &Context<Self>) -> impl IntoElement {
+    fn channel_row(
+        &self,
+        channel: &FollowedChannel,
+        collapsed: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let login = channel.login.clone();
         let name = SharedString::from(channel.display_name.clone());
-        let selected = self.playing.as_ref().is_some_and(|playing| playing.login == channel.login);
+        let selected = self
+            .playing
+            .as_ref()
+            .is_some_and(|playing| playing.login == channel.login);
         let subtitle: SharedString = match &channel.stream {
             Some(stream) if !stream.game_name.is_empty() => stream.game_name.clone().into(),
             Some(_) => "Live".into(),
             None => "Offline".into(),
+        };
+        let hint = match &channel.stream {
+            Some(stream) => format!(
+                "{}\n{}\n{} · {} viewers",
+                channel.display_name,
+                stream.title,
+                stream.game_name,
+                compact_count(stream.viewer_count)
+            ),
+            None => format!("{} · Offline", channel.display_name),
         };
         div()
             .id(SharedString::from(format!("channel-{}", channel.id)))
@@ -540,68 +1077,308 @@ impl Root {
             .gap_2p5()
             .px_2()
             .py_1p5()
-            .rounded_md()
+            .h(px(56.))
+            .rounded(px(8.))
             .cursor_pointer()
             .hover(|style| style.bg(theme::surface_hover()))
             .when(selected, |row| row.bg(theme::surface_hover()))
-            .when(channel.stream.is_none(), |row| row.opacity(0.5))
-            .child(self.avatar(channel.profile_image_url.as_deref(), 30.))
+            .when(channel.stream.is_none(), |row| {
+                row.text_color(theme::text_dim())
+            })
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .size(px(36.))
+                    .when(channel.stream.is_none(), |v| v.opacity(0.45))
+                    .child(self.avatar(channel.profile_image_url.as_deref(), 36.))
+                    .when(collapsed && channel.stream.is_some(), |v| {
+                        v.child(
+                            div()
+                                .absolute()
+                                .right_0()
+                                .bottom_0()
+                                .size(px(8.))
+                                .rounded_full()
+                                .bg(theme::live_dot()),
+                        )
+                    }),
+            )
+            .when(!collapsed, |v| {
+                v.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .truncate()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(channel.display_name.clone()),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_xs()
+                                .text_color(theme::text_dim())
+                                .child(subtitle),
+                        ),
+                )
+            })
+            .when_some(
+                channel.stream.as_ref().filter(|_| !collapsed),
+                |row, stream| {
+                    row.child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_xs()
+                            .text_color(theme::text_dim())
+                            .child(div().size(px(6.)).rounded_full().bg(theme::live_dot()))
+                            .child(compact_count(stream.viewer_count)),
+                    )
+                },
+            )
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)),
+            )
+            .tooltip(move |_, cx| cx.new(|_| ui::Tooltip(hint.clone().into())).into())
+    }
+
+    fn player_panel(
+        &self,
+        playing: &Playing,
+        fullscreen: bool,
+        compact: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let login = playing.login.clone();
+        let channel = self.channel_info(&playing.login);
+        let stream = channel.and_then(|channel| channel.stream.as_ref());
+        let tags = stream
+            .map(|stream| crate::format::visible_tags(&stream.language, &stream.tags))
+            .unwrap_or_default();
+        let name: SharedString = channel
+            .map(|channel| channel.display_name.clone().into())
+            .unwrap_or_else(|| playing.name.clone());
+        let title: SharedString = stream
+            .map(|stream| stream.title.clone().into())
+            .unwrap_or_else(|| name.clone());
+        let title_hint = title.clone();
+        let toolbar = div()
+            .h(px(54.))
+            .flex_none()
+            .px_3()
+            .flex()
+            .items_center()
+            .gap_2p5()
+            .bg(theme::title_bar())
+            .border_b_1()
+            .border_color(theme::border())
+            .child(
+                ui::icon_button("back", Icon::Back, "Back to Home", false)
+                    .on_click(cx.listener(|this, _, window, cx| this.close_player(window, cx))),
+            )
+            .when(!compact, |v| {
+                v.child(self.avatar(
+                    channel.and_then(|channel| channel.profile_image_url.as_deref()),
+                    34.,
+                ))
+            })
+            .when_some(stream.filter(|_| !compact), |v, stream| {
+                v.child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .mr(px(6.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .text_color(theme::live_dot())
+                                .text_size(px(12.))
+                                .child(ui::icon(Icon::Users, 13.))
+                                .child(compact_count(stream.viewer_count)),
+                        )
+                        .when_some(uptime(&stream.started_at, auth::now()), |v, time| {
+                            v.child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .text_color(theme::text_dim())
+                                    .text_size(px(10.))
+                                    .child(ui::icon(Icon::Clock, 11.))
+                                    .child(time),
+                            )
+                        }),
+                )
+            })
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(div().truncate().font_weight(FontWeight::MEDIUM).child(channel.display_name.clone()))
-                    .child(div().truncate().text_xs().text_color(theme::text_dim()).child(subtitle)),
+                    .gap(px(3.))
+                    .child(
+                        div()
+                            .id("stream-title")
+                            .truncate()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::BOLD)
+                            .child(title)
+                            .tooltip(move |_, cx| {
+                                cx.new(|_| ui::Tooltip(title_hint.clone())).into()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_size(px(11.))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_color(theme::text_dim())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(name),
+                            )
+                            .when_some(
+                                stream.filter(|stream| !compact && !stream.game_name.is_empty()),
+                                |v, stream| {
+                                    v.child(
+                                        div()
+                                            .truncate()
+                                            .max_w(px(150.))
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .border_1()
+                                            .border_color(theme::selected_border())
+                                            .bg(theme::selected())
+                                            .text_color(theme::accent_text())
+                                            .text_size(px(10.))
+                                            .child(stream.game_name.clone()),
+                                    )
+                                },
+                            )
+                            .when(!compact, |row| {
+                                row.children(tags.into_iter().map(|tag| {
+                                    div()
+                                        .flex_none()
+                                        .px(px(6.))
+                                        .py_0p5()
+                                        .rounded(px(5.))
+                                        .bg(theme::button())
+                                        .text_color(theme::text_secondary())
+                                        .text_size(px(10.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(tag)
+                                }))
+                            }),
+                    ),
             )
-            .when_some(channel.stream.as_ref(), |row, stream| {
-                row.child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .text_xs()
-                        .text_color(theme::text_dim())
-                        .child(div().size(px(7.)).rounded_full().bg(theme::live()))
-                        .child(compact_count(stream.viewer_count)),
+            .child(
+                ui::icon_button(
+                    "toolbar-chat",
+                    if self.chat_visible {
+                        Icon::ChatClose
+                    } else {
+                        Icon::ChatOpen
+                    },
+                    "Toggle chat · C",
+                    self.chat_visible,
                 )
-            })
-            .on_click(cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)))
-    }
-
-    fn player_panel(&self, playing: &Playing, cx: &Context<Self>) -> impl IntoElement {
-        let login = playing.login.clone();
-        div()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.chat_visible = !this.chat_visible;
+                    cx.notify();
+                })),
+            )
+            .child(
+                ui::icon_button(
+                    "toolbar-overlay",
+                    Icon::Overlay,
+                    "Overlay chat · O",
+                    self.overlay_chat,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.overlay_chat = !this.overlay_chat;
+                    this.chat_visible = true;
+                    cx.notify();
+                })),
+            )
+            .child(
+                ui::icon_button("toolbar-external", Icon::External, "Open on Twitch", false)
+                    .on_click(cx.listener(move |_, _, _, cx| open_channel(&login, cx))),
+            );
+        let mut area = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .child(playing.view.clone());
+        if self.chat_visible && self.overlay_chat {
+            area = area.child(
+                div()
+                    .absolute()
+                    .right_3()
+                    .top_3()
+                    .bottom(px(64.))
+                    .w(px(340.))
+                    .rounded(px(11.))
+                    .border_1()
+                    .border_color(rgba(0xffffff1a))
+                    .child(playing.chat.clone()),
+            );
+        }
+        let player = div()
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .px_4()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(theme::border())
-                    .child(button("back", "Back", false).on_click(cx.listener(|this, _, window, cx| this.close_player(window, cx))))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(playing.name.clone()))
-                    .child(div().flex_1())
-                    .child(
-                        button("open-on-twitch", "Open on Twitch", false)
-                            .on_click(cx.listener(move |_, _, _, cx| open_channel(&login, cx))),
-                    ),
-            )
-            .child(div().flex_1().min_h_0().child(playing.view.clone()))
+            .when(!fullscreen && !self.theater, |v| v.child(toolbar))
+            .child(area);
+        div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .bg(theme::surface())
+            .child(player)
+            .when(self.chat_visible && !self.overlay_chat, |v| {
+                v.child(
+                    div()
+                        .w(px(f32::from(
+                            crate::preferences::get(cx).chat_sidebar_width,
+                        )))
+                        .min_w(px(330.))
+                        .h_full()
+                        .flex_none()
+                        .child(playing.chat.clone()),
+                )
+            })
+            .into_any_element()
     }
 
-    fn home(&self, cx: &Context<Self>) -> impl IntoElement {
-        let live: Vec<&FollowedChannel> = self.channels.iter().filter(|channel| channel.stream.is_some()).collect();
+    fn home(&self, width: f32, cx: &Context<Self>) -> impl IntoElement {
+        let available = (width - 76.).max(200.);
+        let columns = ((available + 16.) / 316.).floor().max(1.);
+        let card_width = ((available - (columns - 1.) * 16.) / columns).floor();
+        let live: Vec<&FollowedChannel> = self
+            .channels
+            .iter()
+            .filter(|channel| channel.stream.is_some())
+            .collect();
         let now = auth::now();
         let content: AnyElement = if !self.loaded {
             note(if self.loading {
@@ -616,9 +1393,19 @@ impl Root {
             div()
                 .flex()
                 .flex_wrap()
-                .gap_5()
-                .children(live.iter().map(|channel| self.card(channel, now, cx)))
+                .gap_x_4()
+                .gap_y_7()
+                .children(
+                    live.iter()
+                        .map(|channel| self.card(channel, now, card_width, cx)),
+                )
                 .into_any_element()
+        };
+        let subtitle = match (self.loaded, live.len()) {
+            (false, _) => "Loading the channels you follow…".to_owned(),
+            (true, 0) => "None of the channels you follow are live".to_owned(),
+            (true, 1) => "1 followed channel is live".to_owned(),
+            (true, count) => format!("{count} followed channels are live"),
         };
         div()
             .id("home")
@@ -626,46 +1413,68 @@ impl Root {
             .min_w_0()
             .h_full()
             .overflow_y_scroll()
-            .p_6()
+            .px(px(38.))
+            .py(px(30.))
             .flex()
             .flex_col()
-            .gap_4()
+            .gap(px(24.))
             .child(
                 div()
                     .flex()
-                    .items_center()
+                    .items_end()
                     .gap_3()
-                    .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Live now"))
-                    .when(self.loaded, |row| {
-                        row.child(div().text_color(theme::text_dim()).child(format!("{} channels", live.len())))
-                    })
-                    .child(div().flex_1())
+                    .child(Self::page_header("YOUR FOLLOWING", "Live channels", subtitle))
                     .when(self.loading, |row| {
-                        row.child(div().text_xs().text_color(theme::text_dim()).child("Refreshing…"))
+                        row.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_dim())
+                                .child("Refreshing…"),
+                        )
                     })
-                    .child(button("refresh", "Refresh", false).on_click(cx.listener(|this, _, _, cx| this.load_followed(cx)))),
+                    .child(
+                        ui::button(
+                            "refresh",
+                            "Refresh",
+                            Some(Icon::Refresh),
+                            ButtonStyle::Secondary,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.load_followed(cx))),
+                    ),
             )
-            .when_some(self.message.clone(), |column, message| column.child(banner(message)))
+            .when_some(self.message.clone(), |column, message| {
+                column.child(banner(message))
+            })
             .child(content)
     }
 
-    fn card(&self, channel: &FollowedChannel, now: u64, cx: &Context<Self>) -> AnyElement {
+    fn card(
+        &self,
+        channel: &FollowedChannel,
+        now: u64,
+        width: f32,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let Some(stream) = channel.stream.as_ref() else {
             return div().into_any_element();
         };
         let login = channel.login.clone();
         let name = SharedString::from(channel.display_name.clone());
         let group = SharedString::from(format!("card-{}", channel.id));
-        let thumbnail = stream.thumbnail_url.as_deref().and_then(|url| self.image(url));
+        let thumbnail = stream
+            .thumbnail_url
+            .as_deref()
+            .and_then(|url| self.image(url));
         let category: SharedString = if stream.game_name.is_empty() {
             "Live".into()
         } else {
             stream.game_name.clone().into()
         };
+        let tags = crate::format::visible_tags(&stream.language, &stream.tags);
         div()
             .id(group.clone())
             .group(group.clone())
-            .w(px(CARD_WIDTH))
+            .w(px(width))
             .flex()
             .flex_col()
             .gap_2p5()
@@ -674,7 +1483,7 @@ impl Root {
                 div()
                     .relative()
                     .w_full()
-                    .h(px(CARD_WIDTH * 9. / 16.))
+                    .h(px(width * 9. / 16.))
                     .rounded_lg()
                     .bg(rgb(0x000000))
                     .border_1()
@@ -723,12 +1532,55 @@ impl Root {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(SharedString::from(stream.title.clone())),
                             )
-                            .child(div().truncate().text_color(theme::text_dim()).child(channel.display_name.clone()))
-                            .child(div().truncate().text_xs().text_color(theme::text_dim()).child(category)),
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_color(theme::text_dim())
+                                    .child(channel.display_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(theme::text_dim())
+                                    .child(category),
+                            )
+                            .when(!tags.is_empty(), |text| {
+                                text.child(
+                                    div()
+                                        .mt(px(6.))
+                                        .flex()
+                                        .flex_wrap()
+                                        .gap(px(5.))
+                                        .children(tags.into_iter().map(|tag| {
+                                            div()
+                                                .px(px(7.))
+                                                .py(px(2.))
+                                                .rounded(px(5.))
+                                                .bg(theme::button())
+                                                .text_size(px(11.))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(theme::text_secondary())
+                                                .child(tag)
+                                        })),
+                                )
+                            }),
                     ),
             )
-            .on_click(cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)))
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)),
+            )
             .into_any_element()
+    }
+
+    /// What is known about a channel: followed, or seen in Browse or search.
+    fn channel_info(&self, login: &str) -> Option<&FollowedChannel> {
+        self.channels
+            .iter()
+            .chain(&self.browse.streams)
+            .chain(&self.search.full.channels)
+            .chain(&self.search.quick.channels)
+            .find(|channel| channel.login == login)
     }
 
     fn avatar(&self, url: Option<&str>, size: f32) -> AnyElement {
@@ -738,6 +1590,7 @@ impl Root {
                 .size(size)
                 .flex_none()
                 .rounded_full()
+                .object_fit(ObjectFit::Cover)
                 .into_any_element(),
             None => div()
                 .size(size)
@@ -765,7 +1618,12 @@ impl Root {
                     .items_center()
                     .gap_3()
                     .child(div().size(px(14.)).rounded_full().bg(theme::violet()))
-                    .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child("VioletWire")),
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("VioletWire"),
+                    ),
             );
         let panel = match &self.auth {
             Auth::Restoring => panel.child(note("Checking your saved sign-in…")),
@@ -828,43 +1686,226 @@ impl Root {
             }
             Auth::SignedIn(_) => panel,
         };
-        div()
-            .flex_1()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(panel.when_some(self.message.clone(), |panel, message| panel.child(banner(message))))
+        div().flex_1().flex().items_center().justify_center().child(
+            panel.when_some(self.message.clone(), |panel, message| {
+                panel.child(banner(message))
+            }),
+        )
     }
 }
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let fullscreen = window.is_fullscreen() || self.probe_fullscreen;
+        if self.channel_subscription.is_none() {
+            self.channel_subscription = Some(cx.subscribe_in(
+                &self.channel_input,
+                window,
+                |this, _, _: &crate::input::Submitted, window, cx| this.submit_search(window, cx),
+            ));
+            self.input_observers = vec![
+                cx.observe(&self.channel_input, |this, _, cx| this.search_changed(cx)),
+                cx.observe(&self.category_input, |this, _, cx| this.category_query_changed(cx)),
+            ];
+        }
+        if self.settings_open || window.focused(cx).is_none() {
+            window.focus(&self.focus);
+        }
+        if let Some(playing) = &self.playing {
+            let room = self
+                .channels
+                .iter()
+                .find(|channel| channel.login == playing.login)
+                .map(|channel| channel.id.as_str());
+            let session = if let Auth::SignedIn(s) = &self.auth {
+                Some(s.clone())
+            } else {
+                None
+            };
+            playing.chat.update(cx, |chat, cx| {
+                chat.set_session(session, cx);
+                // Followed-channel metadata already contains the room ID;
+                // provider loading need not wait for the IRC join round trip.
+                if let Some(room) = room {
+                    chat.set_room(room, cx);
+                }
+                chat.set_overlay(self.overlay_chat, cx);
+                chat.set_preferences(crate::preferences::get(cx), cx);
+            });
+            playing.view.update(cx, |player, cx| {
+                player.set_presentation(self.chat_visible, self.overlay_chat, self.theater, cx)
+            });
+            let controls_delay = crate::preferences::get(cx).controls_hide_delay;
+            playing
+                .view
+                .update(cx, |player, _| player.set_controls_delay(controls_delay));
+        }
         let signed_in = matches!(self.auth, Auth::SignedIn(_));
+        let sidebar_collapsed = self.sidebar_collapsed
+            || (!self.sidebar_force_expanded && window.viewport_size().width < px(1150.));
+        let sidebar_width = if fullscreen || self.theater {
+            0.
+        } else if sidebar_collapsed {
+            68.
+        } else {
+            244.
+        };
+        let chat_width = if self.chat_visible && !self.overlay_chat {
+            f32::from(crate::preferences::get(cx).chat_sidebar_width)
+        } else {
+            0.
+        };
+        let compact = f32::from(window.viewport_size().width) - sidebar_width - chat_width < 480.;
         let main = match &self.playing {
-            Some(playing) => self.player_panel(playing, cx).into_any_element(),
-            None if signed_in => self.home(cx).into_any_element(),
+            Some(playing) => self
+                .player_panel(playing, fullscreen, compact, cx)
+                .into_any_element(),
+            None if signed_in => {
+                let width = f32::from(window.viewport_size().width) - sidebar_width;
+                match self.section {
+                    Section::Home => self.home(width, cx).into_any_element(),
+                    Section::Browse => self.browse_page(width, cx),
+                    Section::Search => self.search_page(width, cx),
+                }
+            }
             None => self.welcome(cx).into_any_element(),
         };
         let body = div()
             .flex_1()
             .min_h_0()
             .flex()
-            .when(signed_in, |body| body.child(self.sidebar(cx)))
-            .child(main);
+            .when(!fullscreen && !self.theater, |body| {
+                body.child(self.sidebar(
+                    self.sidebar_collapsed
+                        || (!self.sidebar_force_expanded
+                            && window.viewport_size().width < px(1150.)),
+                    cx,
+                ))
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .when(!fullscreen && !self.theater, |v| {
+                        v.child(self.navigation(cx))
+                    })
+                    .child(main),
+            );
         div()
             .size_full()
+            .relative()
+            .track_focus(&self.focus)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.search.open || this.account_menu {
+                        this.search.open = false;
+                        this.account_menu = false;
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                let key = event.keystroke.key.as_str();
+                if key == "escape" && (this.search.open || this.account_menu) {
+                    this.search.open = false;
+                    this.account_menu = false;
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                if this.settings_open {
+                    if key == "escape" {
+                        this.settings_open = false;
+                        cx.notify();
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+                if key == "f11" || (key == "escape" && window.is_fullscreen()) {
+                    window.toggle_fullscreen();
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                let Some(playing) = &this.playing else { return };
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.control || modifiers.alt || modifiers.platform {
+                    return;
+                }
+                if playing.chat.read(cx).is_editing(window, cx)
+                    || gpui::Focusable::focus_handle(this.channel_input.read(cx), cx)
+                        .is_focused(window)
+                {
+                    return;
+                }
+                match key {
+                    "f" => {
+                        window.toggle_fullscreen();
+                        cx.notify();
+                    }
+                    "t" => {
+                        this.theater = !this.theater;
+                        cx.notify();
+                    }
+                    "c" => {
+                        this.chat_visible = !this.chat_visible;
+                        cx.notify();
+                    }
+                    "space" => playing.view.update(cx, |p, cx| p.toggle_pause(cx)),
+                    "m" => playing.view.update(cx, |p, cx| p.toggle_mute(cx)),
+                    "g" => playing.view.update(cx, |p, cx| p.go_live(cx)),
+                    "up" => playing.view.update(cx, |p, cx| p.change_volume(0.05, cx)),
+                    "down" => playing.view.update(cx, |p, cx| p.change_volume(-0.05, cx)),
+                    "o" => {
+                        this.overlay_chat = !this.overlay_chat;
+                        this.chat_visible = true;
+                        cx.notify();
+                    }
+                    _ => {}
+                }
+            }))
             .flex()
             .flex_col()
             .bg(theme::background())
             .text_color(theme::text())
             .font_family(theme::UI_FONT)
-            .text_sm()
-            .child(self.title_bar(window))
+            .text_size(px(14.))
+            .when(!fullscreen, |v| v.child(self.title_bar(window)))
             .child(body)
+            .when(self.settings_open, |v| {
+                v.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .id("settings-backdrop")
+                                .absolute()
+                                .inset_0()
+                                .bg(rgba(0x00000099))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.settings_open = false;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(self.settings.clone()),
+                )
+            })
     }
 }
 
-fn caption_button(id: &'static str, glyph: &'static str, area: WindowControlArea) -> impl IntoElement {
+fn caption_button(
+    id: &'static str,
+    glyph: &'static str,
+    area: WindowControlArea,
+) -> impl IntoElement {
     let close = area == WindowControlArea::Close;
     div()
         .id(id)
@@ -890,25 +1931,16 @@ fn caption_button(id: &'static str, glyph: &'static str, area: WindowControlArea
 }
 
 fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<Div> {
-    let (background, hover, text) = if primary {
-        (theme::violet(), theme::violet_hover(), rgb(0xffffff))
-    } else {
-        (theme::surface_hover(), theme::border(), theme::text())
-    };
-    div()
-        .id(id)
-        .flex_none()
-        .flex()
-        .justify_center()
-        .px_3()
-        .py_1p5()
-        .rounded_md()
-        .cursor_pointer()
-        .bg(background)
-        .hover(move |style| style.bg(hover))
-        .text_color(text)
-        .font_weight(FontWeight::SEMIBOLD)
-        .child(label)
+    ui::button(
+        id,
+        label,
+        None,
+        if primary {
+            ButtonStyle::Primary
+        } else {
+            ButtonStyle::Secondary
+        },
+    )
 }
 
 fn pill(text: impl Into<SharedString>) -> Div {
