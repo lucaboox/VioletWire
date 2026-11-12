@@ -9,11 +9,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use gpui::{
-    AnyElement, App, Context, Div, FontWeight, Image, ImageSource, ObjectFit, Render,
+    AnyElement, App, Context, Div, Entity, FontWeight, Image, ImageSource, ObjectFit, Render,
     SharedString, Stateful, Task, Window, WindowControlArea, div, img, prelude::*, px, rgb, rgba,
 };
 
 use crate::format::{compact_count, is_login, uptime};
+use crate::player::Player;
 use crate::session::{self, Failure, Followed, Session};
 use crate::twitch::auth::{self, Poll};
 use crate::twitch::helix::FollowedChannel;
@@ -55,6 +56,12 @@ struct ImageJob {
     version: u64,
 }
 
+struct Playing {
+    login: String,
+    name: SharedString,
+    view: Entity<Player>,
+}
+
 pub struct Root {
     agent: ureq::Agent,
     auth: Auth,
@@ -65,6 +72,7 @@ pub struct Root {
     images: HashMap<String, CachedImage>,
     image_queue: Rc<RefCell<VecDeque<ImageJob>>>,
     image_workers: Rc<Cell<usize>>,
+    playing: Option<Playing>,
     // A held task is cancelled when it is replaced or dropped.
     auth_task: Option<Task<()>>,
     followed_task: Option<Task<()>>,
@@ -72,7 +80,14 @@ pub struct Root {
 }
 
 impl Root {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    /// `play` opens a channel's player at once (the `--play` developer flag);
+    /// it plays anonymously and does not need a sign-in.
+    pub fn new(play: Option<String>, cx: &mut Context<Self>) -> Self {
+        let playing = play.filter(|login| is_login(login)).map(|login| Playing {
+            name: login.clone().into(),
+            view: cx.new(|_| Player::new(&login)),
+            login,
+        });
         let mut root = Self {
             agent: http::agent(),
             auth: Auth::Restoring,
@@ -83,6 +98,7 @@ impl Root {
             images: HashMap::new(),
             image_queue: Rc::default(),
             image_workers: Rc::default(),
+            playing,
             auth_task: None,
             followed_task: None,
             refresh_task: None,
@@ -241,6 +257,8 @@ impl Root {
         self.image_queue.borrow_mut().clear();
         self.followed_task = None;
         self.refresh_task = None;
+        // Dropping the player stops Streamlink and FFmpeg.
+        self.playing = None;
         self.message = message.map(|text| SharedString::from(text.to_string()));
         if let Auth::SignedIn(session) = previous {
             let agent = self.agent.clone();
@@ -251,6 +269,29 @@ impl Root {
                 .detach();
         }
         cx.notify();
+    }
+
+    // ----- Playback ------------------------------------------------------
+
+    fn play(&mut self, login: &str, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        if !is_login(login) {
+            return;
+        }
+        self.close_player(window, cx);
+        let view = cx.new(|_| Player::new(login));
+        self.playing = Some(Playing {
+            login: login.to_string(),
+            name,
+            view,
+        });
+        cx.notify();
+    }
+
+    fn close_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(playing) = self.playing.take() {
+            playing.view.update(cx, |player, cx| player.close(window, cx));
+            cx.notify();
+        }
     }
 
     // ----- Followed channels ---------------------------------------------
@@ -484,6 +525,8 @@ impl Root {
 
     fn channel_row(&self, channel: &FollowedChannel, cx: &Context<Self>) -> impl IntoElement {
         let login = channel.login.clone();
+        let name = SharedString::from(channel.display_name.clone());
+        let selected = self.playing.as_ref().is_some_and(|playing| playing.login == channel.login);
         let subtitle: SharedString = match &channel.stream {
             Some(stream) if !stream.game_name.is_empty() => stream.game_name.clone().into(),
             Some(_) => "Live".into(),
@@ -500,6 +543,7 @@ impl Root {
             .rounded_md()
             .cursor_pointer()
             .hover(|style| style.bg(theme::surface_hover()))
+            .when(selected, |row| row.bg(theme::surface_hover()))
             .when(channel.stream.is_none(), |row| row.opacity(0.5))
             .child(self.avatar(channel.profile_image_url.as_deref(), 30.))
             .child(
@@ -524,7 +568,36 @@ impl Root {
                         .child(compact_count(stream.viewer_count)),
                 )
             })
-            .on_click(cx.listener(move |_, _, _, cx| open_channel(&login, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)))
+    }
+
+    fn player_panel(&self, playing: &Playing, cx: &Context<Self>) -> impl IntoElement {
+        let login = playing.login.clone();
+        div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .px_4()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(theme::border())
+                    .child(button("back", "Back", false).on_click(cx.listener(|this, _, window, cx| this.close_player(window, cx))))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(playing.name.clone()))
+                    .child(div().flex_1())
+                    .child(
+                        button("open-on-twitch", "Open on Twitch", false)
+                            .on_click(cx.listener(move |_, _, _, cx| open_channel(&login, cx))),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(playing.view.clone()))
     }
 
     fn home(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -581,6 +654,7 @@ impl Root {
             return div().into_any_element();
         };
         let login = channel.login.clone();
+        let name = SharedString::from(channel.display_name.clone());
         let group = SharedString::from(format!("card-{}", channel.id));
         let thumbnail = stream.thumbnail_url.as_deref().and_then(|url| self.image(url));
         let category: SharedString = if stream.game_name.is_empty() {
@@ -653,7 +727,7 @@ impl Root {
                             .child(div().truncate().text_xs().text_color(theme::text_dim()).child(category)),
                     ),
             )
-            .on_click(cx.listener(move |_, _, _, cx| open_channel(&login, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)))
             .into_any_element()
     }
 
@@ -765,16 +839,18 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = match &self.auth {
-            Auth::SignedIn(_) => div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .child(self.sidebar(cx))
-                .child(self.home(cx))
-                .into_any_element(),
-            _ => self.welcome(cx).into_any_element(),
+        let signed_in = matches!(self.auth, Auth::SignedIn(_));
+        let main = match &self.playing {
+            Some(playing) => self.player_panel(playing, cx).into_any_element(),
+            None if signed_in => self.home(cx).into_any_element(),
+            None => self.welcome(cx).into_any_element(),
         };
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .when(signed_in, |body| body.child(self.sidebar(cx)))
+            .child(main);
         div()
             .size_full()
             .flex()
@@ -862,7 +938,6 @@ fn banner(message: SharedString) -> Div {
         .child(message)
 }
 
-/// Until playback lands in the Rust build, a channel opens on twitch.tv.
 fn open_channel(login: &str, cx: &mut App) {
     if is_login(login) {
         cx.open_url(&format!("https://www.twitch.tv/{login}"));

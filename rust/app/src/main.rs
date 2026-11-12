@@ -4,6 +4,8 @@
 mod format;
 mod http;
 mod images;
+mod playback;
+mod player;
 mod root;
 mod session;
 mod theme;
@@ -14,7 +16,14 @@ use gpui::{App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOption
 use root::Root;
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    // Developer shortcut: `violetwire --play <channel>` opens that channel.
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let play = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--play")
+        .map(|pair| pair[1].to_ascii_lowercase());
+
+    Application::new().run(move |cx: &mut App| {
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -36,7 +45,7 @@ fn main() {
             app_id: Some("VioletWire".into()),
             ..Default::default()
         };
-        if cx.open_window(options, |_, cx| cx.new(Root::new)).is_err() {
+        if cx.open_window(options, |_, cx| cx.new(|cx| Root::new(play, cx))).is_err() {
             cx.quit();
             return;
         }

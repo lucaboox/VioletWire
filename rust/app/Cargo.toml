@@ -8,9 +8,15 @@ publish = false
 
 [dependencies]
 anyhow = "1"
+# Audio output through WASAPI.
+cpal = "0.18.2"
 gpui = "0.2.2"
+# Video frames are handed to GPUI as image buffers.
+image = { version = "0.25", default-features = false }
 # Windows Credential Manager, the same store Windows uses for its own sign-ins.
 keyring = { version = "3.6", features = ["windows-native"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "3.5", features = ["json"] }
+# A Job object ties Streamlink and FFmpeg to the app's lifetime.
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

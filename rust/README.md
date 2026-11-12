@@ -37,8 +37,15 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
 - Images are loaded only from `static-cdn.jtvnw.net` over HTTPS. Their format is
   checked from their bytes, and each one is capped at 4 MB.
 
-Clicking a channel opens it on twitch.tv for now. In-app playback is the next
-big piece of work (see below).
+- In-app playback (first version). Clicking a channel plays it with sound.
+  Streamlink pipes the stream into FFmpeg, FFmpeg decodes it (on the GPU when it
+  can), and each frame is drawn as a GPUI image, timed by the audio clock. A Windows
+  Job object holds both processes, so they stop with the player and even when the app
+  is force-killed. Playback is anonymous for now, so no subscriber or Turbo
+  benefits.
+
+`cargo run -- --play <channel>` opens a channel at launch without signing in,
+which is handy for working on playback.
 
 ## Layout
 
@@ -51,6 +58,8 @@ big piece of work (see below).
 | `app/src/twitch/helix.rs` | Helix followed channels, streams, users | `twitch-service.ts` (Helix parts) |
 | `app/src/twitch/token_store.rs` | Credential Manager storage | Electron `safeStorage` token file |
 | `app/src/images.rs` | CDN image download for GPUI | `emote-image-store.ts` (later) |
+| `app/src/player.rs` | Video view; redraws only when a frame is due | `HlsNativeVideo.tsx` |
+| `app/src/playback/` | Streamlink → FFmpeg pipeline, audio clock, sound output, process job | `hls-native-player.ts`, hls.js |
 | `app/src/theme.rs` | Colours and fonts | `styles.css` |
 
 Network calls use blocking `ureq` on GPUI's background executor. The UI thread
@@ -92,9 +101,25 @@ What is new is getting decoded frames onto the screen:
 
 libmpv stays retired.
 
-**Proposed path:**
+**Status:** option A is built (see `playback/`). Other GPUI projects do the
+same on Windows: [gpui-video-player](https://lib.rs/crates/gpui-video-player)
+(GStreamer) and Zed's screen sharing both push frames through GPUI's image atlas.
 
-1. Spike A with FFmpeg (`libavformat` + `d3d11va`, frames copied back to the
-   CPU) to prove the relay → decode → GPUI chain, audio through WASAPI and A/V
-   sync on the audio clock.
-2. Then build B, so tiles and 1080p60 stay cheap.
+Measured on 2026-11-12, both apps playing summit1g at 1080p60 at the same time.
+Release build, RTX 5070 Ti, 15-second sample. CPU is the share of one core;
+memory is private memory:
+
+| | CPU | Memory |
+| --- | --- | --- |
+| Electron VioletWire (hls.js, Chromium GPU decode) | 42% | 736 MB |
+| Rust, option A (FFmpeg → BGRA frames → atlas) | 135% | 882 MB |
+
+Option A proves the chain, but it is about 3× Electron's CPU. Chromium keeps
+decoded frames on the GPU. Option A has the GPU decode a frame, then copies it to
+the CPU, converts it to BGRA, sends it through a pipe and uploads it again:
+roughly 500 MB/s of copying at 1080p60. Redrawing only when a frame is due
+already cut the app's own share from a full core to 12% on a 30 fps stream.
+
+**Next: option B.** Decode on the GPU into D3D11 textures and draw them directly
+in a small fork of GPUI's Windows renderer. That removes every copy and the
+FFmpeg process, and it is how the Rust build can beat Electron on CPU and memory.
