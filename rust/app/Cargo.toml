@@ -1,0 +1,16 @@
+[package]
+name = "violetwire"
+version = "0.1.0"
+description = "VioletWire, a Windows Twitch viewer, rebuilt in Rust with GPUI"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+gpui = "0.2.2"
+# Windows Credential Manager, the same store Windows uses for its own sign-ins.
+keyring = { version = "3.6", features = ["windows-native"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3.5", features = ["json"] }

@@ -15,3 +15,6 @@ AGENTS.md
 # Serena code-assistant state
 .serena/
 __pycache__/
+
+# Rust rewrite build output
+rust/target/
