@@ -82,6 +82,18 @@ describe("SevenTvService", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it("treats a 7TV account with no active emote set as having no channel emotes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ id: "01USER", emote_set: null }), { status: 200 })),
+    );
+
+    const result = await new SevenTvService().getChannel("12345");
+
+    expect(result.emotes).toEqual([]);
+    expect(result.scope).toBe("channel");
+  });
+
   it("returns an empty set for a non-numeric id without requesting 7TV", async () => {
     const request = vi.fn();
     vi.stubGlobal("fetch", request);

@@ -36,8 +36,11 @@ const sevenTvEmoteSchema = z.object({
 });
 
 const globalResponseSchema = z.object({ emotes: z.array(sevenTvEmoteSchema) });
+// A channel with a 7TV account but no active emote set comes back with
+// emote_set null (and an empty set can have emotes null); both mean no
+// channel emotes, not a bad answer.
 const channelResponseSchema = z.object({
-  emote_set: z.object({ emotes: z.array(sevenTvEmoteSchema) }),
+  emote_set: z.object({ emotes: z.array(sevenTvEmoteSchema).nullish() }).nullish(),
 });
 
 interface CachedSet {
@@ -85,7 +88,7 @@ export class SevenTvService {
     return this.getSet(
       `channel:${platform}:${id}`,
       `https://7tv.io/v3/users/${platform}/${encodeURIComponent(id)}`,
-      (payload) => channelResponseSchema.parse(payload).emote_set.emotes,
+      (payload) => channelResponseSchema.parse(payload).emote_set?.emotes ?? [],
     );
   }
 
