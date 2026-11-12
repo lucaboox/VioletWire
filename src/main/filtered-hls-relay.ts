@@ -16,6 +16,7 @@ import {
   firstTsVideoTime,
   looksLikeTransportStream,
   planTsParts,
+  tsFirstFrameIsKeyframe,
   tsVideoSpan,
   type VideoSpan,
 } from "./ts-parts";
@@ -47,6 +48,8 @@ interface RelaySegment {
   prefetch: boolean;
   /** The parts it was published as while Twitch was writing it, if it was. */
   parts?: PublishedPart[];
+  /** Twitch's address for it, when it came from Twitch's listing. */
+  upstreamUrl?: string;
 }
 
 /** A piece of a fragment, published before the fragment is finished. */
@@ -129,6 +132,24 @@ const UPSTREAM_POLL_MS = 1_000;
 // Completed segments keep listing their parts this long, so a player midway
 // through one is not left holding parts the playlist no longer mentions.
 const RECENT_PARTED_SEGMENTS = 3;
+// Not every Twitch fragment opens on a key frame. A broadcaster sending one
+// every eight seconds, cut by Twitch into 5.1 and 3.2 second fragments, has
+// none at all in every other fragment, and hls.js starting playback in one of
+// those sets up an audio-only player that then fails for good. In parts mode
+// the newest few listed fragments are checked by reading their first bytes,
+// and the playlist names a start where there is a key frame (EXT-X-START)
+// whenever hls.js's own choice would not have one.
+const KEYFRAME_PROBE_SEGMENTS = 3;
+const KEYFRAME_PROBE_BYTES = 64 * 1024;
+// The first playlist decides where playback starts, so it waits this long at
+// most for those checks.
+const KEYFRAME_PROBE_WAIT_MS = 1_500;
+// Where hls.js starts unless told otherwise: this far behind the newest media,
+// the player's target distance from live (PARTS_TARGET_LATENCY).
+const PLAYER_START_LATENCY_SECONDS = 2;
+// A named start sits this far inside the fragment or part with the key frame,
+// so rounding cannot put it at the very end of the one before.
+const START_INSIDE_SECONDS = 0.05;
 // How far a complete fragment's date may sit from the one inferred while it
 // was being written and still be recognised as the same fragment. Twitch's
 // fragments are two seconds apart, so this cannot match a neighbour.
@@ -461,6 +482,11 @@ export class FilteredHlsRelay {
     end?: number;
   } | null = null;
   private refreshedOnce = false;
+  // Whether recent fragments from Twitch's listing open on a key frame, read
+  // from their first bytes (fragments streamed here know from their parts).
+  private readonly keyframeStarts = new Map<string, boolean>();
+  private readonly keyframeProbes = new Map<string, Promise<void>>();
+  private startProbesAwaited = false;
   // Players waiting on a blocking playlist request for a part not yet written.
   private readonly playlistWaiters = new Set<() => void>();
 
@@ -521,6 +547,11 @@ export class FilteredHlsRelay {
         void this.getPlaylist().catch(() => undefined);
       }, UPSTREAM_POLL_MS);
       this.upstreamPoll.unref?.();
+      // Read Twitch's playlist now rather than on the player's first request.
+      // The player takes a few hundred milliseconds to get that far, which
+      // covers this fetch, the fragments starting to stream and the key
+      // frame checks the first playlist waits for.
+      void this.getPlaylist().catch(() => undefined);
     }
     return `http://127.0.0.1:${this.port}/${this.sessionToken}/index.m3u8`;
   }
@@ -841,6 +872,7 @@ export class FilteredHlsRelay {
               sourceKey: segmentKey,
               uri: this.registerResource(segment.uri),
               prefetch: false,
+              upstreamUrl: segment.uri,
             });
             continue;
           }
@@ -893,6 +925,7 @@ export class FilteredHlsRelay {
           sourceKey: segmentKey,
           uri: this.registerResource(segment.uri),
           prefetch: segment.prefetch,
+          upstreamUrl: segment.uri,
         });
       }
       if (this.partsEnabled) {
@@ -922,6 +955,7 @@ export class FilteredHlsRelay {
         this.segmentSequences.delete(oldestKey);
       }
       this.pruneResources();
+      this.probeKeyframeStarts();
       this.refreshedOnce = true;
       this.notifyPlaylistWaiters();
       if (this.relaySegments.length === 0) {
@@ -1000,6 +1034,7 @@ export class FilteredHlsRelay {
         ? { msn: writing.sequence, part: writing.parts.length }
         : { msn: lastSequence + 1, part: 0 };
     const partTarget = Math.max(this.largestPartSeconds, PART_TARGET_SECONDS);
+    const start = this.keyframeStart(writing);
     return [
       "#EXTM3U",
       "#EXT-X-VERSION:9",
@@ -1009,12 +1044,160 @@ export class FilteredHlsRelay {
       `#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=${(partTarget * 3).toFixed(3)}`,
       `#EXT-X-PART-INF:PART-TARGET=${partTarget.toFixed(3)}`,
       `#EXT-X-MEDIA-SEQUENCE:${firstSequence}`,
+      ...(start === null ? [] : [`#EXT-X-START:TIME-OFFSET=${start.toFixed(3)},PRECISE=YES`]),
       "#EXT-X-INDEPENDENT-SEGMENTS",
       ...segmentLines,
       ...writingLines,
       `#EXT-X-PRELOAD-HINT:TYPE=PART,URI="hint/${hint.msn}/${hint.part}"`,
       "",
     ].join("\n");
+  }
+
+  /**
+   * Where in this playlist playback should start, as seconds from its first
+   * segment, when hls.js's own choice (PLAYER_START_LATENCY_SECONDS behind
+   * the newest media) would not have a key frame to start on; otherwise null.
+   * The answer is the latest known key frame before that point. Positions
+   * are added up from the listed durations, as hls.js does.
+   */
+  private keyframeStart(writing: PartedFragment | null): number | null {
+    interface Span {
+      start: number;
+      end: number;
+      keyframe: boolean | undefined;
+      parts: { start: number; independent: boolean }[] | null;
+    }
+    const listParts = (start: number, parts: readonly PublishedPart[]) => {
+      let offset = start;
+      return parts.map((part) => {
+        const listed = { start: offset, independent: part.independent };
+        offset += part.duration;
+        return listed;
+      });
+    };
+    const recentFrom = this.relaySegments.length - RECENT_PARTED_SEGMENTS;
+    const spans: Span[] = [];
+    let offset = 0;
+    this.relaySegments.forEach((segment, index) => {
+      const listed = index >= recentFrom && segment.parts?.length ? segment.parts : null;
+      spans.push({
+        start: offset,
+        end: offset + segment.duration,
+        keyframe: segment.parts?.length
+          ? segment.parts[0].independent
+          : this.keyframeStarts.get(segment.sourceKey),
+        parts: listed ? listParts(offset, listed) : null,
+      });
+      offset += segment.duration;
+    });
+    let edge = offset;
+    if (writing && writing.parts.length > 0) {
+      const parts = listParts(offset, writing.parts);
+      edge = offset + writing.parts.reduce((total, part) => total + part.duration, 0);
+      spans.push({ start: offset, end: edge, keyframe: writing.parts[0].independent, parts });
+    }
+
+    const target = edge - PLAYER_START_LATENCY_SECONDS;
+    if (target <= 0 || spans.length === 0) return null;
+    const containing = spans.find((span) => target >= span.start && target < span.end) ?? spans.at(-1)!;
+    const startsOnKeyframe = containing.parts
+      ? containing.parts.some((part) => part.independent && part.start <= target)
+      : containing.keyframe === true;
+    if (startsOnKeyframe) return null;
+    const keyframes = spans.flatMap((span) =>
+      span.parts
+        ? span.parts.filter((part) => part.independent).map((part) => part.start)
+        : span.keyframe === true
+          ? [span.start]
+          : [],
+    );
+    const before = keyframes.filter((point) => point <= target).at(-1);
+    return before === undefined ? null : before + START_INSIDE_SECONDS;
+  }
+
+  /**
+   * Starts reading the first bytes of the newest listed fragments that have
+   * not been streamed here, to learn whether each opens on a key frame.
+   */
+  private probeKeyframeStarts(): void {
+    if (!this.partsEnabled) return;
+    for (const segment of this.relaySegments.slice(-KEYFRAME_PROBE_SEGMENTS)) {
+      const key = segment.sourceKey;
+      if (segment.parts?.length || this.keyframeStarts.has(key) || this.keyframeProbes.has(key)) {
+        continue;
+      }
+      const url = segment.upstreamUrl;
+      if (!url || !this.mayFetchMedia(url)) continue;
+      const probe = this.readKeyframeStart(url)
+        .then((keyframe) => {
+          if (keyframe !== null && !this.closed) this.keyframeStarts.set(key, keyframe);
+        })
+        .finally(() => this.keyframeProbes.delete(key));
+      this.keyframeProbes.set(key, probe);
+    }
+    while (this.keyframeStarts.size > MAX_SEEN_SEGMENTS) {
+      const oldest = this.keyframeStarts.keys().next().value;
+      if (oldest === undefined) break;
+      this.keyframeStarts.delete(oldest);
+    }
+  }
+
+  /**
+   * Whether the fragment at `url` opens on a key frame, from its first bytes
+   * only, or null when that cannot be told. Twitch's CDN answers a range
+   * request with the whole fragment, so the rest is cancelled unread.
+   */
+  private async readKeyframeStart(url: string): Promise<boolean | null> {
+    const controller = new AbortController();
+    this.abortControllers.add(controller);
+    const timeout = setTimeout(() => controller.abort(), PARTED_FRAGMENT_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        headers: {
+          ...getPlaybackHeaders(this.platform),
+          Range: `bytes=0-${KEYFRAME_PROBE_BYTES - 1}`,
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) return null;
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      while (length < KEYFRAME_PROBE_BYTES) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        length += value.length;
+        // A transport stream answers as soon as its first picture is in,
+        // usually within the first few kilobytes.
+        const sofar = Buffer.concat(chunks);
+        if (looksLikeTransportStream(sofar) && tsFirstFrameIsKeyframe(sofar, 0) !== null) break;
+      }
+      await reader.cancel().catch(() => undefined);
+      const head = Buffer.concat(chunks).subarray(0, KEYFRAME_PROBE_BYTES);
+      if (looksLikeTransportStream(head)) return tsFirstFrameIsKeyframe(head, 0);
+      if (looksLikeFragmentedMp4(head)) {
+        if (this.mp4Tracks.size === 0) await this.mp4TracksRequest;
+        return this.mp4Tracks.size === 0 ? null : mp4StartsIndependent(head, 0, this.mp4Tracks);
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+      controller.abort();
+      this.abortControllers.delete(controller);
+    }
+  }
+
+  /** The relay fetches media itself only from Twitch's CDN or the playlist's own host. */
+  private mayFetchMedia(url: string): boolean {
+    if (isDirectTwitchMediaUrl(url)) return true;
+    try {
+      return new URL(url).origin === new URL(this.sourceUrl ?? "").origin;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -1026,6 +1209,13 @@ export class FilteredHlsRelay {
   private async getPartedPlaylist(query: URLSearchParams): Promise<string> {
     if (this.closed || !this.sourceUrl) throw new Error("HLS session ended.");
     if (!this.refreshedOnce) await this.getPlaylist();
+    if (!this.startProbesAwaited) {
+      this.startProbesAwaited = true;
+      await Promise.race([
+        Promise.allSettled([...this.keyframeProbes.values()]),
+        new Promise((resolve) => setTimeout(resolve, KEYFRAME_PROBE_WAIT_MS)),
+      ]);
+    }
     const msn = parseDirective(query.get("_HLS_msn"));
     const part = parseDirective(query.get("_HLS_part"));
     if (msn !== undefined) await this.waitForMedia(msn, part);
@@ -1303,14 +1493,9 @@ export class FilteredHlsRelay {
         return;
       }
     }
-    const firstCut = fragment.cut === 0;
     const planned =
       fragment.container === "ts"
-        ? planTsParts(view, fragment.cut, PART_TARGET_SECONDS).map((part, index) => ({
-            ...part,
-            // A transport stream fragment opens on its key frame.
-            independent: firstCut && index === 0,
-          }))
+        ? planTsParts(view, fragment.cut, PART_TARGET_SECONDS)
         : planMp4Parts(view, fragment.cut, PART_TARGET_SECONDS, this.mp4Tracks);
     if (planned.length === 0) return;
     for (const part of planned) {
@@ -1382,7 +1567,7 @@ export class FilteredHlsRelay {
       const independent =
         fragment.container === "fmp4"
           ? mp4StartsIndependent(view, fragment.cut, this.mp4Tracks)
-          : false;
+          : tsFirstFrameIsKeyframe(view, fragment.cut) === true;
       fragment.parts.push({
         uri: this.registerPartBytes(Buffer.from(view.subarray(fragment.cut)), fragment.container),
         duration: Math.max(0.001, Number((fragment.duration - used).toFixed(3))),

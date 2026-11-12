@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { firstTsVideoTime, looksLikeTransportStream, planTsParts, tsVideoSpan, videoSpan } from "./ts-parts";
+import {
+  firstTsVideoTime,
+  looksLikeTransportStream,
+  planTsParts,
+  tsFirstFrameIsKeyframe,
+  tsFrameIsKeyframe,
+  tsVideoSpan,
+  videoSpan,
+} from "./ts-parts";
 
 const TS_PACKET_SIZE = 188;
 const VIDEO_PID = 0x100;
@@ -30,7 +38,7 @@ function writeTimestamp(packet: Uint8Array, at: number, seconds: number, prefix:
  */
 function timedPacket(
   seconds: number,
-  { pid = VIDEO_PID, streamId = 0xe0, length = 0, decodeSeconds, runsOn = false }: {
+  { pid = VIDEO_PID, streamId = 0xe0, length = 0, decodeSeconds, runsOn = false, picture }: {
     pid?: number;
     streamId?: number;
     /** PES_packet_length: the bytes after the length field, 0 for unbounded. */
@@ -38,6 +46,8 @@ function timedPacket(
     decodeSeconds?: number;
     /** The payload opens with the previous frame's last bytes, not a start code. */
     runsOn?: boolean;
+    /** A picture after the delimiter: an IDR key frame, or an ordinary slice. */
+    picture?: "idr" | "slice";
   } = {},
 ): Uint8Array {
   const packet = new Uint8Array(TS_PACKET_SIZE);
@@ -65,7 +75,22 @@ function timedPacket(
   // The elementary stream: an access unit delimiter, or run-on slice bytes.
   const body = 13 + packet[12];
   packet.set(runsOn ? [0x3d, 0x43, 0xd7, 0x14, 0x00, 0x00, 0x00, 0x01, 0x09] : [0x00, 0x00, 0x00, 0x01, 0x09], body);
+  if (picture) {
+    // nal_unit_type 5 (IDR, 0x65) or 1 (non-IDR slice, 0x41), after the delimiter.
+    packet.set([0xf0, 0x00, 0x00, 0x00, 0x01, picture === "idr" ? 0x65 : 0x41, 0x88], body + (runsOn ? 9 : 5));
+  }
   return packet;
+}
+
+/** The same packet with an adaptation field flagging it as a random access point. */
+function randomAccess(packet: Uint8Array): Uint8Array {
+  const flagged = new Uint8Array(TS_PACKET_SIZE);
+  flagged.set(packet.subarray(0, 4));
+  flagged[3] = 0x30; // adaptation field and payload
+  flagged[4] = 0x01; // one byte of adaptation field
+  flagged[5] = 0x40; // random_access_indicator
+  flagged.set(packet.subarray(4, TS_PACKET_SIZE - 2), 6);
+  return flagged;
 }
 
 /** An audio PES packet that runs on for `packets` transport packets in all. */
@@ -99,8 +124,8 @@ describe("planTsParts", () => {
     const parts = planTsParts(data, 0, 0.5);
 
     expect(parts).toHaveLength(2);
-    expect(parts[0]).toEqual({ end: TS_PACKET_SIZE, duration: 1 });
-    expect(parts[1]).toEqual({ end: TS_PACKET_SIZE * 2, duration: 1 });
+    expect(parts[0]).toEqual({ end: TS_PACKET_SIZE, duration: 1, independent: false });
+    expect(parts[1]).toEqual({ end: TS_PACKET_SIZE * 2, duration: 1, independent: false });
   });
 
   it("keeps cutting on packet boundaries", () => {
@@ -151,7 +176,7 @@ describe("planTsParts", () => {
 
     const parts = planTsParts(data, 0, 0.5);
 
-    expect(parts).toEqual([{ end: TS_PACKET_SIZE * 2, duration: 1 }]);
+    expect(parts).toEqual([{ end: TS_PACKET_SIZE * 2, duration: 1, independent: false }]);
   });
 
   it("only ends a part where a video frame begins", () => {
@@ -166,7 +191,7 @@ describe("planTsParts", () => {
 
     const parts = planTsParts(data, 0, 0.5);
 
-    expect(parts).toEqual([{ end: TS_PACKET_SIZE * 3, duration: 1 }]);
+    expect(parts).toEqual([{ end: TS_PACKET_SIZE * 3, duration: 1, independent: false }]);
   });
 
   it("never cuts while an audio packet is still arriving", () => {
@@ -183,7 +208,7 @@ describe("planTsParts", () => {
 
     const parts = planTsParts(data, 0, 0.5);
 
-    expect(parts).toEqual([{ end: TS_PACKET_SIZE * 5, duration: 1.1 }]);
+    expect(parts).toEqual([{ end: TS_PACKET_SIZE * 5, duration: 1.1, independent: false }]);
   });
 
   it("never cuts where the previous frame runs on into the next packet", () => {
@@ -196,7 +221,7 @@ describe("planTsParts", () => {
       timedPacket(1.02),
     );
 
-    expect(planTsParts(data, 0, 0.5)).toEqual([{ end: TS_PACKET_SIZE * 3, duration: 1.02 }]);
+    expect(planTsParts(data, 0, 0.5)).toEqual([{ end: TS_PACKET_SIZE * 3, duration: 1.02, independent: false }]);
   });
 
   it("measures by decode time when a frame carries one", () => {
@@ -206,7 +231,7 @@ describe("planTsParts", () => {
       timedPacket(10.1, { decodeSeconds: 10.5 }),
     );
 
-    expect(planTsParts(data, 0, 0.5)).toEqual([{ end: TS_PACKET_SIZE, duration: 0.5 }]);
+    expect(planTsParts(data, 0, 0.5)).toEqual([{ end: TS_PACKET_SIZE, duration: 0.5, independent: false }]);
   });
 
   it("stops cutting where the stream loses sync", () => {
@@ -239,6 +264,67 @@ describe("firstTsVideoTime", () => {
 
   it("waits for a video frame to arrive", () => {
     expect(firstTsVideoTime(stream(audioStart(4.9, 1)))).toBeNull();
+  });
+});
+
+describe("planTsParts and key frames", () => {
+  it("marks a part independent only when it opens on a key frame", () => {
+    const data = stream(
+      timedPacket(0, { picture: "idr" }),
+      timedPacket(1, { picture: "slice" }),
+      timedPacket(2, { picture: "slice" }),
+    );
+
+    expect(planTsParts(data, 0, 0.5)).toEqual([
+      { end: TS_PACKET_SIZE, duration: 1, independent: true },
+      { end: TS_PACKET_SIZE * 2, duration: 1, independent: false },
+    ]);
+  });
+
+  it("starts a part at a key frame even before the target", () => {
+    const data = stream(
+      timedPacket(0, { picture: "slice" }),
+      timedPacket(0.1, { picture: "idr" }),
+      timedPacket(0.2, { picture: "slice" }),
+    );
+
+    expect(planTsParts(data, 0, 0.5)).toEqual([
+      { end: TS_PACKET_SIZE, duration: 0.1, independent: false },
+    ]);
+  });
+
+  it("waits for a frame's picture before deciding whether to cut early", () => {
+    // The second frame's delimiter is here but its picture is not yet.
+    const data = stream(timedPacket(0, { picture: "slice" }), timedPacket(0.1));
+
+    expect(planTsParts(data, 0, 0.5)).toEqual([]);
+  });
+});
+
+describe("tsFrameIsKeyframe", () => {
+  it("reads the frame's first picture", () => {
+    expect(tsFrameIsKeyframe(stream(timedPacket(0, { picture: "idr" })), 0)).toBe(true);
+    expect(tsFrameIsKeyframe(stream(timedPacket(0, { picture: "slice" })), 0)).toBe(false);
+  });
+
+  it("takes a packet flagged as a random access point at its word", () => {
+    expect(tsFrameIsKeyframe(stream(randomAccess(timedPacket(0))), 0)).toBe(true);
+  });
+
+  it("looks past the delimiter into the frame's later packets", () => {
+    const tail = continuationPacket();
+    tail.set([0x00, 0x00, 0x01, 0x65], 4);
+    expect(tsFrameIsKeyframe(stream(timedPacket(0), continuationPacket(AUDIO_PID), tail), 0)).toBe(true);
+  });
+
+  it("cannot tell before the picture arrives, and says no if the next frame comes first", () => {
+    expect(tsFrameIsKeyframe(stream(timedPacket(0)), 0)).toBeNull();
+    expect(tsFrameIsKeyframe(stream(timedPacket(0), timedPacket(0.1, { picture: "idr" })), 0)).toBe(false);
+  });
+
+  it("finds the first video frame after other packets", () => {
+    expect(tsFirstFrameIsKeyframe(stream(audioStart(0, 1), timedPacket(0, { picture: "idr" })), 0)).toBe(true);
+    expect(tsFirstFrameIsKeyframe(stream(audioStart(0, 1)), 0)).toBeNull();
   });
 });
 

@@ -22,6 +22,8 @@ class FakeTwitchEdge {
   readonly dateShiftMs = new Map<number, number>();
   /** How many times each in-progress fragment has been asked for. */
   readonly requests = new Map<number, number>();
+  /** Complete fragments served without a key frame, as some encoders' are. */
+  readonly keyframeless = new Set<number>();
   private completed = 2;
   private readonly writing = new Map<number, ServerResponse>();
   private readonly waiting = new Map<number, (response: ServerResponse) => void>();
@@ -51,8 +53,10 @@ class FakeTwitchEdge {
         this.waiting.get(index)?.(response);
         return;
       }
+      const complete = /^\/fragment-(\d+)\.mp4$/.exec(path);
+      const keyFrames = complete && this.keyframeless.has(Number(complete[1])) ? [] : [0];
       response.writeHead(200, { "Content-Type": "video/mp4" });
-      response.end(join(...fragmentPieces(0)));
+      response.end(join(...fragmentPieces(0, keyFrames)));
     });
   }
 
@@ -397,6 +401,27 @@ describe("FilteredHlsRelay parts", () => {
     const missing = playlistUrl.replace("index.m3u8", `part/${"0".repeat(32)}`);
     const response = await fetch(missing, { headers: { Origin: ORIGIN } });
     expect(response.status).toBe(404);
+  });
+
+  it("names a start on a key frame when the usual one would have none", async () => {
+    // The newest listed fragment has no key frame, as every other one does
+    // on a stream whose key frames are eight seconds apart. hls.js, left to
+    // itself, would start two seconds from the end, inside it, and fail.
+    edge = new FakeTwitchEdge();
+    edge.keyframeless.add(2);
+    relay = new FilteredHlsRelay(() => ORIGIN, "twitch", { publishParts: true });
+    const playlistUrl = await relay.start(await edge.listen());
+
+    const playlist = await getText(playlistUrl);
+
+    // Fragment 1, which opens on one, from its start.
+    expect(playlist).toContain("#EXT-X-START:TIME-OFFSET=0.050,PRECISE=YES");
+  });
+
+  it("leaves the start to hls.js when it would land on a key frame", async () => {
+    const playlistUrl = await startRelay();
+
+    expect(await getText(playlistUrl)).not.toContain("#EXT-X-START");
   });
 
   it("publishes no parts unless asked to", async () => {

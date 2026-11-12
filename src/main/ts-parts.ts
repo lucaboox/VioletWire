@@ -32,6 +32,8 @@ export interface TsPart {
   end: number;
   /** Media seconds the part covers. */
   duration: number;
+  /** Whether its first video frame is a key frame, so playback can start at it. */
+  independent: boolean;
 }
 
 interface PesStart {
@@ -118,11 +120,91 @@ function unwrap(time: number, reference: number): number {
   return time;
 }
 
+// How far into a frame to look for its first picture: past the access unit
+// delimiter, parameter sets and any SEI, which can run to a few kilobytes.
+const KEYFRAME_SCAN_PACKETS = 256;
+
+/**
+ * Whether the video frame whose PES packet starts in the transport packet at
+ * `offset` is a key frame: one flagged as a random access point, or whose
+ * first picture is an H.264 IDR. Null while that picture has not arrived.
+ *
+ * A Twitch MPEG-TS fragment does not always open on one. Where a broadcaster
+ * sends a key frame every eight seconds and Twitch cuts the stream into 5.1
+ * and 3.2 second fragments, every other fragment has none at all, and a
+ * player that starts there gets no picture.
+ */
+export function tsFrameIsKeyframe(data: Uint8Array, offset: number): boolean | null {
+  if (offset + TS_PACKET_SIZE > data.length || data[offset] !== TS_SYNC_BYTE) return null;
+  const adaptationControl = (data[offset + 3] >> 4) & 0x03;
+  if ((adaptationControl & 0x02) !== 0 && data[offset + 4] > 0 && (data[offset + 5] & 0x40) !== 0) {
+    return true;
+  }
+  const first = readPayload(data, offset);
+  if (!first?.start) return null;
+  const at = first.offset;
+  if (first.length < 9 || data[at] !== 0 || data[at + 1] !== 0 || data[at + 2] !== 1) return null;
+  const pid = first.pid;
+
+  // Walk the frame's bytes packet by packet, watching for NAL start codes
+  // (00 00 01) even where one straddles two packets.
+  let zeros = 0;
+  let headerNext = false;
+  let scanned = 0;
+  for (
+    let packet = offset;
+    packet + TS_PACKET_SIZE <= data.length && scanned < KEYFRAME_SCAN_PACKETS;
+    packet += TS_PACKET_SIZE
+  ) {
+    if (data[packet] !== TS_SYNC_BYTE) return null;
+    const payload = readPayload(data, packet);
+    if (!payload || payload.pid !== pid) continue;
+    // The next frame began without this one showing a picture.
+    if (packet !== offset && payload.start) return false;
+    scanned += 1;
+    const begin = packet === offset ? at + 9 + data[at + 8] : payload.offset;
+    const end = payload.offset + payload.length;
+    for (let index = begin; index < end; index += 1) {
+      const byte = data[index];
+      if (headerNext) {
+        headerNext = false;
+        const type = byte & 0x1f;
+        // Coded slices: 5 is an IDR picture, 1 to 4 are not.
+        if (type === 5) return true;
+        if (type >= 1 && type <= 4) return false;
+      }
+      if (byte === 0) {
+        zeros += 1;
+      } else {
+        if (byte === 1 && zeros >= 2) headerNext = true;
+        zeros = 0;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether the first video frame at or after `from` is a key frame, or null
+ * when its picture has not arrived (or there is no video yet).
+ */
+export function tsFirstFrameIsKeyframe(data: Uint8Array, from: number): boolean | null {
+  for (let offset = from; offset + TS_PACKET_SIZE <= data.length; offset += TS_PACKET_SIZE) {
+    if (data[offset] !== TS_SYNC_BYTE) return null;
+    const payload = readPayload(data, offset);
+    if (!payload?.start) continue;
+    const pes = readPesStart(data, payload);
+    if (pes?.video && pes.time !== null) return tsFrameIsKeyframe(data, offset);
+  }
+  return null;
+}
+
 /**
  * Parts that can be cut from `data` starting at `from`, each covering about
  * `targetSeconds`. `from` must itself be a cut, where nothing was left open.
  * Only whole packets are considered, and the bytes of a part that has not
- * reached the target yet are left for a later call.
+ * reached the target yet are left for a later call. A key frame always opens
+ * a part of its own, so playback can start wherever one is.
  */
 export function planTsParts(
   data: Uint8Array,
@@ -134,7 +216,7 @@ export function planTsParts(
   // Bytes still to come of each PES packet that states its length. Video
   // packets usually do not; one ends only where the next begins.
   const open = new Map<number, number>();
-  let partStart: number | null = null;
+  let partStart: { seconds: number; offset: number } | null = null;
 
   for (
     let offset = from;
@@ -156,13 +238,28 @@ export function planTsParts(
     const pes = readPesStart(data, payload);
     if (!pes) continue;
     if (pes.video && pes.time !== null) {
-      const seconds: number = partStart === null ? pes.time : unwrap(pes.time, partStart);
+      const seconds: number = partStart === null ? pes.time : unwrap(pes.time, partStart.seconds);
       if (partStart === null) {
-        partStart = seconds;
-      } else if (open.size === 0 && pes.opensFrame && seconds - partStart >= targetSeconds) {
-        // This frame opens the next part, so the part being measured ends here.
-        parts.push({ end: offset, duration: Number((seconds - partStart).toFixed(3)) });
-        partStart = seconds;
+        partStart = { seconds, offset };
+      } else if (open.size === 0 && pes.opensFrame && seconds > partStart.seconds) {
+        let cut = seconds - partStart.seconds >= targetSeconds;
+        if (!cut) {
+          // A key frame cuts early; until its picture arrives there is no
+          // telling, so nothing past it is planned yet.
+          const keyframe = tsFrameIsKeyframe(data, offset);
+          if (keyframe === null) break;
+          cut = keyframe;
+        }
+        if (cut) {
+          // This frame opens the next part, so the part being measured ends
+          // here, and all of its own first frame has arrived.
+          parts.push({
+            end: offset,
+            duration: Number((seconds - partStart.seconds).toFixed(3)),
+            independent: tsFrameIsKeyframe(data, partStart.offset) === true,
+          });
+          partStart = { seconds, offset };
+        }
       }
     }
     if (pes.remaining) open.set(pes.pid, pes.remaining);
