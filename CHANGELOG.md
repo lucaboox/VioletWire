@@ -4,6 +4,8 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.25] - 2026-11-12
+
 ### Fixes
 
 - Streams such as UFDTech no longer load forever or fail in low latency mode.
