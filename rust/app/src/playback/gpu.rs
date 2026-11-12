@@ -249,6 +249,21 @@ impl GpuPlayback {
             .unwrap_or_default()
     }
 
+    /// Twitch is showing an ad in place of the stream (it is filtered out).
+    pub fn ad_break(&self) -> bool {
+        self.relayed.as_ref().is_some_and(relay::Relayed::ad_break)
+    }
+
+    /// The playlist is known but no live content has arrived yet: usually a
+    /// pre-roll ad.
+    pub fn waiting_for_stream(&self) -> bool {
+        self.engine.is_none() && self.relayed.as_ref().is_some_and(|relayed| !relayed.ready())
+    }
+
+    pub fn ads_skipped(&self) -> u32 {
+        self.relayed.as_ref().map_or(0, relay::Relayed::ads_skipped)
+    }
+
     /// True while a frozen stream is reconnecting. (A quality change keeps
     /// the current picture playing, so it is not shown as a reconnect.)
     pub fn switching(&self) -> bool {
@@ -360,6 +375,17 @@ impl GpuPlayback {
             self.engine = None;
         }
         if self.engine.is_none() {
+            // The relay lists nothing until live content arrives; a pre-roll
+            // ad is a wait, not a failure.
+            if let Some(relayed) = &self.relayed {
+                if let Some(failure) = relayed.failure() {
+                    bail!(failure);
+                }
+                if !relayed.ready() {
+                    self.last_frame_at = now;
+                    return Ok(None);
+                }
+            }
             // Through the relay, so playback starts near the live edge; the
             // direct playlist still works if the relay is unavailable.
             let url = self
@@ -412,7 +438,11 @@ impl GpuPlayback {
         } else {
             self.watch_for_freeze(now)?;
         }
-        if !self.paused && self.frames == 0 && self.started.elapsed() > Duration::from_secs(35) {
+        if !self.paused
+            && self.frames == 0
+            && !self.waiting_for_stream()
+            && self.started.elapsed() > Duration::from_secs(35)
+        {
             bail!("GPU playback produced no frames.");
         }
         Ok(frame)
@@ -484,6 +514,18 @@ impl GpuPlayback {
     fn advance_incoming(&mut self, device: &ID3D11Device) -> Option<WindowsSurface> {
         let incoming = self.incoming.as_mut()?;
         if incoming.engine.is_none() {
+            let relay_failed = incoming
+                .relayed
+                .as_ref()
+                .is_some_and(|relayed| relayed.failure().is_some());
+            if relay_failed {
+                self.abandon_incoming();
+                return None;
+            }
+            if incoming.relayed.as_ref().is_some_and(|relayed| !relayed.ready()) {
+                return None;
+            }
+            incoming.since = Instant::now();
             let url = incoming
                 .relayed
                 .as_ref()
@@ -582,6 +624,13 @@ impl GpuPlayback {
 
     fn watch_for_freeze(&mut self, now: Instant) -> Result<()> {
         if self.paused || self.frames == 0 || self.engine.is_none() || self.lookup.is_some() {
+            return Ok(());
+        }
+        // During an ad break the playlist stops growing and the picture waits
+        // for the stream to come back; that is not a freeze.
+        if self.ad_break() {
+            self.last_frame_at = now;
+            self.watchdog = Watchdog::Watching;
             return Ok(());
         }
         let quiet = now.duration_since(self.last_frame_at);
@@ -712,7 +761,11 @@ impl Engine {
             let factory: IMFMediaEngineClassFactory =
                 CoCreateInstance(&CLSID_MFMediaEngineClassFactory, None, CLSCTX_INPROC_SERVER)?;
             let engine =
-                factory.CreateInstance(MF_MEDIA_ENGINE_REAL_TIME_MODE.0 as u32, &attributes)?;
+                // Not MF_MEDIA_ENGINE_REAL_TIME_MODE: its low-latency decoding
+                // hands frames out without B-frame reordering, and streams that
+                // use B-frames (sodapoppin's, for one) smeared into blocks. The
+                // relay keeps latency low instead.
+                factory.CreateInstance(0, &attributes)?;
             // Effects only take hold for sources loaded after insertion. It is
             // optional: if the audio format does not suit it, playback goes on.
             if let Ok(extended) = engine.cast::<IMFMediaEngineEx>() {

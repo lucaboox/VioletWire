@@ -29,7 +29,7 @@ icons! {
     Settings=>"settings",Reply=>"reply",Copy=>"copy",
     Gauge=>"gauge", Quality=>"sliders-horizontal", AudioLines=>"audio-lines",
     AudioLinesOff=>"audio-lines-off", Compass=>"compass", Check=>"check",
-    ChevronDown=>"chevron-down",
+    ChevronDown=>"chevron-down", Scissors=>"scissors",
 }
 pub struct Assets;
 impl AssetSource for Assets {

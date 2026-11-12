@@ -42,14 +42,22 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
   app. Its GPU-processed BGRA texture is sampled directly by GPUI; frames never
   travel through CPU memory or GPUI's image atlas. FFmpeg is not used on this path.
   Playback remains anonymous; subscriber/Turbo benefits are not implemented.
-- A loopback playlist relay (`playback/relay.rs`) puts playback near the live
-  edge. Media Engine starts at the oldest segment of Twitch's ~30 s window, which
-  left streams about 28 s behind; the relay's first response lists only the
-  newest ~5 s, so playback now sits 4–6 s behind. It also declares the real 2 s
-  target duration (Twitch says 6 s, so Media Engine refreshed too rarely and the
-  buffer ran dry near the edge) and drops Twitch's prefetch hints. Only playlist
-  text crosses the socket, behind a random per-process secret; segments still come
-  straight from Twitch's CDN.
+- A loopback playlist relay (`playback/relay.rs`), modelled on Electron's. Each
+  session keeps its own forward-only playlist: Twitch segments keep a stable local
+  media sequence number (keyed by PROGRAM-DATE-TIME), so Media Engine never sees
+  the sequence go back. Playback starts about 5 s from the live edge (Media Engine
+  otherwise starts at the oldest segment, ~28 s behind) on a segment whose first
+  frame is a key frame, checked from its first 64 KB. Ads are filtered (an
+  "Amazon" title or a stitched-ad DATERANGE) with a discontinuity where the stream
+  resumes; a pre-roll keeps the session waiting ("Ad break") instead of failing,
+  and the freeze watchdog ignores ad breaks. It declares the real 2 s target
+  duration and drops prefetch hints. Only playlist text crosses the socket,
+  behind a random per-process secret; segments come straight from Twitch's CDN.
+- Media Engine runs without `MF_MEDIA_ENGINE_REAL_TIME_MODE`: its low-latency
+  decoding skips B-frame reordering, and streams that use B-frames smeared into
+  blocks until the next key frame.
+- Clip: Twitch's official Create Clip API (`clips:edit`), then Twitch's editor in
+  the browser.
 - Player controls as in Electron: the live indicator ("Live", "Behind live" —
   click to return — or "Paused"), video stats (latency read-out on the bar, a hover
   summary, and a panel with latency, buffer, resolution, framerate, bitrate,
@@ -172,10 +180,9 @@ never waits on the network.
 
 ## Roadmap
 
-1. **Channel extras.** Clip creation, favourites, channel pages and
-   picture-in-picture.
-2. **Playback parity.** Authenticated resolution (subscriber/Turbo), ad
-   filtering and LL-HLS parts in the relay; see the next section.
+1. **Channel extras.** Favourites, channel pages and picture-in-picture.
+2. **Playback parity.** Authenticated resolution (subscriber/Turbo) and LL-HLS
+   parts in the relay; see the next section.
 3. **Advanced chat.** User cards, moderation commands, room modes, editable emote
    chips in the composer, rich selection and pop-out windows. The live reader,
    history, regular/layered emotes, picker, replies, mentions, timestamps, sending
@@ -195,9 +202,8 @@ Remaining pieces to port from Electron:
 - **Authenticated resolution.** The current warm Rust lookup is anonymous;
   playback authentication still needs to be ported. Process
   arguments contain no credentials, and processes are spawned without a shell.
-- **The rest of the relay logic**: ad filtering, LL-HLS parts, keyframe-safe
-  cuts, and the lessons in the engine notes. The Rust relay so far only positions
-  the start, fixes the target duration and drops prefetch hints. Media Engine
+- **The rest of the relay logic**: LL-HLS parts and keyframe-safe cuts. The
+  Rust relay has Electron's stable numbering, ad filtering and key-frame start. Media Engine
   ignores `EXT-X-START`; it always begins at the first listed segment, which is
   what the relay's trimmed first response relies on.
 

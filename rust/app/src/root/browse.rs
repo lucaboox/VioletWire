@@ -66,7 +66,7 @@ const PAGE_CATEGORIES: usize = 12;
 impl Root {
     /// Runs a Helix call off the UI thread with the signed-in session,
     /// renewing the token when needed. Nothing happens while signed out.
-    fn helix_task<T: Send + 'static>(
+    pub(super) fn helix_task<T: Send + 'static>(
         &mut self,
         cx: &mut Context<Self>,
         call: impl Fn(&Helix) -> anyhow::Result<T> + Send + 'static,

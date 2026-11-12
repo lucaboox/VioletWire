@@ -7,6 +7,7 @@ pub mod gpu;
 mod job;
 mod pipeline;
 mod relay;
+mod ts;
 pub mod resolver;
 mod shared;
 mod tools;

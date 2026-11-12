@@ -774,6 +774,10 @@ impl Player {
             ),
             ("Quality", self.quality_text()),
             ("Stall recoveries", stats.stall_recoveries.to_string()),
+            (
+                "Ad segments skipped",
+                self.gpu.as_ref().map_or(0, GpuPlayback::ads_skipped).to_string(),
+            ),
             ("Audio compression", normaliser),
             ("Video", "Windows Media Engine (GPU)".into()),
         ]
@@ -1043,10 +1047,18 @@ impl Render for Player {
         let mut status = self.failure.clone();
         let mut starting = false;
         let switching = self.gpu.as_ref().is_some_and(GpuPlayback::switching);
+        // A pre-roll ad, or one in the middle of the stream: Twitch's ads are
+        // filtered out, so the picture waits for the stream to come back.
+        let ad_wait = self
+            .gpu
+            .as_ref()
+            .is_some_and(|gpu| gpu.waiting_for_stream() && gpu.ad_break());
+        let ad_now =
+            self.gpu_frame.is_some() && self.gpu.as_ref().is_some_and(GpuPlayback::ad_break);
         if self.gpu.is_some() {
             if self.gpu_frame.is_none() {
                 starting = true;
-                status = Some("Loading stream…".into());
+                status = Some(if ad_wait { "Ad break" } else { "Loading stream…" }.into());
             }
             self.schedule_gpu_poll(window, cx);
         }
@@ -1149,7 +1161,7 @@ impl Render for Player {
                         .child(format!("{fps:.0} FPS")),
                 )
             })
-            .when(switching && self.gpu_frame.is_some(), |view| {
+            .when((switching || ad_now) && self.gpu_frame.is_some(), |view| {
                 view.child(
                     div()
                         .absolute()
@@ -1167,7 +1179,11 @@ impl Render for Player {
                                 .text_size(px(12.))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme::text())
-                                .child("Reconnecting…"),
+                                .child(if switching {
+                                    "Reconnecting…"
+                                } else {
+                                    "Ad break · the stream continues after Twitch's ad"
+                                }),
                         ),
                 )
             })
@@ -1220,7 +1236,11 @@ impl Render for Player {
                                         div()
                                             .text_size(px(13.))
                                             .text_color(theme::text_dim())
-                                            .child("Connecting to the live stream"),
+                                            .child(if ad_wait {
+                                                "Twitch is showing an ad. The stream starts as soon as it ends."
+                                            } else {
+                                                "Connecting to the live stream"
+                                            }),
                                     )
                                 })
                                 .when(!starting, |v| {

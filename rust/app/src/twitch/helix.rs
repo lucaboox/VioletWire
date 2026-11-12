@@ -294,6 +294,35 @@ impl<'a> Helix<'a> {
         })
     }
 
+    /// A channel's user ID from its login, or `None` if there is no such channel.
+    pub fn user_id(&self, login: &str) -> Result<Option<String>> {
+        let page: Page<User> = self.get("/users", &[("login", login)])?;
+        Ok(page.data.into_iter().next().map(|user| user.id))
+    }
+
+    /// Clips the live broadcast (Twitch takes the last ~30 seconds) and
+    /// returns the editor URL. Needs the `clips:edit` scope.
+    pub fn create_clip(&self, broadcaster_id: &str) -> Result<String> {
+        #[derive(Deserialize)]
+        struct Clip {
+            edit_url: String,
+        }
+        let response = self
+            .agent
+            .post(format!("{HELIX}/clips"))
+            .query("broadcaster_id", broadcaster_id)
+            .header("Client-Id", CLIENT_ID)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .send_empty()
+            .context("Could not reach Twitch.")?;
+        let page: Page<Clip> = read_response(response)?;
+        page.data
+            .into_iter()
+            .next()
+            .map(|clip| clip.edit_url)
+            .context("Twitch did not create the clip.")
+    }
+
     fn profile_images(&self, ids: &[&str]) -> Result<HashMap<String, String>> {
         let mut images = HashMap::new();
         for chunk in ids.chunks(100) {
@@ -333,24 +362,34 @@ impl<'a> Helix<'a> {
         for (key, value) in query {
             request = request.query(key, value);
         }
-        let mut response = request.call().context("Could not reach Twitch.")?;
-        match response.status().as_u16() {
-            200..=299 => response
+        read_response(request.call().context("Could not reach Twitch.")?)
+    }
+}
+
+fn read_response<T: DeserializeOwned>(mut response: ureq::http::Response<ureq::Body>) -> Result<T> {
+    match response.status().as_u16() {
+        200..=299 => response
+            .body_mut()
+            .read_json()
+            .context("Twitch sent an unexpected reply."),
+        401 => Err(Unauthorized.into()),
+        status => {
+            let message = response
                 .body_mut()
-                .read_json()
-                .context("Twitch sent an unexpected reply."),
-            401 => Err(Unauthorized.into()),
-            status => {
-                let message = response
-                    .body_mut()
-                    .read_json::<serde_json::Value>()
-                    .ok()
-                    .and_then(|body| body.get("message").and_then(|m| m.as_str()).map(short_message))
-                    .unwrap_or_default();
-                bail!("Twitch returned {status}. {message}")
-            }
+                .read_json::<serde_json::Value>()
+                .ok()
+                .and_then(|body| body.get("message").and_then(|m| m.as_str()).map(short_message))
+                .unwrap_or_default();
+            bail!("Twitch returned {status}. {message}")
         }
     }
+}
+
+/// Only Twitch's own pages may be opened from a clip reply.
+pub fn is_clip_editor_url(url: &str) -> bool {
+    url.strip_prefix("https://")
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .is_some_and(|host| matches!(host, "clips.twitch.tv" | "www.twitch.tv" | "dashboard.twitch.tv"))
 }
 
 fn category(game: Game) -> Category {
@@ -446,6 +485,14 @@ mod tests {
             Some("https://static-cdn.jtvnw.net/jtv_user_pictures/abc-profile_image-70x70.png")
         );
         assert_eq!(sized_profile_image("https://example.com/a-300x300.png", 70), None);
+    }
+
+    #[test]
+    fn opens_only_twitch_clip_editor_pages() {
+        assert!(is_clip_editor_url("https://clips.twitch.tv/AwkwardHelplessSalamander/edit"));
+        assert!(is_clip_editor_url("https://dashboard.twitch.tv/u/x/content/clips"));
+        assert!(!is_clip_editor_url("https://clips.twitch.tv.example.com/edit"));
+        assert!(!is_clip_editor_url("http://clips.twitch.tv/x"));
     }
 
     #[test]

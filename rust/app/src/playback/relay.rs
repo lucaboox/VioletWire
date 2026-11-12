@@ -1,51 +1,97 @@
-//! A small loopback relay for the HLS *media playlist* (never media segments).
+//! A small loopback relay for the HLS *media playlist* (never media segments),
+//! modelled on the Electron client's filtered relay.
 //!
-//! Windows Media Engine follows the HLS spec literally, which is a poor fit
-//! for Twitch's live playlists:
+//! Each session keeps its own playlist. Every Twitch segment is identified by
+//! its PROGRAM-DATE-TIME (stable even when Twitch rotates the CDN path) and gets
+//! a local media sequence number that never changes, and the list only moves
+//! forward — Media Engine follows the HLS rule that the sequence never goes
+//! back, and a playlist that broke it made it skip data and smear the picture.
 //!
-//! - It starts at the oldest segment in Twitch's ~30-second window, so
-//!   playback sat half a minute behind the broadcast. The relay's first
-//!   response lists only the newest few seconds, so playback starts there.
-//!   Later refreshes pass the whole window through, so a segment's identity
-//!   (its media sequence number) never changes under the player.
-//! - It reloads the playlist only once per EXT-X-TARGETDURATION, which Twitch
-//!   sets to 6 s for 2 s segments; near the live edge the buffer would run dry
-//!   between reloads. The relay declares the real segment length instead.
-//! - Twitch's prefetch hints are not standard HLS and are dropped.
+//! - Start: Media Engine begins at the first listed segment, so the list starts
+//!   about [`START_CUSHION_SECONDS`] from the live edge, on a segment whose first
+//!   frame is a key frame (checked from its first bytes). Starting mid-GOP left
+//!   the decoder without references.
+//! - Ads: Twitch stitches ads into the playlist. They are dropped (an "Amazon"
+//!   title or a date inside a stitched-ad DATERANGE), and live content resumes
+//!   after a discontinuity. Until a pre-roll ends the session is not `ready`, so
+//!   playback waits instead of failing.
+//! - Twitch declares a 6 s target duration for 2 s segments, so Media Engine
+//!   would reload too rarely near the live edge; the real length is declared.
 //!
 //! Segments stay on Twitch's CDN with their absolute URLs; only playlist text
 //! crosses the loopback socket. Every URL carries a random per-process secret,
-//! so other local programs cannot use the relay, and signed upstream URLs
-//! never leave this process.
+//! so other local programs cannot use the relay, and signed upstream URLs never
+//! leave this process.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::sync::{
-    Arc, Mutex, OnceLock, PoisonError,
-    atomic::{AtomicU64, Ordering},
+    Arc, Mutex, OnceLock, PoisonError, Weak,
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 
-/// How much media the first playlist response keeps, counted back from the
-/// newest segment's end. Media Engine starts at the first listed segment.
+use super::ts;
+
+/// How much media playback starts behind the newest segment's end.
 pub const START_CUSHION_SECONDS: f64 = 5.0;
+const MAX_SEGMENTS: usize = 18;
+const MAX_SEEN: usize = 512;
 const MAX_REQUEST_BYTES: u64 = 8 * 1024;
 const MAX_PLAYLIST_BYTES: u64 = 512 * 1024;
+/// Media Engine may ask twice in quick succession; one upstream read serves both.
+const CACHE_FOR: Duration = Duration::from_millis(300);
+/// How long a pre-roll ad may keep a new session waiting.
+const PRIME_FOR: Duration = Duration::from_secs(150);
+const PROBE_BYTES: u64 = 64 * 1024;
+/// Older segments tried for a key-frame start, newest first.
+const PROBE_CANDIDATES: usize = 5;
+
+/// What the player needs to know about a session.
+#[derive(Default)]
+pub struct Status {
+    ready: AtomicBool,
+    ad_break: AtomicBool,
+    ads_skipped: AtomicU32,
+    failure: Mutex<Option<String>>,
+}
+
+struct Segment {
+    sequence: u64,
+    discontinuity: bool,
+    tags: Vec<String>,
+    uri: String,
+    duration: f64,
+}
+
+#[derive(Default)]
+struct Playlist {
+    started: bool,
+    segments: VecDeque<Segment>,
+    next_sequence: u64,
+    seen: HashMap<String, u64>,
+    seen_order: VecDeque<String>,
+    pending_discontinuity: bool,
+    discontinuity_sequence: u64,
+    version: u32,
+    ended: bool,
+    cached: Option<(Instant, String)>,
+}
 
 struct Session {
     upstream: String,
-    /// The first response positions the player; later ones do not.
-    positioned: bool,
+    playlist: Mutex<Playlist>,
+    status: Arc<Status>,
 }
 
 struct Relay {
     port: u16,
     secret: String,
     agent: ureq::Agent,
-    sessions: Mutex<HashMap<u64, Session>>,
+    sessions: Mutex<HashMap<u64, Arc<Session>>>,
     next: AtomicU64,
 }
 
@@ -56,6 +102,10 @@ fn relay() -> Result<Arc<Relay>> {
         .get_or_init(|| start().map_err(|error| error.to_string()))
         .clone()
         .map_err(|error| anyhow::anyhow!(error))
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn start() -> Result<Arc<Relay>> {
@@ -106,48 +156,88 @@ fn secret() -> Result<String> {
 pub struct Relayed {
     id: u64,
     pub url: String,
+    status: Arc<Status>,
+}
+
+impl Relayed {
+    /// Live segments are listed and the player can start.
+    pub fn ready(&self) -> bool {
+        self.status.ready.load(Ordering::Acquire)
+    }
+    /// Twitch is showing an ad in place of the stream right now.
+    pub fn ad_break(&self) -> bool {
+        self.status.ad_break.load(Ordering::Acquire)
+    }
+    pub fn ads_skipped(&self) -> u32 {
+        self.status.ads_skipped.load(Ordering::Acquire)
+    }
+    pub fn failure(&self) -> Option<String> {
+        lock(&self.status.failure).clone()
+    }
 }
 
 impl Drop for Relayed {
     fn drop(&mut self) {
         if let Ok(relay) = relay() {
-            relay
-                .sessions
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&self.id);
+            lock(&relay.sessions).remove(&self.id);
         }
     }
 }
 
-/// Serves the media playlist at `upstream` through the relay.
+/// Serves the media playlist at `upstream` through the relay. The session
+/// primes itself in the background; [`Relayed::ready`] says when to start.
 pub fn register(upstream: &str) -> Result<Relayed> {
     let relay = relay()?;
     let id = relay.next.fetch_add(1, Ordering::Relaxed);
-    relay
-        .sessions
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(
-            id,
-            Session {
-                upstream: upstream.to_owned(),
-                positioned: false,
-            },
-        );
+    let status = Arc::new(Status::default());
+    let session = Arc::new(Session {
+        upstream: upstream.to_owned(),
+        playlist: Mutex::new(Playlist::default()),
+        status: status.clone(),
+    });
+    lock(&relay.sessions).insert(id, session.clone());
+    let weak: Weak<Session> = Arc::downgrade(&session);
+    drop(session);
+    let priming = relay.clone();
+    std::thread::Builder::new()
+        .name("vw-playlist-prime".into())
+        .spawn(move || priming.prime(weak))?;
     Ok(Relayed {
         id,
         url: format!("http://127.0.0.1:{}/{}/{id}/live.m3u8", relay.port, relay.secret),
+        status,
     })
 }
 
 impl Relay {
+    /// Reads the playlist until live segments can start playback, waiting out
+    /// a pre-roll ad. Ends early if the session is dropped.
+    fn prime(&self, session: Weak<Session>) {
+        let started = Instant::now();
+        loop {
+            let Some(session) = session.upgrade() else {
+                return;
+            };
+            let _ = self.refresh(&session);
+            if session.status.ready.load(Ordering::Acquire) {
+                return;
+            }
+            if started.elapsed() > PRIME_FOR {
+                *lock(&session.status.failure) =
+                    Some("Twitch did not send the stream (an ad break ran too long).".into());
+                return;
+            }
+            drop(session);
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+
     fn serve(&self, mut stream: TcpStream) {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
-        let (status, body) = match read_path(&stream).and_then(|path| self.respond(&path)) {
-            Some(body) => ("200 OK", body),
-            None => ("404 Not Found", String::new()),
+        let (status, body) = match read_path(&stream).map(|path| self.respond(&path)) {
+            Some(Some(body)) => ("200 OK", body),
+            Some(None) | None => ("404 Not Found", String::new()),
         };
         let head = format!(
             "HTTP/1.1 {status}\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nCache-Control: no-cache, no-store\r\nConnection: close\r\n\r\n",
@@ -165,23 +255,82 @@ impl Relay {
             .strip_suffix("/live.m3u8")?
             .parse()
             .ok()?;
-        let upstream = self.session(id, |session| session.upstream.clone())?;
-        let text = self.fetch(&upstream).ok()?;
-        let position =
-            self.session(id, |session| !std::mem::replace(&mut session.positioned, true))?;
-        Some(rewrite_media(
-            &text,
-            &upstream,
-            position.then_some(START_CUSHION_SECONDS),
-        ))
+        let session = lock(&self.sessions).get(&id).cloned()?;
+        self.refresh(&session)
     }
 
-    fn session<T>(&self, id: u64, f: impl FnOnce(&mut Session) -> T) -> Option<T> {
-        self.sessions
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_mut(&id)
-            .map(f)
+    /// Reads Twitch's playlist into the session's and renders it. Refreshes
+    /// of one session run one at a time, under its playlist lock.
+    fn refresh(&self, session: &Session) -> Option<String> {
+        let mut playlist = lock(&session.playlist);
+        if let Some((at, body)) = &playlist.cached
+            && at.elapsed() < CACHE_FOR
+        {
+            return Some(body.clone());
+        }
+        let text = self.fetch(&session.upstream).ok()?;
+        let parsed = parse(&text, &session.upstream);
+        session
+            .status
+            .ad_break
+            .store(parsed.segments.last().is_some_and(|s| s.ad), Ordering::Release);
+        if playlist.started {
+            playlist.merge(parsed, &session.status);
+        } else {
+            let keyframes = self.probe_starts(&parsed);
+            if std::env::var_os("VIOLETWIRE_PLAYBACK_LOG").is_some() {
+                eprintln!(
+                    "[relay] start candidates {:?}, key frames {keyframes:?}",
+                    start_candidates(&parsed)
+                );
+            }
+            if !playlist.begin(parsed, &keyframes, &session.status) {
+                return None;
+            }
+            session.status.ready.store(true, Ordering::Release);
+        }
+        let body = playlist.render()?;
+        playlist.cached = Some((Instant::now(), body.clone()));
+        Some(body)
+    }
+
+    /// For the segments a session could start on, whether each opens on a key
+    /// frame, read from their first bytes in parallel.
+    fn probe_starts(&self, parsed: &Parsed) -> HashMap<usize, Option<bool>> {
+        let candidates = start_candidates(parsed);
+        std::thread::scope(|scope| {
+            let probes: Vec<_> = candidates
+                .into_iter()
+                .map(|index| {
+                    let uri = parsed.segments[index].uri.clone();
+                    scope.spawn(move || (index, self.opens_on_keyframe(&uri)))
+                })
+                .collect();
+            probes.into_iter().filter_map(|probe| probe.join().ok()).collect()
+        })
+    }
+
+    fn opens_on_keyframe(&self, uri: &str) -> Option<bool> {
+        let mut response = self
+            .agent
+            .get(uri)
+            .header("Range", format!("bytes=0-{}", PROBE_BYTES - 1))
+            .config()
+            .timeout_global(Some(Duration::from_secs(3)))
+            .build()
+            .call()
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(PROBE_BYTES as usize);
+        response
+            .body_mut()
+            .as_reader()
+            .take(PROBE_BYTES)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        ts::first_frame_is_keyframe(&bytes)
     }
 
     fn fetch(&self, url: &str) -> Result<String> {
@@ -194,6 +343,327 @@ impl Relay {
             .with_config()
             .limit(MAX_PLAYLIST_BYTES)
             .read_to_string()?)
+    }
+}
+
+// ----- Twitch's playlist ------------------------------------------------------
+
+struct ParsedSegment {
+    key: String,
+    /// Tags that travel with the segment (date, length, byte range, key, map).
+    tags: Vec<String>,
+    uri: String,
+    duration: f64,
+    discontinuity: bool,
+    ad: bool,
+}
+
+struct Parsed {
+    segments: Vec<ParsedSegment>,
+    version: u32,
+    media_sequence: Option<u64>,
+    ended: bool,
+}
+
+/// Milliseconds since the epoch for `2026-11-12T10:00:00.123Z`.
+fn date_ms(text: &str) -> Option<f64> {
+    let text = text.trim().trim_matches('"');
+    let seconds = crate::format::unix_from_rfc3339(text)? as f64;
+    let fraction = text
+        .get(19..)
+        .and_then(|rest| rest.strip_prefix('.'))
+        .map(|rest| rest.trim_end_matches('Z'))
+        .and_then(|digits| format!("0.{digits}").parse::<f64>().ok())
+        .unwrap_or(0.);
+    Some((seconds + fraction) * 1000.)
+}
+
+/// `KEY=value,KEY="quoted, value"` attributes.
+fn attributes(list: &str) -> HashMap<String, String> {
+    let mut found = HashMap::new();
+    let mut rest = list;
+    while !rest.is_empty() {
+        let Some((key, after)) = rest.split_once('=') else {
+            break;
+        };
+        let (value, next) = if let Some(quoted) = after.strip_prefix('"') {
+            match quoted.split_once('"') {
+                Some((value, next)) => (value, next.strip_prefix(',').unwrap_or(next)),
+                None => (quoted, ""),
+            }
+        } else {
+            match after.split_once(',') {
+                Some((value, next)) => (value, next),
+                None => (after, ""),
+            }
+        };
+        found.insert(key.trim().to_owned(), value.to_owned());
+        rest = next;
+    }
+    found
+}
+
+/// Stitched-ad date ranges, as (start, end) in milliseconds.
+fn ad_ranges(text: &str) -> Vec<(f64, f64)> {
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("#EXT-X-DATERANGE:"))
+        .filter_map(|list| {
+            let found = attributes(list);
+            let id = found.get("ID").map(String::as_str).unwrap_or_default();
+            let class = found.get("CLASS").map(String::as_str).unwrap_or_default();
+            if class != "twitch-stitched-ad" && !id.starts_with("stitched-ad-") {
+                return None;
+            }
+            let start = date_ms(found.get("START-DATE")?)?;
+            let end = found
+                .get("END-DATE")
+                .and_then(|end| date_ms(end))
+                .or_else(|| {
+                    found
+                        .get("DURATION")
+                        .or_else(|| found.get("PLANNED-DURATION"))
+                        .and_then(|seconds| seconds.parse::<f64>().ok())
+                        .filter(|seconds| *seconds > 0.)
+                        .map(|seconds| start + seconds * 1000.)
+                })
+                .unwrap_or(start);
+            Some((start, end))
+        })
+        .collect()
+}
+
+fn absolute(uri: &str, base: &str) -> String {
+    if uri.starts_with("https://") || uri.starts_with("http://") {
+        return uri.to_owned();
+    }
+    let base = base.split('?').next().unwrap_or(base);
+    match base.rfind('/') {
+        Some(slash) => format!("{}{}", &base[..=slash], uri.trim_start_matches('/')),
+        None => uri.to_owned(),
+    }
+}
+
+fn parse(text: &str, base: &str) -> Parsed {
+    let ads = ad_ranges(text);
+    let mut parsed = Parsed {
+        segments: Vec::new(),
+        version: 3,
+        media_sequence: None,
+        ended: false,
+    };
+    let (mut tags, mut discontinuity) = (Vec::new(), false);
+    let (mut duration, mut title, mut date): (Option<f64>, String, Option<f64>) = (None, String::new(), None);
+    let (mut key_tag, mut map_tag): (Option<String>, Option<String>) = (None, None);
+    let mut byte_range: Option<String> = None;
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if line == "#EXT-X-DISCONTINUITY" {
+            discontinuity = true;
+        } else if line == "#EXT-X-ENDLIST" {
+            parsed.ended = true;
+        } else if let Some(value) = line.strip_prefix("#EXT-X-VERSION:") {
+            parsed.version = value.trim().parse().unwrap_or(3);
+        } else if let Some(value) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
+            parsed.media_sequence = value.trim().parse().ok();
+        } else if let Some(value) = line.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:") {
+            date = date_ms(value);
+            tags.push(line.to_owned());
+        } else if let Some(value) = line.strip_prefix("#EXTINF:") {
+            let (length, name) = value.split_once(',').unwrap_or((value, ""));
+            duration = length.trim().parse().ok();
+            title = name.to_owned();
+            tags.push(line.to_owned());
+        } else if line.starts_with("#EXT-X-BYTERANGE:") {
+            byte_range = Some(line.to_owned());
+            tags.push(line.to_owned());
+        } else if line == "#EXT-X-GAP" {
+            tags.push(line.to_owned());
+        } else if line.starts_with("#EXT-X-KEY:") {
+            key_tag = Some(line.to_owned());
+        } else if line.starts_with("#EXT-X-MAP:") {
+            map_tag = Some(line.to_owned());
+        } else if line.starts_with('#') {
+            // Prefetch hints, date ranges and Twitch's own tags stay behind.
+        } else if let Some(length) = duration.filter(|length| length.is_finite()) {
+            let uri = absolute(line, base);
+            let key = match date {
+                Some(date) => format!("pdt:{date}|{}", byte_range.as_deref().unwrap_or("")),
+                None => format!(
+                    "{}|{}",
+                    uri.split('?').next().unwrap_or(&uri),
+                    byte_range.as_deref().unwrap_or("")
+                ),
+            };
+            let ad = title.contains("Amazon")
+                || date.is_some_and(|date| ads.iter().any(|(start, end)| date >= *start && date < *end));
+            let mut segment_tags: Vec<String> = key_tag.iter().chain(map_tag.iter()).cloned().collect();
+            segment_tags.append(&mut tags);
+            parsed.segments.push(ParsedSegment {
+                key,
+                tags: segment_tags,
+                uri,
+                duration: length,
+                discontinuity,
+                ad,
+            });
+            (discontinuity, duration, date, byte_range) = (false, None, None, None);
+            title.clear();
+        }
+    }
+    parsed
+}
+
+/// The newest segment from which at least the cushion remains, then a few
+/// older ones, all after the last ad.
+fn start_candidates(parsed: &Parsed) -> Vec<usize> {
+    let segments = &parsed.segments;
+    if segments.last().is_none_or(|segment| segment.ad) {
+        return Vec::new();
+    }
+    let first_live = segments
+        .iter()
+        .rposition(|segment| segment.ad)
+        .map_or(0, |ad| ad + 1);
+    let mut index = segments.len();
+    let mut kept = 0.;
+    while index > first_live && kept < START_CUSHION_SECONDS {
+        index -= 1;
+        kept += segments[index].duration.max(0.);
+    }
+    (first_live..=index).rev().take(PROBE_CANDIDATES).collect()
+}
+
+impl Playlist {
+    /// The first read with live content: list from a key-frame start near the
+    /// live edge and remember everything older so it is never added.
+    fn begin(&mut self, parsed: Parsed, keyframes: &HashMap<usize, Option<bool>>, status: &Status) -> bool {
+        let candidates = start_candidates(&parsed);
+        let Some(&nearest) = candidates.first() else {
+            return false;
+        };
+        // The newest candidate known to open on a key frame; failing that, the
+        // nearest one (its first frames may smear until the next key frame).
+        let start = candidates
+            .iter()
+            .copied()
+            .find(|index| keyframes.get(index) == Some(&Some(true)))
+            .unwrap_or(nearest);
+        self.version = parsed.version.max(3);
+        self.ended = parsed.ended;
+        self.next_sequence = parsed.media_sequence.unwrap_or(0) + start as u64;
+        for (index, segment) in parsed.segments.into_iter().enumerate() {
+            if index < start || segment.ad {
+                self.remember(segment.key, u64::MAX);
+                if segment.ad && index >= start {
+                    status.ads_skipped.fetch_add(1, Ordering::AcqRel);
+                }
+                continue;
+            }
+            self.push(segment);
+        }
+        self.started = true;
+        true
+    }
+
+    /// A later read: append new live segments, drop ads, keep identities.
+    fn merge(&mut self, parsed: Parsed, status: &Status) {
+        self.ended = parsed.ended;
+        for segment in parsed.segments {
+            if segment.ad {
+                // Only a new ad (or a listed entry found to be one) marks a
+                // discontinuity; one still in Twitch's window from an earlier
+                // read must not mark the next live segment again.
+                match self.seen.get(&segment.key).copied() {
+                    Some(u64::MAX) => {}
+                    Some(sequence) => {
+                        self.segments.retain(|kept| kept.sequence != sequence);
+                        self.seen.insert(segment.key, u64::MAX);
+                        self.pending_discontinuity = true;
+                    }
+                    None => {
+                        self.remember(segment.key, u64::MAX);
+                        status.ads_skipped.fetch_add(1, Ordering::AcqRel);
+                        self.pending_discontinuity = true;
+                    }
+                }
+                continue;
+            }
+            if let Some(&sequence) = self.seen.get(&segment.key) {
+                // Already known: keep its number, take the newest address.
+                if let Some(kept) = self.segments.iter_mut().find(|kept| kept.sequence == sequence) {
+                    kept.uri = segment.uri;
+                }
+                continue;
+            }
+            self.push(segment);
+        }
+        while self.segments.len() > MAX_SEGMENTS {
+            if self.segments.pop_front().is_some_and(|segment| segment.discontinuity) {
+                self.discontinuity_sequence += 1;
+            }
+        }
+    }
+
+    fn push(&mut self, segment: ParsedSegment) {
+        let sequence = self.next_sequence;
+        self.next_sequence += 1;
+        self.remember(segment.key, sequence);
+        let discontinuity = (segment.discontinuity || self.pending_discontinuity)
+            && !self.segments.is_empty();
+        self.pending_discontinuity = false;
+        self.segments.push_back(Segment {
+            sequence,
+            discontinuity,
+            tags: segment.tags,
+            uri: segment.uri,
+            duration: segment.duration,
+        });
+    }
+
+    fn remember(&mut self, key: String, sequence: u64) {
+        if self.seen.insert(key.clone(), sequence).is_none() {
+            self.seen_order.push_back(key);
+        }
+        while self.seen_order.len() > MAX_SEEN {
+            if let Some(oldest) = self.seen_order.pop_front() {
+                self.seen.remove(&oldest);
+            }
+        }
+    }
+
+    fn render(&self) -> Option<String> {
+        let first = self.segments.front()?;
+        let target = self
+            .segments
+            .iter()
+            .map(|segment| segment.duration.ceil() as u64)
+            .max()
+            .unwrap_or(2)
+            .max(1);
+        let mut out = format!(
+            "#EXTM3U\n#EXT-X-VERSION:{}\n#EXT-X-TARGETDURATION:{target}\n#EXT-X-MEDIA-SEQUENCE:{}\n",
+            self.version, first.sequence
+        );
+        if self.discontinuity_sequence > 0 {
+            out.push_str(&format!(
+                "#EXT-X-DISCONTINUITY-SEQUENCE:{}\n",
+                self.discontinuity_sequence
+            ));
+        }
+        for segment in &self.segments {
+            if segment.discontinuity {
+                out.push_str("#EXT-X-DISCONTINUITY\n");
+            }
+            for tag in &segment.tags {
+                out.push_str(tag);
+                out.push('\n');
+            }
+            out.push_str(&segment.uri);
+            out.push('\n');
+        }
+        if self.ended {
+            out.push_str("#EXT-X-ENDLIST\n");
+        }
+        Some(out)
     }
 }
 
@@ -219,172 +689,128 @@ fn read_path(stream: &TcpStream) -> Option<String> {
     Some(path)
 }
 
-fn absolute(uri: &str, base: &str) -> String {
-    if uri.starts_with("https://") || uri.starts_with("http://") {
-        return uri.to_owned();
-    }
-    let base = base.split('?').next().unwrap_or(base);
-    match base.rfind('/') {
-        Some(slash) => format!("{}{}", &base[..=slash], uri.trim_start_matches('/')),
-        None => uri.to_owned(),
-    }
-}
-
-/// Tags that belong to the segment that follows them.
-fn is_segment_tag(line: &str) -> bool {
-    [
-        "#EXTINF",
-        "#EXT-X-PROGRAM-DATE-TIME",
-        "#EXT-X-DISCONTINUITY",
-        "#EXT-X-DATERANGE",
-        "#EXT-X-BYTERANGE",
-        "#EXT-X-KEY",
-        "#EXT-X-MAP",
-        "#EXT-X-GAP",
-    ]
-    .iter()
-    .any(|tag| line.starts_with(tag))
-}
-
-/// Makes segment URIs absolute, drops Twitch's prefetch hints, declares the
-/// real target duration, and — for the first response only — trims the front
-/// so the newest `cushion` seconds remain, renumbering MEDIA-SEQUENCE and
-/// DISCONTINUITY-SEQUENCE to match.
-fn rewrite_media(text: &str, upstream: &str, cushion: Option<f64>) -> String {
-    let mut header = Vec::new();
-    let mut segments: Vec<(Vec<String>, String, f64)> = Vec::new();
-    let mut pending: Vec<String> = Vec::new();
-    let mut media_sequence: Option<u64> = None;
-    let mut discontinuity_sequence: u64 = 0;
-    let mut in_segments = false;
-    for line in text.lines() {
-        let line = line.trim_end();
-        if line.is_empty() || line.starts_with("#EXT-X-TWITCH-PREFETCH") {
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
-            media_sequence = value.trim().parse().ok();
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("#EXT-X-DISCONTINUITY-SEQUENCE:") {
-            discontinuity_sequence = value.trim().parse().unwrap_or(0);
-            continue;
-        }
-        if line.starts_with("#EXT-X-TARGETDURATION:") {
-            continue;
-        }
-        if line.starts_with('#') {
-            in_segments |= is_segment_tag(line);
-            if in_segments {
-                pending.push(line.to_owned());
-            } else {
-                header.push(line.to_owned());
-            }
-            continue;
-        }
-        let duration = pending
-            .iter()
-            .find_map(|tag| tag.strip_prefix("#EXTINF:"))
-            .and_then(|value| value.split(',').next())
-            .and_then(|value| value.trim().parse::<f64>().ok())
-            .unwrap_or(0.);
-        segments.push((std::mem::take(&mut pending), absolute(line, upstream), duration));
-    }
-    // Tags after the last segment (such as ENDLIST) stay at the end.
-    let trailing = pending;
-
-    let mut keep_from = 0;
-    if let Some(cushion) = cushion {
-        let mut kept = 0.;
-        keep_from = segments.len();
-        while keep_from > 0 && kept < cushion {
-            keep_from -= 1;
-            kept += segments[keep_from].2.max(0.);
-        }
-    }
-    let dropped_discontinuities = segments[..keep_from]
-        .iter()
-        .filter(|(tags, _, _)| tags.iter().any(|tag| tag == "#EXT-X-DISCONTINUITY"))
-        .count() as u64;
-    let target = segments
-        .iter()
-        .map(|(_, _, duration)| duration.ceil() as u64)
-        .max()
-        .unwrap_or(2)
-        .max(1);
-
-    let mut out = String::with_capacity(text.len());
-    let mut lines = header.iter();
-    // #EXTM3U must stay first.
-    if let Some(first) = lines.next() {
-        out.push_str(first);
-        out.push('\n');
-    }
-    out.push_str(&format!("#EXT-X-TARGETDURATION:{target}\n"));
-    for line in lines {
-        out.push_str(line);
-        out.push('\n');
-    }
-    if let Some(sequence) = media_sequence {
-        out.push_str(&format!(
-            "#EXT-X-MEDIA-SEQUENCE:{}\n",
-            sequence + keep_from as u64
-        ));
-    }
-    let discontinuity = discontinuity_sequence + dropped_discontinuities;
-    if discontinuity > 0 {
-        out.push_str(&format!("#EXT-X-DISCONTINUITY-SEQUENCE:{discontinuity}\n"));
-    }
-    for (tags, uri, _) in &segments[keep_from..] {
-        for tag in tags {
-            out.push_str(tag);
-            out.push('\n');
-        }
-        out.push_str(uri);
-        out.push('\n');
-    }
-    for tag in &trailing {
-        out.push_str(tag);
-        out.push('\n');
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:100\n#EXT-X-TWITCH-ELAPSED-SECS:5.0\n\
-#EXT-X-PROGRAM-DATE-TIME:2026-11-12T10:00:00.000Z\n#EXTINF:2.000,live\nhttps://cdn.example/a.ts\n\
-#EXT-X-DISCONTINUITY\n#EXTINF:2.000,live\nhttps://cdn.example/b.ts\n\
-#EXTINF:2.000,live\nseg/c.ts\n\
-#EXTINF:2.000,live\nhttps://cdn.example/d.ts\n\
-#EXTINF:2.000,live\nhttps://cdn.example/e.ts\n\
-#EXT-X-TWITCH-PREFETCH:https://cdn.example/f.ts\n";
-
-    #[test]
-    fn first_response_starts_near_the_live_edge() {
-        let out = rewrite_media(
-            PLAYLIST,
-            "https://up.example/path/index.m3u8?sig=x",
-            Some(6.0),
+    fn playlist(first: u64, segments: &[(&str, &str)]) -> String {
+        let mut text = format!(
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:{first}\n"
         );
-        assert!(out.starts_with("#EXTM3U\n#EXT-X-TARGETDURATION:2\n"));
-        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:102\n"));
-        assert!(out.contains("#EXT-X-DISCONTINUITY-SEQUENCE:1\n"));
-        assert!(!out.contains("a.ts") && !out.contains("b.ts"));
-        assert!(out.contains("https://up.example/path/seg/c.ts"));
-        assert!(out.contains("e.ts"));
-        assert!(!out.contains("PREFETCH") && !out.contains("TARGETDURATION:6"));
+        for (index, (title, extra)) in segments.iter().enumerate() {
+            let n = first + index as u64;
+            text.push_str(extra);
+            text.push_str(&format!(
+                "#EXT-X-PROGRAM-DATE-TIME:2026-11-12T10:00:{:02}.000Z\n#EXTINF:2.000,{title}\nhttps://cdn.example/{n}.ts?sig=x\n",
+                n % 60
+            ));
+        }
+        text.push_str("#EXT-X-TWITCH-PREFETCH:https://cdn.example/next.ts\n");
+        text
+    }
+
+    fn sequences(body: &str) -> (u64, Vec<String>) {
+        let first = body
+            .lines()
+            .find_map(|line| line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let uris = body
+            .lines()
+            .filter(|line| line.starts_with("https://"))
+            .map(|line| line.split('?').next().unwrap().rsplit('/').next().unwrap().to_owned())
+            .collect();
+        (first, uris)
     }
 
     #[test]
-    fn later_responses_keep_the_whole_window() {
-        let out = rewrite_media(PLAYLIST, "https://up.example/index.m3u8", None);
-        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:100\n"));
-        assert!(out.contains("a.ts") && out.contains("#EXT-X-DISCONTINUITY\n"));
-        assert!(!out.contains("DISCONTINUITY-SEQUENCE"));
-        assert!(!out.contains("f.ts"));
+    fn starts_near_the_edge_and_only_ever_moves_forward() {
+        let status = Status::default();
+        let mut list = Playlist::default();
+        let live: Vec<(&str, &str)> = vec![("live", ""); 10];
+        assert!(list.begin(parse(&playlist(100, &live), "https://up/x.m3u8"), &HashMap::new(), &status));
+        let (first, uris) = sequences(&list.render().unwrap());
+        // 5 s of 2 s segments from the end: the last three.
+        assert_eq!(uris, ["107.ts", "108.ts", "109.ts"]);
+        assert_eq!(first, 107);
+        // The next read has the old window plus one more; nothing old returns.
+        list.merge(parse(&playlist(101, &[("live", ""); 10]), "https://up/x.m3u8"), &status);
+        let (first, uris) = sequences(&list.render().unwrap());
+        assert_eq!(first, 107);
+        assert_eq!(uris, ["107.ts", "108.ts", "109.ts", "110.ts"]);
+        let body = list.render().unwrap();
+        assert!(body.contains("#EXT-X-TARGETDURATION:2\n"));
+        assert!(!body.contains("PREFETCH") && !body.contains("next.ts"));
+    }
+
+    #[test]
+    fn prefers_a_key_frame_start() {
+        let status = Status::default();
+        let mut list = Playlist::default();
+        let parsed = parse(&playlist(0, &[("live", ""); 10]), "https://up/x.m3u8");
+        // Candidates are 7, 6, 5, ...; 7 opens mid-GOP, 6 on a key frame.
+        let keyframes = HashMap::from([(7, Some(false)), (6, Some(true)), (5, Some(true))]);
+        list.begin(parsed, &keyframes, &status);
+        let (first, uris) = sequences(&list.render().unwrap());
+        assert_eq!((first, uris.first().map(String::as_str)), (6, Some("6.ts")));
+    }
+
+    #[test]
+    fn drops_ads_and_marks_where_the_stream_resumes() {
+        let status = Status::default();
+        let mut list = Playlist::default();
+        assert!(list.begin(parse(&playlist(0, &[("live", ""); 6]), "https://up/x.m3u8"), &HashMap::new(), &status));
+        let mut next: Vec<(&str, &str)> = vec![("live", ""); 5];
+        next.push(("Amazon|123", ""));
+        next.push(("Amazon|123", ""));
+        next.push(("live", ""));
+        list.merge(parse(&playlist(1, &next), "https://up/x.m3u8"), &status);
+        let body = list.render().unwrap();
+        assert!(!body.contains("6.ts") && !body.contains("7.ts"));
+        assert!(body.contains("#EXT-X-DISCONTINUITY\n#EXT-X-PROGRAM-DATE-TIME:2026-11-12T10:00:08.000Z"));
+        assert_eq!(status.ads_skipped.load(Ordering::Acquire), 2);
+        // Local numbers stay contiguous across the gap.
+        let (first, uris) = sequences(&body);
+        assert_eq!(first, 3);
+        assert_eq!(uris, ["3.ts", "4.ts", "5.ts", "8.ts"]);
+    }
+
+    #[test]
+    fn an_old_ad_still_in_the_window_adds_no_more_discontinuities() {
+        let status = Status::default();
+        let mut list = Playlist::default();
+        let first: Vec<(&str, &str)> = vec![("live", ""); 6];
+        assert!(list.begin(parse(&playlist(0, &first), "https://up/x.m3u8"), &HashMap::new(), &status));
+        let mut next: Vec<(&str, &str)> = vec![("live", ""); 6];
+        next.extend([("Amazon|1", ""), ("live", "")]);
+        list.merge(parse(&playlist(0, &next), "https://up/x.m3u8"), &status);
+        next.push(("live", ""));
+        list.merge(parse(&playlist(0, &next), "https://up/x.m3u8"), &status);
+        let body = list.render().unwrap();
+        assert_eq!(body.matches("#EXT-X-DISCONTINUITY\n").count(), 1);
+    }
+
+    #[test]
+    fn a_pre_roll_keeps_the_session_waiting() {
+        let status = Status::default();
+        let mut list = Playlist::default();
+        let ads: Vec<(&str, &str)> = vec![("Amazon|1", ""); 4];
+        assert!(!list.begin(parse(&playlist(0, &ads), "https://up/x.m3u8"), &HashMap::new(), &status));
+        assert!(list.render().is_none());
+    }
+
+    #[test]
+    fn stitched_ad_date_ranges_mark_segments_as_ads() {
+        let range = "#EXT-X-DATERANGE:ID=\"stitched-ad-1\",CLASS=\"twitch-stitched-ad\",START-DATE=\"2026-11-12T10:00:02.000Z\",DURATION=4.0\n";
+        let parsed = parse(
+            &playlist(0, &[("live", range), ("live", ""), ("live", ""), ("live", "")]),
+            "https://up/x.m3u8",
+        );
+        // The test playlist dates segment n at n seconds: 2 and 3 fall in
+        // the 4-second range starting at 2.
+        let flags: Vec<bool> = parsed.segments.iter().map(|s| s.ad).collect();
+        assert_eq!(flags, [false, false, true, true]);
     }
 
     #[test]
@@ -396,13 +822,6 @@ mod tests {
             sessions: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
         };
-        relay.sessions.lock().unwrap().insert(
-            1,
-            Session {
-                upstream: "https://example.invalid/live.m3u8".into(),
-                positioned: false,
-            },
-        );
         assert!(relay.respond("/wrong/1/live.m3u8").is_none());
         assert!(relay.respond("/abc/2/live.m3u8").is_none());
         assert!(relay.respond("/abc/../1/live.m3u8").is_none());

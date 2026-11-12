@@ -97,6 +97,10 @@ pub struct Root {
     category_input: Entity<crate::input::TextInput>,
     account_menu: bool,
     input_observers: Vec<gpui::Subscription>,
+    /// A short message at the bottom of the window (Electron's notice).
+    notice: Option<SharedString>,
+    notice_task: Option<Task<()>>,
+    clip_task: Option<Task<()>>,
     // A held task is cancelled when it is replaced or dropped.
     auth_task: Option<Task<()>>,
     followed_task: Option<Task<()>>,
@@ -244,6 +248,9 @@ impl Root {
             category_input: cx.new(|cx| crate::input::TextInput::new("Search categories", cx)),
             account_menu: false,
             input_observers: Vec::new(),
+            notice: None,
+            notice_task: None,
+            clip_task: None,
             auth_task: None,
             followed_task: None,
             refresh_task: None,
@@ -409,6 +416,7 @@ impl Root {
         self.refresh_task = None;
         // Dropping the player stops Streamlink and FFmpeg.
         self.playing = None;
+        self.clip_task = None;
         self.message = message.map(|text| SharedString::from(text.to_string()));
         if let Auth::SignedIn(session) = previous {
             let agent = self.agent.clone();
@@ -458,6 +466,60 @@ impl Root {
             _chat_controls: chat_controls,
         });
         cx.notify();
+    }
+
+    /// Shows `text` at the bottom of the window for a few seconds.
+    fn show_notice(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.notice = Some(text.into());
+        self.notice_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_secs(5))
+                .await;
+            this.update(cx, |this, cx| {
+                this.notice = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Clips the live moment with Twitch's official API and opens Twitch's
+    /// editor in the browser, as the Electron client's Clip button does.
+    fn create_clip(&mut self, login: String, cx: &mut Context<Self>) {
+        if self.clip_task.is_some() {
+            return;
+        }
+        let known = self.channel_info(&login).map(|channel| channel.id.clone());
+        let task = self.helix_task(
+            cx,
+            move |helix| {
+                let id = match &known {
+                    Some(id) => id.clone(),
+                    None => helix
+                        .user_id(&login)?
+                        .ok_or_else(|| anyhow!("That channel was not found."))?,
+                };
+                helix.create_clip(&id)
+            },
+            |this, result, cx| {
+                this.clip_task = None;
+                match result {
+                    Ok(url) if crate::twitch::helix::is_clip_editor_url(&url) => {
+                        cx.open_url(&url);
+                        this.show_notice("Clip created. Twitch's editor opened in your browser.", cx);
+                    }
+                    Ok(_) => this.show_notice("Clip created.", cx),
+                    Err(error) => this.show_notice(error, cx),
+                }
+            },
+        );
+        if task.is_some() {
+            self.clip_task = task;
+            self.show_notice("Creating a clip at the current live moment…", cx);
+        } else {
+            self.show_notice("Sign in with Twitch to create clips.", cx);
+        }
     }
 
     fn player_action(&mut self, action: &crate::player::PlayerAction, cx: &mut Context<Self>) {
@@ -1287,6 +1349,24 @@ impl Root {
                             }),
                     ),
             )
+            .when(matches!(self.auth, Auth::SignedIn(_)), |bar| {
+                let login = login.clone();
+                let creating = self.clip_task.is_some();
+                bar.child(
+                    ui::button(
+                        "toolbar-clip",
+                        if compact { "" } else if creating { "Clipping…" } else { "Clip" },
+                        Some(Icon::Scissors),
+                        if creating { ButtonStyle::Disabled } else { ButtonStyle::Ghost },
+                    )
+                    .when(compact, |button| button.w(px(34.)).px_0())
+                    .tooltip(|_, cx| {
+                        cx.new(|_| ui::Tooltip("Create a clip with Twitch's official API".into()))
+                            .into()
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| this.create_clip(login.clone(), cx))),
+                )
+            })
             .child(
                 ui::icon_button(
                     "toolbar-chat",
@@ -1876,6 +1956,31 @@ impl Render for Root {
             .text_size(px(14.))
             .when(!fullscreen, |v| v.child(self.title_bar(window)))
             .child(body)
+            .when_some(self.notice.clone(), |root, notice| {
+                root.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom(px(28.))
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .max_w(px(560.))
+                                .px_4()
+                                .py(px(10.))
+                                .rounded(px(9.))
+                                .border_1()
+                                .border_color(theme::button_border())
+                                .bg(theme::popup())
+                                .shadow_lg()
+                                .text_size(px(13.))
+                                .text_color(theme::text())
+                                .child(notice),
+                        ),
+                )
+            })
             .when(self.settings_open, |v| {
                 v.child(
                     div()
