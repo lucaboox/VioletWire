@@ -11,6 +11,7 @@ import {
   streamlinkPlatformArguments,
 } from "../shared/platform";
 import { getNativeRuntimeAvailability } from "./native-runtime";
+import { StreamlinkWorker } from "./streamlink-worker";
 import {
   redactSensitivePlaybackText,
   spawnStreamlink,
@@ -26,6 +27,16 @@ const MAX_CONCURRENT_PRERESOLVES = 2;
  * dependency and can be used independently by every player surface.
  */
 export class StreamPlaybackResolver {
+  private readonly worker = new StreamlinkWorker();
+  private generation = 0;
+  private disposed = false;
+  private activePrimaryKey: string | null = null;
+  private activePreresolves = 0;
+  private lastToken: string | null | undefined;
+  private readonly streamCache = new Map<
+    string,
+    { expiresAt: number; streams: Promise<Record<string, string>> }
+  >();
   private resolverProcess: ChildProcess | null = null;
   private readonly preresolveProcesses = new Set<ChildProcess>();
   private readonly resolveCache = new Map<
@@ -39,15 +50,63 @@ export class StreamPlaybackResolver {
 
   constructor(
     private readonly getTwitchPlaybackToken: () => string | null,
-    private readonly getKickCookie: () => Promise<string | null> = async () => null,
+    private readonly getKickCookie: () => Promise<string | null> = async () =>
+      null,
   ) {}
+
+  warmup(): void {
+    this.worker.start();
+  }
+
+  private refreshAuthentication(): void {
+    const token = this.getTwitchPlaybackToken();
+    if (token === this.lastToken) return;
+    this.lastToken = token;
+    this.resolveCache.clear();
+    this.qualityCache.clear();
+    this.streamCache.clear();
+  }
+
+  private getWarmStreams(channel: string): Promise<Record<string, string>> {
+    this.refreshAuthentication();
+    const cached = this.streamCache.get(channel);
+    if (cached && cached.expiresAt > Date.now()) return cached.streams;
+    const streams = this.worker.resolve(
+      parseChannelKey(channel).login,
+      this.getTwitchPlaybackToken(),
+    );
+    const entry = { expiresAt: Date.now() + RESOLVE_CACHE_LIFETIME, streams };
+    if (this.streamCache.size >= 32) {
+      const oldest = this.streamCache.keys().next().value;
+      if (oldest !== undefined) this.streamCache.delete(oldest);
+    }
+    this.streamCache.set(channel, entry);
+    streams.catch(() => {
+      if (this.streamCache.get(channel) === entry)
+        this.streamCache.delete(channel);
+    });
+    return streams;
+  }
 
   getAvailability(): NativePlayerAvailability {
     return getNativeRuntimeAvailability();
   }
 
-  getQualities(channel: string): Promise<NativeQuality[]> {
+  async getQualities(channel: string): Promise<NativeQuality[]> {
+    if (this.disposed) return [{ value: "best", label: "Auto" }];
+    this.refreshAuthentication();
+    if (parseChannelKey(channel).platform === "twitch") {
+      try {
+        const streams = await this.getWarmStreams(channel);
+        return parseStreamlinkQualityOutput(
+          `Available streams: ${Object.keys(streams).join(", ")}`,
+        );
+      } catch {
+        /* The existing CLI remains the compatibility path. */
+      }
+    }
     const target = parseChannelKey(channel);
+    if (this.disposed) return [{ value: "best", label: "Auto" }];
     const playbackToken = this.getTwitchPlaybackToken();
     const cacheKey = `${channel}:${playbackToken ? "authenticated" : "anonymous"}`;
     const cached = this.qualityCache.get(cacheKey);
@@ -101,32 +160,47 @@ export class StreamPlaybackResolver {
   }
 
   preresolve(channel: string): void {
+    this.refreshAuthentication();
     if (!this.getAvailability().available) return;
     const key = `${channel.toLowerCase()}:best`;
     const cached = this.resolveCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return;
-    if (this.preresolveProcesses.size >= MAX_CONCURRENT_PRERESOLVES) return;
+    if (this.disposed || this.activePreresolves >= MAX_CONCURRENT_PRERESOLVES)
+      return;
+    this.activePreresolves += 1;
     const url = this.resolveStreamUrl(channel, "best", false);
     this.storeResolvedUrl(key, url);
-    url.catch(() => undefined);
+    void url
+      .finally(() => {
+        this.activePreresolves -= 1;
+      })
+      .catch(() => undefined);
   }
 
   resolve(channel: string, quality: NativeQualityValue): Promise<string> {
+    this.refreshAuthentication();
     const key = `${channel.toLowerCase()}:${quality}`;
     const cached = this.resolveCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.url;
+    this.activePrimaryKey = key;
     const url = this.resolveStreamUrl(channel, quality, true);
     this.storeResolvedUrl(key, url);
     return url;
   }
 
   cancelActiveResolution(): void {
+    this.generation += 1;
+    if (this.activePrimaryKey) this.resolveCache.delete(this.activePrimaryKey);
+    this.activePrimaryKey = null;
     if (!this.resolverProcess) return;
     this.resolverProcess.kill();
     this.resolverProcess = null;
   }
 
   destroy(): void {
+    this.disposed = true;
+    this.worker.destroy();
+    this.streamCache.clear();
     this.cancelActiveResolution();
     for (const process of this.preresolveProcesses) process.kill();
     this.preresolveProcesses.clear();
@@ -147,6 +221,21 @@ export class StreamPlaybackResolver {
     quality: NativeQualityValue,
     trackAsPrimary: boolean,
   ): Promise<string> {
+    if (this.disposed) throw new Error("Stream resolver stopped.");
+    const generation = this.generation;
+    if (parseChannelKey(channel).platform === "twitch") {
+      try {
+        const streams = await this.getWarmStreams(channel);
+        if (trackAsPrimary && generation !== this.generation)
+          throw new Error("Stream resolution cancelled.");
+        const url = streams[quality];
+        if (url) return url;
+      } catch {
+        /* Retry through the established CLI on worker failure. */
+      }
+      if (this.disposed || (trackAsPrimary && generation !== this.generation))
+        throw new Error("Stream resolution cancelled.");
+    }
     const streamlinkPath = this.getAvailability().streamlinkPath;
     if (!streamlinkPath) throw new Error("Streamlink is unavailable.");
     const playbackToken = this.getTwitchPlaybackToken();
@@ -201,7 +290,8 @@ export class StreamPlaybackResolver {
         const details = redactSensitivePlaybackText(errorOutput.trim());
         reject(
           new Error(
-            details || "No playable streams found: the channel appears to be offline.",
+            details ||
+              "No playable streams found: the channel appears to be offline.",
           ),
         );
       };

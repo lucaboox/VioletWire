@@ -24,6 +24,17 @@ function resolveSecureRuntime(): { launcherPath: string; pythonPath: string } | 
     : null;
 }
 
+export function spawnStreamlinkWorker(): ChildProcess | null {
+  // An explicit external runtime selection must keep its existing behavior.
+  if (process.env.VIOLETWIRE_STREAMLINK_PATH || process.env.GLINT_STREAMLINK_PATH) return null;
+  const runtime = resolveSecureRuntime();
+  if (!runtime) return null;
+  return spawn(runtime.pythonPath, [runtime.launcherPath, "--worker"], {
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+}
+
 /** Credentials a Streamlink run may need, none of which may reach its argv. */
 export interface StreamlinkSecrets {
   /** The Twitch website token, sent as Streamlink's Twitch API header. */
