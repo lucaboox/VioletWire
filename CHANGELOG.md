@@ -4,6 +4,40 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+### Fixes
+
+- Streams such as UFDTech no longer load forever or fail in low latency mode.
+  Their broadcasters send a key frame only every eight seconds or so, so some
+  of Twitch's pieces of their video have none, and playback that began in one
+  of those never showed a picture. VioletWire now finds where the key frames
+  are and starts playback on one. If a stream still cannot start, it retries
+  with whole segments, and shows an error instead of loading forever.
+
+- A channel whose broadcaster has a 7TV account but no active emote set no
+  longer reports an error each time its chat loads; it just has no 7TV channel
+  emotes.
+
+- Low-latency playback no longer jumps forward shortly after a stream starts
+  just to remove a small initial delay. Small differences settle gradually.
+
+- Stream loading and ended-stream messages use the channel's known display name
+  immediately, preserving capitalization while fresh stream details load.
+
+### Improvements
+
+- Twitch streams start about two seconds sooner. VioletWire keeps Streamlink
+  running in the background instead of starting it afresh for every stream,
+  and gets the quality list from the same lookup. If the background copy ever
+  fails, or a custom Streamlink is set, streams start the way they did before.
+
+- On launch, your followed channels appear straight away as they were last
+  time while the fresh list loads, and settings and sign-in load side by side.
+
+- The window's minimize, maximize and close buttons are now VioletWire's own,
+  matching its theme (OLED included), so tooltips near the top of the window
+  are no longer hidden behind them. Tooltips also measure themselves to stay
+  inside the window.
+
 ## [0.3.4-alpha.24] - 2026-10-23
 
 ### Fixes

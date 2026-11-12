@@ -821,35 +821,6 @@ function destroyPlayer(invalidatePendingOpen = true): void {
   updateThumbnailToolbar();
 }
 
-// Matches the renderer's .titlebar strip, which sits above the top bar and
-// holds the native caption buttons. Keep the two in step.
-const TITLE_BAR_HEIGHT = 30;
-// The strip is border-box, so its bottom border is the last pixel of that
-// height. The system paints the caption buttons over the full overlay height,
-// which would cover the border and leave the divider stopping short of the
-// window edge, so the overlay stops one pixel above it.
-const TITLE_BAR_BORDER = 1;
-
-function titleBarOverlayOptions(oledMode: boolean): {
-  color: string;
-  symbolColor: string;
-  height: number;
-} {
-  return {
-    // Keep these in step with .titlebar and .oled-mode .titlebar in styles.css.
-    color: oledMode ? "#000000" : "#121216",
-    symbolColor: "#d4d4d8",
-    height: TITLE_BAR_HEIGHT - TITLE_BAR_BORDER,
-  };
-}
-
-function applyTitleBarTheme(oledMode: boolean): void {
-  // setTitleBarOverlay is Windows and Linux only.
-  if (process.platform === "darwin") return;
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.setTitleBarOverlay(titleBarOverlayOptions(oledMode));
-}
-
 function restoredMainWindowBounds(): Rectangle | null {
   const preferences = preferencesService.get();
   if (preferences.windowX === null || preferences.windowY === null) return null;
@@ -934,13 +905,9 @@ async function createWindow(): Promise<void> {
     title: "VioletWire",
     icon: applicationIcon,
     autoHideMenuBar: true,
-    // Hide the system title bar but keep the real caption buttons, so the top
-    // bar doubles as the title bar and the buttons still get Snap Layouts,
-    // tooltips, and correct hit-testing. A fully custom frame would lose those.
-    titleBarStyle: "hidden",
-    // Preferences are initialized before this runs, so OLED mode is applied on
-    // the first paint rather than flashing the lighter colour first.
-    titleBarOverlay: titleBarOverlayOptions(preferencesService.get().oledMode),
+    // React owns the caption buttons so page tooltips can render above them.
+    // The CSS drag region retains native dragging and double-click maximize.
+    frame: false,
     webPreferences: {
       preload: path.join(currentDirectory, "../preload/index.cjs"),
       partition: APP_UI_PARTITION,
@@ -1038,8 +1005,14 @@ async function createWindow(): Promise<void> {
   mainWindow.on("resized", () => {
     persistWindowState();
   });
-  mainWindow.on("maximize", () => persistWindowState(true));
-  mainWindow.on("unmaximize", () => persistWindowState(true));
+  mainWindow.on("maximize", () => {
+    persistWindowState(true);
+    sendToWindow(createdWindow, "window:maximized-changed", true);
+  });
+  mainWindow.on("unmaximize", () => {
+    persistWindowState(true);
+    sendToWindow(createdWindow, "window:maximized-changed", false);
+  });
   mainWindow.on("focus", () => updateThumbnailToolbar());
 
   await loadRendererView(mainWindow);
@@ -1266,6 +1239,16 @@ onTrusted("native-controls:action", (_event, input: unknown) => {
   if (!result.success) return;
   sendToWindow(mainWindow, "native-controls:action", result.data);
 });
+
+handleTrusted("window:minimize", () => { mainWindow?.minimize(); });
+handleTrusted("window:toggle-maximize", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
+  return mainWindow.isMaximized();
+});
+handleTrusted("window:get-maximized", () => mainWindow?.isMaximized() ?? false);
+handleTrusted("window:close", () => { mainWindow?.close(); });
 
 handleTrusted("window:set-fullscreen", (_event, fullscreen: unknown) => {
   if (!mainWindow || typeof fullscreen !== "boolean") return false;
@@ -1583,9 +1566,6 @@ handleTrusted("preferences:get-or-migrate", (_event, legacyPreferences: unknown)
 );
 handleTrusted("preferences:update", async (_event, patch: unknown) => {
   const preferences = await preferencesService.update(patch);
-  // The caption buttons are drawn by the system, so OLED mode has to be pushed
-  // to them explicitly or the top bar goes black around light grey buttons.
-  applyTitleBarTheme(preferences.oledMode);
   sendToChatSurfaces("preferences:changed", preferences);
   return preferences;
 });
@@ -1596,7 +1576,12 @@ app.whenReady().then(async () => {
   // menu also prevents Windows from revealing File/Edit/View when Alt is used
   // for emote-picker shortcuts.
   Menu.setApplicationMenu(null);
-  await preferencesService.initialize();
+  streamPlaybackResolver.warmup();
+  await Promise.all([
+    preferencesService.initialize(),
+    playbackSessionService.initialize(),
+    twitchService.initialize(),
+  ]);
   applyHttpCachePolicy(session.fromPartition(APP_UI_PARTITION));
   enforceHttpCacheLimit(session.fromPartition(APP_UI_PARTITION));
   try {
@@ -1610,8 +1595,6 @@ app.whenReady().then(async () => {
     // Playback remains functional through FilteredHlsRelay's localhost media
     // endpoint if a platform-specific Electron build cannot host the scheme.
   }
-  await playbackSessionService.initialize();
-  await twitchService.initialize();
   await createWindow();
   updateService.initialize();
   app.on("activate", async () => {
@@ -1624,5 +1607,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  streamPlaybackResolver.destroy();
   void hlsMediaProtocol.close();
 });

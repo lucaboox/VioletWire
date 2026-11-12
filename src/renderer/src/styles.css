@@ -102,19 +102,22 @@ main { position: relative; min-width: 0; height: 100%; overflow: hidden; }
    content that overlaps it — notably the sticky .browse-category-header (12) —
    while staying under modals, the mini player, menus, and tooltips. */
 .topbar { position: relative; z-index: 50; display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 520px) minmax(0, 1fr); align-items: center; gap: 22px; height: 68px; padding: 0 24px; border-bottom: 1px solid #202024; background: #0d0d10f2; }
-/* Our own title bar strip, in place of the system one. The native caption
-   buttons are drawn into the right end of it, so reserve their width;
-   env() is exact and the fallback covers the usual three 46px buttons. */
-.titlebar { grid-column: 1 / -1; z-index: 60; display: flex; align-items: center; gap: 8px; height: var(--titlebar-height); padding-left: 19px; padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 138px))); border-bottom: 1px solid #202024; background: #121216; -webkit-app-region: drag; }
+/* Native dragging and double-click maximize, with React caption buttons. */
+.titlebar { grid-column: 1 / -1; z-index: 60; display: flex; align-items: center; gap: 8px; height: var(--titlebar-height); padding-left: 19px; border-bottom: 1px solid #202024; background: #121216; -webkit-app-region: drag; user-select: none; }
+.window-controls { display: flex; align-self: stretch; flex-shrink: 0; margin-left: auto; -webkit-app-region: no-drag; }
+.window-controls button { display: grid; width: 46px; height: 100%; padding: 0; place-items: center; border: 0; border-radius: 0; color: #d4d4d8; background: transparent; transition: background 100ms, color 100ms; }
+.window-controls button:hover { color: #fff; background: #ffffff16; }
+.window-controls button:active { background: #ffffff24; }
+.window-controls .window-close:hover { color: #fff; background: #c42b1c; }
+.window-controls .window-close:active { background: #a82016; }
+.window-controls button:focus-visible { outline: 2px solid #a78bfa; outline-offset: -3px; }
 /* A channel name can be long, so it truncates rather than pushing into the
    space reserved for the caption buttons. */
 .titlebar-title { min-width: 0; overflow: hidden; color: #e4e4e7; font-weight: 600; font-size: 12px; letter-spacing: .2px; text-overflow: ellipsis; white-space: nowrap; }
 /* Anything added here later must opt out of the drag region to stay clickable. */
 .titlebar button, .titlebar input, .titlebar a, .titlebar select { -webkit-app-region: no-drag; }
 .oled-mode .titlebar { background: #000; }
-/* Real fullscreen hides the caption buttons, so the strip goes with them.
-   Theater keeps it: it is window chrome, and hiding it would leave the system
-   buttons floating over the video with nothing behind them. */
+/* Fullscreen hides the title bar and controls together; theater retains them. */
 .app-shell.fullscreen-mode .titlebar { display: none; }
 .top-navigation { justify-self: start; display: flex; align-items: center; gap: 3px; }
 .top-nav-item { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 12px; border: 0; border-radius: 8px; color: #8f8f99; background: transparent; cursor: pointer; font-size: 14px; font-weight: 650; }
@@ -985,11 +988,7 @@ h1 em { color: #a78bfa; font-style: normal; font-weight: 420; }
   7%, 88% { opacity: 1; transform: translate(-50%, 0) scale(1); }
   100% { opacity: 0; transform: translate(-50%, -4px) scale(.99); }
 }
-/* These two cover the whole window, including the title bar strip. The caption
-   buttons are drawn by the system above the page, so backdrop-filter cannot
-   reach them and a blur leaves them sitting in a sharp rectangle in the middle
-   of the blurred field. Dim instead, a little deeper to make up for the lost
-   blur, which the undimmed buttons sit against far less noticeably. */
+/* Modal backdrops dim the whole window, including the custom caption buttons. */
 .modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506d0; }
 .settings-modal-backdrop { position: fixed; z-index: 950; inset: 0; display: grid; place-items: center; padding: 24px; background: #050506d0; }
 .settings-modal-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(980px, calc(100vw - 48px)); height: min(780px, calc(100vh - 48px)); max-height: min(860px, calc(100vh - 48px)); overflow: hidden; border: 1px solid #44364f; border-radius: 16px; background: #111114f8; box-shadow: 0 34px 100px #000e; }

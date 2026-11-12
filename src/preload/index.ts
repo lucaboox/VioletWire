@@ -34,6 +34,17 @@ import type {
 } from "../shared/preferences";
 
 const api: DesktopApi = {
+  windowControls: {
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
+    close: () => ipcRenderer.invoke("window:close"),
+    getMaximized: () => ipcRenderer.invoke("window:get-maximized"),
+    onMaximizedChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, maximized: boolean) => listener(maximized);
+      ipcRenderer.on("window:maximized-changed", handler);
+      return () => ipcRenderer.removeListener("window:maximized-changed", handler);
+    },
+  },
   system: {
     openExternal: (url: string) => ipcRenderer.invoke("system:open-external", url),
     getLinkPreview: (url: string, allowGeneric = false) =>

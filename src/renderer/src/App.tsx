@@ -10,6 +10,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { readFollowedCache, saveFollowedCache, clearFollowedCache } from "./followed-cache";
+import { WindowControls } from "./WindowControls";
 import {
   ArrowDown,
   Clock,
@@ -711,6 +713,7 @@ export function App() {
     useState<TwitchDeviceAuthorization | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [followedChannels, setFollowedChannels] = useState<FollowedChannel[]>([]);
+  const followedAccountIdRef = useRef<string | null>(null);
   const [favoriteChannels, setFavoriteChannels] = useState<Set<string>>(new Set());
   const [channelMenu, setChannelMenu] = useState<{
     login: string;
@@ -1946,9 +1949,29 @@ export function App() {
     updateStatus.state,
   ]);
 
+  const followedAccountId = authState.status === "signed-in" ? authState.account.id : null;
+  const loadFollowedChannels = useCallback(async (options?: { silent?: boolean }) => {
+    try {
+      const accountId = followedAccountId;
+      const channels = await window.desktop.twitch.getFollowedChannels();
+      if (followedAccountIdRef.current !== accountId) return;
+      setFollowedChannels(channels);
+      if (accountId) saveFollowedCache(window.localStorage, accountId, channels);
+    } catch (reason) {
+      if (options?.silent) return;
+      setNotice(reason instanceof Error ? reason.message : "Unable to load followed channels.");
+    }
+  }, [followedAccountId]);
+
   useEffect(() => {
-    if (authState.status !== "signed-in") return;
-    void loadFollowedChannels();
+    followedAccountIdRef.current = followedAccountId;
+    if (!followedAccountId) return;
+    void Promise.resolve().then(() => {
+      if (followedAccountIdRef.current === followedAccountId) {
+        setFollowedChannels(readFollowedCache(window.localStorage, followedAccountId));
+        void loadFollowedChannels();
+      }
+    });
     // Keep the followed sidebar and home grid current: channels go live and
     // offline all the time. Background failures stay silent — a transient
     // refresh error must not surface a notice every minute.
@@ -1966,7 +1989,7 @@ export function App() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refreshOnReturn);
     };
-  }, [authState.status]);
+  }, [followedAccountId, loadFollowedChannels]);
 
   useEffect(() => {
     const query = channelInput.trim();
@@ -2498,15 +2521,6 @@ export function App() {
     }
   }
 
-  async function loadFollowedChannels(options?: { silent?: boolean }) {
-    try {
-      setFollowedChannels(await window.desktop.twitch.getFollowedChannels());
-    } catch (reason) {
-      if (options?.silent) return;
-      setNotice(reason instanceof Error ? reason.message : "Unable to load followed channels.");
-    }
-  }
-
   async function loadBrowseCategories(query: string, append: boolean) {
     // Kick's directory needs no account; Twitch's needs its API session.
     if (browsePlatform === "twitch" && authState.status !== "signed-in") return;
@@ -2640,9 +2654,11 @@ export function App() {
   }
 
   async function signOut() {
+    followedAccountIdRef.current = null;
     setAuthBusy(true);
     try {
       setAuthState(await window.desktop.twitch.signOut());
+      clearFollowedCache(window.localStorage);
       setFollowedChannels([]);
       setStreamMetadata(null);
       setNotice("Signed out and removed saved Twitch credentials.");
@@ -3402,11 +3418,10 @@ export function App() {
           {notice}
         </div>
       )}
-      {/* Our own title bar. The window is frameless apart from the native
-          caption buttons, which the system draws into the reserved space on
-          the right, so anything added here goes to the left of them. */}
+      {/* Caption buttons share the page's stacking order with its tooltips. */}
       <div className="titlebar">
         <span className="titlebar-title">{locationLabel}</span>
+        <WindowControls />
       </div>
 
       {activeChannel && activeMode === "native" && (
@@ -4665,7 +4680,7 @@ export function App() {
                       )}
                       <strong>
                         {nativeStreamOffline
-                          ? `${streamMetadata?.displayName ?? activeChannel} has ended the stream`
+                          ? `${activeChannelDisplayName} has ended the stream`
                           : nativeState.error === "Stream is offline."
                             ? "Stream offline"
                             : nativeState.status === "error"
@@ -4673,7 +4688,7 @@ export function App() {
                               : nativeState.transition?.kind === "quality"
                                 ? `Switching to ${formatQualityLabel(nativeState.transition.detail as NativeQualityValue)}`
                                 : nativeState.transition?.kind === "channel"
-                                  ? `Loading ${streamMetadata?.displayName ?? activeChannel}`
+                                  ? `Loading ${activeChannelDisplayName}`
                                   : "Starting native player"}
                       </strong>
                       <p>

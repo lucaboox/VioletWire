@@ -85,11 +85,14 @@ const PARTS_STABLE_TARGET_LATENCY = 3.5;
 /** A parts stream this far behind its target jumps back rather than catching up. */
 const PARTS_RESYNC_DISTANCE = 3;
 /**
- * Just after a parts stream starts, how far behind its target it may be before
- * it jumps straight there rather than catching up, and for how long.
+ * How far past its target a parts stream may fall before hls.js itself jumps
+ * back to the target. Not every stream can start near it: one with a key frame
+ * only every eight seconds starts at the last key frame (the relay names it),
+ * up to ten seconds back, and a jump from there before anything has played
+ * lands where there is no key frame and no picture. The player's own catch-up
+ * and resync (PARTS_RESYNC_DISTANCE) close that distance once playing.
  */
-const START_JUMP_DISTANCE = 0.4;
-const START_JUMP_WINDOW_MS = 8_000;
+const PARTS_MAX_LATENCY_MARGIN = 12;
 /** How long a parts stream plays without stalling before it gives back cushion, and how much. */
 const CUSHION_RELAX_INTERVAL_MS = 60_000;
 const CUSHION_RELAX_STEP = 0.5;
@@ -243,6 +246,8 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     const parts = source.lowLatencyParts;
 
     let disposed = false;
+    let hasPlayed = false;
+    let startupFailed = false;
     let recoveryTimer: number | null = null;
     // hls.js's bandwidthEstimate measures downloads from VioletWire's local
     // relay, which is loopback throughput rather than the encoded stream rate.
@@ -266,8 +271,6 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     // target distance from live, and a smoothed reading of that distance.
     let steering: -1 | 0 | 1 = 0;
     let smoothedLatency: number | null = null;
-    // Until when, once playback first settles, it may jump to its target.
-    let startJumpUntil: number | null = null;
     const appendedFragmentBytes = new Map<
       string,
       { bytes: number; duration: number }
@@ -331,6 +334,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       status: "playing" | "stopped" | "error",
       error?: string,
       includeStats = false,
+      requestWholeSegments = false,
     ) => {
       if (disposed) return;
       const edge = liveEdge(video);
@@ -356,6 +360,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
           edge !== null &&
           latency > targetLatency + Math.max(2.5, targetLatency * 0.75),
         error,
+        requestWholeSegments,
         stats: includeStats
           ? {
               ...playbackStats(
@@ -491,7 +496,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       // the newest whole fragment, so it can be much shorter for the same
       // safety margin. Without them, whole two-second fragments set the pace.
       liveSyncDuration: parts ? PARTS_TARGET_LATENCY : lowLatency ? 4 : 6,
-      liveMaxLatencyDuration: parts ? PARTS_TARGET_LATENCY + 6 : lowLatency ? 10 : 14,
+      liveMaxLatencyDuration: parts ? PARTS_TARGET_LATENCY + PARTS_MAX_LATENCY_MARGIN : lowLatency ? 10 : 14,
       // Start at the low-latency target, then trade some of it for stability
       // only after hls.js observes a real playback stall (hls.js caps the
       // total at one target duration). This gives high-bitrate 1440p streams
@@ -519,7 +524,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         // Parts arrive as they are written, so a high bitrate no longer means
         // waiting on large downloads; only repeated stalls call for this, and
         // a second and a half more cushion rather than whole fragments.
-        player.config.liveMaxLatencyDuration = PARTS_STABLE_TARGET_LATENCY + 6;
+        player.config.liveMaxLatencyDuration = PARTS_STABLE_TARGET_LATENCY + PARTS_MAX_LATENCY_MARGIN;
         player.targetLatency = PARTS_STABLE_TARGET_LATENCY;
         return;
       }
@@ -589,8 +594,19 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
             : measuredBitrate;
       }
     });
+    const failStartup = () => {
+      if (disposed || hasPlayed || startupFailed || !playbackRequested) return;
+      startupFailed = true;
+      if (recoveryTimer !== null) window.clearTimeout(recoveryTimer);
+      recoveryTimer = null;
+      video.pause();
+      player.stopLoad();
+      report("error", parts
+        ? "Low-latency startup failed; retrying with whole segments."
+        : "The stream did not produce playable video. Try another quality or Retry.", true, parts);
+    };
     player.on(Events.ERROR, (_event, data) => {
-      if (disposed) return;
+      if (disposed || startupFailed) return;
       // Messages can quote signed media URLs; the stats never show those.
       const message = data.error?.message.replace(/https?:\/\/\S+/g, "(media URL)").slice(0, 120);
       lastPlayerError = `${data.details}${data.fatal ? " (fatal)" : ""}${message ? `: ${message}` : ""}`;
@@ -603,11 +619,15 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         }
       }
       if (!data.fatal) return;
+      if (data.type === ErrorTypes.MEDIA_ERROR && !hasPlayed) {
+        failStartup();
+        return;
+      }
       if (data.type === ErrorTypes.NETWORK_ERROR) {
         if (recoveryTimer !== null) window.clearTimeout(recoveryTimer);
         recoveryTimer = window.setTimeout(() => {
           recoveryTimer = null;
-          if (!disposed) player.loadSource(source.playlistUrl);
+          if (!disposed && !startupFailed) player.loadSource(source.playlistUrl);
         }, 1_000);
         return;
       }
@@ -628,14 +648,18 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
       revealFreshPlaybackFrame(video.currentTime);
     };
     const onPlaying = () => {
+      if (startupFailed) return;
       if (!playbackRequested) {
         video.pause();
         showPausedFrame();
         return;
       }
+      hasPlayed = true;
+      window.clearTimeout(startupTimer);
       report("playing");
     };
     const onPause = () => {
+      if (startupFailed) return;
       if (document.pictureInPictureElement === video && playbackRequested) {
         // Likewise, pausing from the legacy browser PiP window bypasses the
         // command handler. The custom VioletWire PiP controls use the normal
@@ -651,6 +675,9 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     video.addEventListener("playing", onPlaying);
     video.addEventListener("pause", onPause);
     video.addEventListener("ended", onEnded);
+    // Some stream/parts combinations keep retrying without a fatal error.
+    // Bound the loading screen and retry once with a new whole-segment decoder.
+    const startupTimer = window.setTimeout(failStartup, parts ? 12_000 : 25_000);
 
     const setSteering = (next: -1 | 0 | 1) => {
       steering = next;
@@ -690,7 +717,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         if (relaxed <= PARTS_TARGET_LATENCY) {
           stabilityProfile = false;
           recentStalls = 0;
-          player.config.liveMaxLatencyDuration = PARTS_TARGET_LATENCY + 6;
+          player.config.liveMaxLatencyDuration = PARTS_TARGET_LATENCY + PARTS_MAX_LATENCY_MARGIN;
         }
       }
       smoothedLatency =
@@ -705,21 +732,9 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
         return;
       }
       const ahead = forwardBuffer(video);
-      if (startJumpUntil === null) startJumpUntil = performance.now() + START_JUMP_WINDOW_MS;
-      if (performance.now() < startJumpUntil && distance > START_JUMP_DISTANCE) {
-        // Playback starts at a key frame, which can be a second or more
-        // earlier than the target; closing that at a few percent takes most
-        // of a minute. Just after the first frame, one jump to the target
-        // within what is already buffered goes unnoticed.
-        const sync = player.liveSyncPosition;
-        if (sync !== null && sync > video.currentTime && sync < video.currentTime + ahead - 0.5) {
-          startJumpUntil = 0;
-          smoothedLatency = null;
-          setSteering(0);
-          video.currentTime = sync;
-          return;
-        }
-      }
+      // Initial playback can begin a little behind the target at a key frame.
+      // Close that small gap gradually too: seeking after playback has become
+      // visible skips content and sounds like a sudden fast-forward.
       let next = steering;
       if (steering === 1 && (distance < 0.1 || ahead < 1)) next = 0;
       else if (steering === -1 && distance > -0.1) next = 0;
@@ -732,7 +747,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
     const steerTimer = parts ? window.setInterval(steerLatency, 250) : null;
 
     const statsTimer = window.setInterval(() => {
-      if (disposed || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      if (disposed || startupFailed || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
       const now = performance.now();
       const currentFrames =
         video.getVideoPlaybackQuality?.().totalVideoFrames ??
@@ -748,6 +763,7 @@ export function HlsNativeVideo({ state, target = "main" }: HlsNativeVideoProps) 
 
     return () => {
       disposed = true;
+      window.clearTimeout(startupTimer);
       if (recoveryTimer !== null) window.clearTimeout(recoveryTimer);
       window.clearInterval(statsTimer);
       if (steerTimer !== null) window.clearInterval(steerTimer);

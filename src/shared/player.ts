@@ -212,6 +212,7 @@ export const nativeHlsStateReportSchema = z.object({
   volume: z.number().min(0).max(100),
   behindLive: z.boolean(),
   error: z.string().max(500).optional(),
+  requestWholeSegments: z.boolean().optional(),
   stats: z.record(z.string(), z.string()).optional(),
 });
 
@@ -236,6 +237,13 @@ export interface MultiStreamTileState extends MultiStreamTile {
 }
 
 export interface DesktopApi {
+  windowControls: {
+    minimize(): Promise<void>;
+    toggleMaximize(): Promise<boolean>;
+    close(): Promise<void>;
+    getMaximized(): Promise<boolean>;
+    onMaximizedChanged(listener: (maximized: boolean) => void): () => void;
+  };
   system: {
     openExternal(url: string): Promise<void>;
     getLinkPreview(url: string, allowGeneric?: boolean): Promise<LinkPreview | null>;

@@ -14,6 +14,8 @@ import type { HlsMediaTransport } from "./hls-media-transport";
 type StartResult = { ok: true } | { ok: false; reason: string };
 
 export class HlsNativePlayer {
+  private channel: string | null = null;
+  private wholeSegmentChannel: string | null = null;
   private generation = 0;
   private relay: FilteredHlsRelay | null = null;
   private stats: Record<string, string> | null = null;
@@ -48,6 +50,8 @@ export class HlsNativePlayer {
     quality: NativeQualityValue,
     transition?: NativePlayerTransition,
   ): Promise<StartResult> {
+    if (channel !== this.channel) this.wholeSegmentChannel = null;
+    this.channel = channel;
     const generation = ++this.generation;
     this.cancelPlaybackResolution();
     await this.closeRelay();
@@ -78,7 +82,7 @@ export class HlsNativePlayer {
       // In low-latency mode the relay reads the fragment Twitch is still
       // writing and publishes it a part at a time as LL-HLS, about two
       // seconds closer to live than waiting for each fragment to finish.
-      const lowLatencyParts = target.platform === "twitch" && latencyMode === "ultra-low";
+      const lowLatencyParts = target.platform === "twitch" && latencyMode === "ultra-low" && this.wholeSegmentChannel !== channel;
       const relay = new FilteredHlsRelay(
         this.getRendererOrigin,
         target.platform,
@@ -108,6 +112,7 @@ export class HlsNativePlayer {
               ? "Chromium protocol stream"
               : "Localhost compatibility relay",
         Protocol: lowLatencyParts ? "Filtered LL-HLS (parts)" : "Filtered HLS",
+        ...(this.wholeSegmentChannel === channel ? { "Playback compatibility": "Whole segments after parts startup failed" } : {}),
       };
       this.updateState({
         hlsSource: {
@@ -174,7 +179,14 @@ export class HlsNativePlayer {
     ) {
       return;
     }
-    if (report.stats) this.stats = { ...report.stats };
+    if (report.stats) this.stats = { ...this.stats, ...report.stats };
+    if (report.requestWholeSegments && this.state.hlsSource?.lowLatencyParts && this.channel && this.wholeSegmentChannel !== this.channel) {
+      this.wholeSegmentChannel = this.channel;
+      // start() retires the failing relay and creates a fresh media session.
+      // Late reports from the old decoder cannot affect its replacement.
+      void this.start(this.channel, this.state.quality, this.state.transition);
+      return;
+    }
     const nextVolume = Math.round(report.volume);
     if (!report.muted && nextVolume > 0) {
       this.lastAudibleVolume = nextVolume;
