@@ -1584,7 +1584,10 @@ impl Root {
                     .rounded(px(11.))
                     .border_1()
                     .border_color(rgba(0xffffff1a))
-                    .child(playing.chat.clone()),
+                    .child(gpui::AnyView::from(playing.chat.clone())
+                            // Re-laid out only when chat changes, not on every
+                            // video frame the player draws.
+                            .cached(gpui::StyleRefinement::default().size_full())),
             );
         }
         let player = div()
@@ -1612,7 +1615,10 @@ impl Root {
                         .min_w(px(330.))
                         .h_full()
                         .flex_none()
-                        .child(playing.chat.clone()),
+                        .child(gpui::AnyView::from(playing.chat.clone())
+                            // Re-laid out only when chat changes, not on every
+                            // video frame the player draws.
+                            .cached(gpui::StyleRefinement::default().size_full())),
                 )
             })
             .into_any_element()
@@ -1950,6 +1956,7 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _timer = crate::render_stats::start("root");
         if self.hwnd.is_none()
             && let Ok(handle) = wry::raw_window_handle::HasWindowHandle::window_handle(window)
             && let wry::raw_window_handle::RawWindowHandle::Win32(handle) = handle.as_raw()

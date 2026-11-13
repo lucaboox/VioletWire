@@ -40,9 +40,9 @@ const FIRST_FRAME_GRACE: Duration = Duration::from_secs(12);
 const MAX_RECONNECTS: u32 = 3;
 /// How far behind the newest media playback sits: where the relay starts it,
 /// where "Return to live" seeks to, and where a drift catch-up lands.
-pub const LIVE_CUSHION_SECONDS: f64 = super::relay::START_CUSHION_SECONDS;
 /// Drifting this far past the cushion for this long triggers a catch-up.
 const DRIFT_SECONDS: f64 = 6.0;
+
 const DRIFT_FOR: Duration = Duration::from_secs(5);
 /// A lookup that has not answered by now has failed.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(25);
@@ -631,18 +631,19 @@ impl GpuPlayback {
                 )
             };
             eprintln!(
-                "[playback] t={:.1} current={current:.2} seekable={seekable:?} latency={:.2}s buffer={:?} frames={} live_seeks={}",
+                "[playback] t={:.1} fps={:.1} current={current:.2} seekable={seekable:?} latency={:.2}s buffer={:?} frames={} live_seeks={}",
                 self.started.elapsed().as_secs_f64(),
+                self.measured_fps(),
                 latency,
                 timing.buffer.map(|b| (b * 100.).round() / 100.),
                 self.frames,
                 self.live_seeks,
             );
         }
-        if latency > LIVE_CUSHION_SECONDS + DRIFT_SECONDS {
+        if latency > super::relay::cushion() + DRIFT_SECONDS {
             let since = *self.drifting_since.get_or_insert(now);
             if now.duration_since(since) > DRIFT_FOR {
-                engine.seek_to(LIVE_CUSHION_SECONDS);
+                engine.seek_to(super::relay::cushion());
                 self.live_seeks += 1;
                 self.drifting_since = None;
             }
@@ -820,7 +821,7 @@ impl Engine {
     }
 
     fn seek_to_live(&self) {
-        self.seek_to(LIVE_CUSHION_SECONDS);
+        self.seek_to(super::relay::cushion());
     }
 
     /// Seeks to `behind` seconds before the newest media.

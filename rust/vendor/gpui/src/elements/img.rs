@@ -364,7 +364,17 @@ impl Element for Img {
                             }
 
                             if global_id.is_some() && data.frame_count() > 1 {
-                                window.request_animation_frame();
+                                // VioletWire patch: redraw when this image's next
+                                // frame is due, not on every display frame.
+                                let due = state.as_ref().and_then(|state| {
+                                    state.last_frame_time.map(|at| {
+                                        at + Duration::from(data.delay(state.frame_index))
+                                    })
+                                });
+                                window.request_animation_frame_at(
+                                    due.unwrap_or_else(Instant::now),
+                                    cx,
+                                );
                             }
                         }
                         Some(_err) => {

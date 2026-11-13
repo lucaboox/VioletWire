@@ -1064,10 +1064,23 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                let started = std::time::Instant::now();
+                                let _frame = std::env::var_os("VIOLETWIRE_FRAME_LOG").map(|_| ());
                                 let arena_clear_needed = window.draw(cx);
+                                let drawn = started.elapsed();
                                 window.present();
                                 // drop the arena elements after present to reduce latency
                                 arena_clear_needed.clear();
+                                // VioletWire debug aid: slow frames drop video frames.
+                                if started.elapsed() > std::time::Duration::from_millis(12)
+                                    && std::env::var_os("VIOLETWIRE_FRAME_LOG").is_some()
+                                {
+                                    eprintln!(
+                                        "[frame] draw {:.1} ms, present {:.1} ms",
+                                        drawn.as_secs_f64() * 1000.,
+                                        (started.elapsed() - drawn).as_secs_f64() * 1000.
+                                    );
+                                }
                             })
                             .log_err();
                     })
@@ -1673,6 +1686,53 @@ impl Window {
     pub fn request_animation_frame(&self) {
         let entity = self.current_view();
         self.on_next_frame(move |_, cx| cx.notify(entity));
+    }
+
+    /// VioletWire patch: redraw the current view once an animation's next frame
+    /// is due. Due times are rounded up to a shared 1/30 s grid and coalesced
+    /// per view, so a chat full of animated emotes is laid out at most 30
+    /// times a second rather than on every display frame (which dropped video
+    /// frames drawn in the same window).
+    pub fn request_animation_frame_at(&self, due: Instant, cx: &App) {
+        thread_local! {
+            static SCHEDULED: RefCell<FxHashMap<EntityId, Instant>> = RefCell::default();
+        }
+        static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let entity = self.current_view();
+        let epoch = *EPOCH.get_or_init(Instant::now);
+        let grid = Duration::from_millis(33).as_nanos();
+        let ticks = due.saturating_duration_since(epoch).as_nanos().div_ceil(grid);
+        let deadline = epoch + Duration::from_nanos((ticks * grid) as u64);
+        let now = Instant::now();
+        if deadline <= now + Duration::from_millis(2) {
+            self.request_animation_frame();
+            return;
+        }
+        let already = SCHEDULED.with(|scheduled| {
+            let mut scheduled = scheduled.borrow_mut();
+            match scheduled.get(&entity) {
+                Some(at) if *at > now && *at <= deadline => true,
+                _ => {
+                    scheduled.insert(entity, deadline);
+                    false
+                }
+            }
+        });
+        if already {
+            return;
+        }
+        let wait = deadline - now;
+        self.spawn(cx, async move |cx| {
+            cx.background_executor().timer(wait).await;
+            SCHEDULED.with(|scheduled| {
+                let mut scheduled = scheduled.borrow_mut();
+                if scheduled.get(&entity) == Some(&deadline) {
+                    scheduled.remove(&entity);
+                }
+            });
+            cx.update(|_, cx| cx.notify(entity)).ok();
+        })
+        .detach();
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.

@@ -130,8 +130,9 @@ impl Player {
             let (width, height) = gpu.video_size();
             let stats = gpu.last_stats();
             format!(
-                "backend=gpu frames={} size={width}x{height} cpu_frame_uploads=0 resolved_ms={:?} first_frame_ms={:?} quality={} latency={:?} broadcast={:?} buffer={:?} dropped={:?} recoveries={} compressor_active={}",
+                "backend=gpu frames={} fps={:.1} size={width}x{height} cpu_frame_uploads=0 resolved_ms={:?} first_frame_ms={:?} quality={} latency={:?} broadcast={:?} buffer={:?} dropped={:?} recoveries={} compressor_active={}",
                 gpu.frames,
+                stats.fps,
                 gpu.resolved_ms,
                 gpu.first_frame_ms,
                 gpu.quality(),
@@ -1040,6 +1041,7 @@ fn stat_rows(rows: &[(&'static str, String)], size: f32, compact: bool) -> gpui:
 
 impl Render for Player {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _timer = crate::render_stats::start("player");
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let measured_view = cx.entity().downgrade();
         if self.controls_task.is_none() {

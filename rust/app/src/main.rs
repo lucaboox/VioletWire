@@ -43,6 +43,29 @@ fn main() {
         }
         return;
     }
+    // `--qualities-probe a,b,c`: each channel's qualities as this account sees
+    // them (names only, never addresses).
+    if let Some(logins) = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--qualities-probe")
+        .map(|pair| pair[1].clone())
+    {
+        playback::resolver::warm_up();
+        for login in logins.split(',').filter(|login| format::is_login(login)) {
+            let qualities = playback::resolver::resolve_fresh(login, "best").and_then(|lookup| {
+                lookup
+                    .result
+                    .recv_timeout(std::time::Duration::from_secs(25))
+                    .map_err(|_| anyhow::anyhow!("timed out"))?
+            });
+            match qualities {
+                Ok(resolved) => println!("{login}: {}", resolved.qualities.join(" ")),
+                Err(_) => println!("{login}: offline"),
+            }
+        }
+        playback::resolver::shutdown();
+        return;
+    }
     if arguments.iter().any(|arg| arg == "--resolver-probe") {
         let login = play.as_deref().unwrap_or("ufdtech");
         playback::resolver::warm_up();
@@ -363,5 +386,40 @@ fn main() {
         && !probe_passed.load(std::sync::atomic::Ordering::Acquire)
     {
         std::process::exit(1);
+    }
+}
+
+/// Debug aid (VIOLETWIRE_FRAME_LOG): how often each view renders and for how
+/// long, printed every two seconds.
+pub mod render_stats {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    type Counts = Vec<(&'static str, u32, Duration)>;
+    static STATS: Mutex<Option<(Instant, Counts)>> = Mutex::new(None);
+    pub struct Timer(&'static str, Instant);
+    pub fn start(name: &'static str) -> Option<Timer> {
+        std::env::var_os("VIOLETWIRE_FRAME_LOG").map(|_| Timer(name, Instant::now()))
+    }
+    impl Drop for Timer {
+        fn drop(&mut self) {
+            let took = self.1.elapsed();
+            let mut stats = STATS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let (since, entries) = stats.get_or_insert_with(|| (Instant::now(), Vec::new()));
+            match entries.iter_mut().find(|entry| entry.0 == self.0) {
+                Some(entry) => {
+                    entry.1 += 1;
+                    entry.2 += took;
+                }
+                None => entries.push((self.0, 1, took)),
+            }
+            if since.elapsed() > Duration::from_secs(2) {
+                let line: Vec<String> = entries
+                    .iter()
+                    .map(|(name, count, total)| format!("{name} {count}x {:.1}ms", total.as_secs_f64() * 1000.))
+                    .collect();
+                eprintln!("[renders] {}", line.join(", "));
+                *stats = None;
+            }
+        }
     }
 }

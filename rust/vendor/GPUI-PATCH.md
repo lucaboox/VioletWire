@@ -25,6 +25,12 @@ Local changes are restricted to:
   start-up) pump messages on the UI thread, so a frame can be requested from
   inside a click handler. Upstream lost the callbacks silently, which ended the
   player's per-frame poll: the picture froze while the sound kept playing.
+- `src/elements/img.rs`, `src/window.rs` (`request_animation_frame_at`): an
+  animated image asks for a redraw when its next frame is due, on a shared
+  1/30 s grid, instead of on every display frame. Each request re-lays out the
+  whole view; with animated emotes in chat that was every frame, and the video
+  in the same window dropped to 49–55 fps. Now ~17 chat layouts a second and a
+  steady 60 fps. `VIOLETWIRE_FRAME_LOG` prints slow frames (draw/present).
 - `src/platform/windows/events.rs` (`handle_calc_client_size`): no 1 px gap on
   the auto-hide taskbar's edge for maximized windows. Upstream's gap showed the
   desktop through a sliver at the bottom, and only on the monitor the window

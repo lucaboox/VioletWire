@@ -35,7 +35,7 @@ while True:
         if not valid(login, 25) or not valid(quality, 16):
             raise ValueError()
         token = request.get("token")
-        options = {"low-latency": True, "supported-codecs": ["h264"]}
+        options = {"low-latency": True, "supported-codecs": ["h265", "h264"]}
         if isinstance(token, str) and 20 <= len(token) <= 64 and all(c in TOKEN for c in token):
             options["api-header"] = [("Authorization", f"OAuth {token}")]
         with contextlib.redirect_stdout(sys.stderr):

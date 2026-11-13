@@ -80,6 +80,18 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
 - Keyboard and mouse shortcuts as in Electron: Space, M or middle-click, F or
   double-click, T, C, O, G, the arrow keys and Esc. Press `?` (or open
   Settings > Keyboard shortcuts) for the full list.
+- Latency and smoothness. On MPEG-TS streams with Low latency on (Electron's
+  default "ultra-low", in Settings > Playback), playback starts on the fragment
+  Twitch is still writing: ~4.5 s behind the broadcaster instead of ~6.5 s,
+  first frame ~3 s. Fragmented-MP4 streams (the 1440p ones) start on a
+  finished fragment, since Media Engine cannot read one being written.
+  Fragments are matched across reloads by Twitch's media sequence number.
+  Windows' player ignores playback-rate changes on live HLS, so there is no
+  rate catch-up. Chat is a cached view, and animated emotes redraw only when
+  their next frame is due, which keeps 60 fps video with busy chat.
+- 1440p: Twitch offers it only to a signed-in viewer (the linked website
+  session) whose player accepts HEVC, so lookups ask for `h265,h264`. Windows'
+  HEVC Video Extensions decode it (summit1g at 2560x1440, 59.8 fps).
 - Chat emotes as in Electron (`ProviderEmoteText.tsx`, `ChatEmote.tsx`):
   animated GIF/WebP emotes play; small 7TV/FFZ/BTTV emotes keep their size;
   zero-width emotes stack on the emote before them; BTTV and FFZ modifiers flip,

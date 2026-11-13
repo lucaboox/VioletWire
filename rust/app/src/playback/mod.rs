@@ -6,7 +6,7 @@ mod compressor;
 pub mod gpu;
 mod job;
 mod pipeline;
-mod relay;
+pub mod relay;
 mod ts;
 mod twitch;
 pub mod resolver;

@@ -42,6 +42,9 @@ pub struct Preferences {
     pub mention_sound_id: String,
     /// The chat and mention settings above were copied from Electron once.
     pub chat_settings_imported: bool,
+    /// `ultra-low` (start on the fragment being written) or `balanced`.
+    pub playback_latency_mode: String,
+    pub playback_settings_imported: bool,
 }
 
 /// Logical pixels, as GPUI reports them for the window's monitor.
@@ -85,6 +88,8 @@ impl Default for Preferences {
             mention_sound_volume: 100,
             mention_sound_id: "ping".into(),
             chat_settings_imported: false,
+            playback_latency_mode: "ultra-low".into(),
+            playback_settings_imported: false,
         }
     }
 }
@@ -112,6 +117,9 @@ impl Preferences {
             self.chat_deleted_message_style = "placeholder".into();
         }
         self.mention_sound_volume = self.mention_sound_volume.min(200);
+        if !matches!(self.playback_latency_mode.as_str(), "ultra-low" | "balanced") {
+            self.playback_latency_mode = "ultra-low".into();
+        }
         if !MENTION_SOUNDS.iter().any(|(id, _)| *id == self.mention_sound_id) {
             self.mention_sound_id = "ping".into();
         }
@@ -169,8 +177,17 @@ pub fn initialize(cx: &mut App) {
         }
         settings.chat_settings_imported = true;
     }
+    if !settings.playback_settings_imported {
+        if let Some(electron) = std::env::var_os("APPDATA").and_then(|path| {
+            read(PathBuf::from(path).join("twitch-windows-viewer/preferences.json"))
+        }) {
+            settings.playback_latency_mode = electron.playback_latency_mode;
+        }
+        settings.playback_settings_imported = true;
+    }
     settings.validate();
     crate::theme::set_oled(settings.oled_mode);
+    crate::playback::relay::set_low_latency(settings.playback_latency_mode != "balanced");
     cx.set_global(settings);
 }
 pub fn get(cx: &App) -> Preferences {
@@ -189,6 +206,7 @@ pub fn update(cx: &mut App, edit: impl FnOnce(&mut Preferences)) {
     previous.window = settings.window.clone();
     let redraw = previous != settings;
     crate::theme::set_oled(settings.oled_mode);
+    crate::playback::relay::set_low_latency(settings.playback_latency_mode != "balanced");
     cx.set_global(settings.clone());
     if redraw {
         cx.refresh_windows();

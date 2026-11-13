@@ -1173,6 +1173,7 @@ impl Chat {
 }
 impl Render for Chat {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _timer = crate::render_stats::start("chat");
         let view = cx.entity().downgrade();
         let list = list(self.list.clone(), move |index, _, cx| {
             view.update(cx, |this, cx| this.row(index, cx))

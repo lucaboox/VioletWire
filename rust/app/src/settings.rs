@@ -368,6 +368,16 @@ impl Settings {
 fn playback_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElement {
     section("PLAYBACK", "Video and controls", "Choose how streams play and how the player behaves.")
         .child(card(
+            "Low latency",
+            "Play about 2 s closer to live, starting on the fragment Twitch is still writing. Off is steadier when a stream hiccups. Applies to the next stream you open.",
+            toggle("low-latency", settings.playback_latency_mode != "balanced").on_click(cx.listener(|_, _, _, cx| {
+                preferences::update(cx, |s| {
+                    s.playback_latency_mode =
+                        if s.playback_latency_mode == "balanced" { "ultra-low" } else { "balanced" }.into()
+                })
+            })),
+        ))
+        .child(card(
             "Controls auto-hide delay",
             "Controls stay visible while hovered or paused.",
             choice(

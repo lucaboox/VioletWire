@@ -38,6 +38,19 @@ use super::ts;
 
 /// How much media playback starts behind the newest segment's end.
 pub const START_CUSHION_SECONDS: f64 = 5.0;
+
+/// How far behind the newest listed content playback starts and is kept.
+/// `VIOLETWIRE_CUSHION` overrides it for measurements.
+pub fn cushion() -> f64 {
+    static CUSHION: OnceLock<f64> = OnceLock::new();
+    *CUSHION.get_or_init(|| {
+        std::env::var("VIOLETWIRE_CUSHION")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| (0.5..=20.).contains(value))
+            .unwrap_or(START_CUSHION_SECONDS)
+    })
+}
 const MAX_SEGMENTS: usize = 18;
 const MAX_SEEN: usize = 512;
 const MAX_REQUEST_BYTES: u64 = 8 * 1024;
@@ -404,6 +417,8 @@ fn prefetch_enabled() -> bool {
 
 struct Parsed {
     segments: Vec<ParsedSegment>,
+    /// Fragmented MP4 (`EXT-X-MAP`) rather than MPEG-TS.
+    fmp4: bool,
     version: u32,
     media_sequence: Option<u64>,
     ended: bool,
@@ -491,6 +506,7 @@ fn parse(text: &str, base: &str) -> Parsed {
     let ads = ad_ranges(text);
     let mut parsed = Parsed {
         segments: Vec::new(),
+        fmp4: false,
         version: 3,
         media_sequence: None,
         ended: false,
@@ -526,6 +542,7 @@ fn parse(text: &str, base: &str) -> Parsed {
             key_tag = Some(line.to_owned());
         } else if line.starts_with("#EXT-X-MAP:") {
             map_tag = Some(line.to_owned());
+            parsed.fmp4 = true;
         } else if let Some(hint) = line.strip_prefix("#EXT-X-TWITCH-PREFETCH:") {
             let Some(previous) = parsed.segments.last() else {
                 continue;
@@ -537,9 +554,14 @@ fn parse(text: &str, base: &str) -> Parsed {
             let length = previous.duration;
             // The date it will have once finished: right after the one before.
             let inferred = previous_date.map(|date| date + previous.duration * 1000.);
-            let key = match inferred {
-                Some(date) => format!("pdt:{date}|"),
-                None => format!("{}|", uri_key(&uri)),
+            // Twitch numbers the fragments it is writing last+1 and last+2,
+            // and keeps those numbers once they finish. An inferred date
+            // drifts whenever a fragment comes out shorter than the one
+            // before, which mismatched entries (see the Electron notes).
+            let key = match (parsed.media_sequence, inferred) {
+                (Some(first), _) => format!("seq:{}|", first + parsed.segments.len() as u64),
+                (None, Some(date)) => format!("pdt:{date}|"),
+                (None, None) => format!("{}|", uri_key(&uri)),
             };
             let ad = previous.ad
                 || inferred.is_some_and(|date| ads.iter().any(|(start, end)| date >= *start && date < *end));
@@ -559,9 +581,14 @@ fn parse(text: &str, base: &str) -> Parsed {
             // Date ranges and Twitch's own tags stay behind.
         } else if let Some(length) = duration.filter(|length| length.is_finite()) {
             let uri = absolute(line, base);
-            let key = match date {
-                Some(date) => format!("pdt:{date}|{}", byte_range.as_deref().unwrap_or("")),
-                None => format!(
+            let key = match (parsed.media_sequence, date) {
+                (Some(first), _) => format!(
+                    "seq:{}|{}",
+                    first + parsed.segments.len() as u64,
+                    byte_range.as_deref().unwrap_or("")
+                ),
+                (None, Some(date)) => format!("pdt:{date}|{}", byte_range.as_deref().unwrap_or("")),
+                (None, None) => format!(
                     "{}|{}",
                     uri.split('?').next().unwrap_or(&uri),
                     byte_range.as_deref().unwrap_or("")
@@ -590,9 +617,33 @@ fn parse(text: &str, base: &str) -> Parsed {
     parsed
 }
 
+/// Where playback starts on an MPEG-TS stream: on the fragment Twitch is
+/// still writing (the first prefetch entry), the way Electron's parts relay
+/// played from it. Media Engine reads a TS fragment as it arrives. Measured on
+/// sodapoppin: 4.5 s behind the broadcaster with the first frame at 3.1 s,
+/// against 6.8 s and 2.4 s from a finished fragment; no stalls.
+///
+/// Fragmented MP4 is only readable once a fragment is complete: started this
+/// way, summit1g took 7.8 s to show a frame. Those start on a finished one.
+fn starts_on_prefetch(parsed: &Parsed) -> bool {
+    !parsed.fmp4
+        && LOW_LATENCY.load(Ordering::Acquire)
+        && std::env::var_os("VIOLETWIRE_NO_PREFETCH_START").is_none()
+}
+
+/// Electron's "Low latency" (`playbackLatencyMode: ultra-low`, its default).
+/// Off ("balanced") starts every stream on a finished fragment: ~2 s further
+/// behind, but a fragment that comes out short never runs playback dry.
+static LOW_LATENCY: AtomicBool = AtomicBool::new(true);
+
+pub fn set_low_latency(enabled: bool) {
+    LOW_LATENCY.store(enabled, Ordering::Release);
+}
+
 /// The newest finished segment from which at least the cushion remains
 /// (prefetch entries count towards it), then a few older ones, all after the
-/// last ad. Playback never starts on a segment still being written.
+/// last ad. On MPEG-TS the fragment being written comes first; see
+/// [`starts_on_prefetch`].
 fn start_candidates(parsed: &Parsed) -> Vec<usize> {
     let segments = &parsed.segments;
     if segments.last().is_none_or(|segment| segment.ad) {
@@ -602,15 +653,23 @@ fn start_candidates(parsed: &Parsed) -> Vec<usize> {
         .iter()
         .rposition(|segment| segment.ad)
         .map_or(0, |ad| ad + 1);
+    // The oldest prefetch entry is the fragment being written.
+    let writing = segments
+        .iter()
+        .position(|segment| segment.prefetch)
+        .filter(|&index| index >= first_live && starts_on_prefetch(parsed));
     let mut index = segments.len();
     let mut kept = 0.;
-    while index > first_live && kept < START_CUSHION_SECONDS {
+    while index > first_live && kept < cushion() {
         index -= 1;
         kept += segments[index].duration.max(0.);
     }
-    (first_live..=index)
+    let finished = (first_live..=index)
         .rev()
-        .filter(|&candidate| !segments[candidate].prefetch)
+        .filter(|&candidate| !segments[candidate].prefetch);
+    writing
+        .into_iter()
+        .chain(finished)
         .take(PROBE_CANDIDATES)
         .collect()
 }
@@ -831,18 +890,32 @@ mod tests {
         let first = with_prefetch(playlist(0, &[("live", ""); 10]), &[10, 11]);
         assert!(list.begin(parse(&first, "https://up/x.m3u8"), &HashMap::new(), &status));
         let (start, uris) = sequences(&list.render().unwrap());
-        // 5 s back counting the two prefetch entries, but never starting on one.
-        assert_eq!(uris, ["9.ts", "10.ts", "11.ts"]);
-        assert_eq!(start, 9);
+        // MPEG-TS starts on the fragment being written.
+        assert_eq!(uris, ["10.ts", "11.ts"]);
+        assert_eq!(start, 10);
         // 10 finishes (its real date differs from the guess), 12 is the new hint.
         let next = with_prefetch(playlist(1, &[("live", ""); 10]), &[11, 12]);
         list.merge(parse(&next, "https://up/x.m3u8"), &status);
         let body = list.render().unwrap();
         let (start, uris) = sequences(&body);
-        assert_eq!(start, 9);
-        assert_eq!(uris, ["9.ts", "10.ts", "11.ts", "12.ts"]);
+        assert_eq!(start, 10);
+        assert_eq!(uris, ["10.ts", "11.ts", "12.ts"]);
         // The finished one now carries Twitch's own date.
         assert!(body.contains("10.000Z\n#EXTINF:2.000,live\nhttps://cdn.example/10.ts"));
+    }
+
+    #[test]
+    fn fragmented_mp4_never_starts_on_a_fragment_being_written() {
+        let status = Status::default();
+        let mut list = Playlist::default();
+        let first = with_prefetch(playlist(0, &[("live", ""); 10]), &[10, 11])
+            .replacen("#EXT-X-MEDIA-SEQUENCE", "#EXT-X-MAP:URI=\"https://cdn.example/init.mp4\"
+#EXT-X-MEDIA-SEQUENCE", 1);
+        assert!(list.begin(parse(&first, "https://up/x.m3u8"), &HashMap::new(), &status));
+        let (start, uris) = sequences(&list.render().unwrap());
+        // 5 s back counting the two prefetch entries, on a finished fragment.
+        assert_eq!(uris, ["9.ts", "10.ts", "11.ts"]);
+        assert_eq!(start, 9);
     }
 
     fn sequences(body: &str) -> (u64, Vec<String>) {

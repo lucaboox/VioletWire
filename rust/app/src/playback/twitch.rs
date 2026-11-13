@@ -143,6 +143,18 @@ pub fn resolve(agent: &ureq::Agent, login: &str, auth: Option<&str>) -> Result<L
     let Some(token) = reply.data.and_then(|data| data.token) else {
         return Ok(Lookup::Offline);
     };
+    if std::env::var_os("VIOLETWIRE_PLAYBACK_LOG").is_some() {
+        // Only yes/no flags from the token's JSON: never the token or the ID.
+        let flags: serde_json::Value = serde_json::from_str(&token.value).unwrap_or_default();
+        eprintln!(
+            "[lookup] session sent={} signed_in={} turbo={} subscriber={} hide_ads={}",
+            auth.is_some(),
+            flags["user_id"].is_number() || flags["user_id"].as_str().is_some_and(|id| !id.is_empty()),
+            flags["turbo"].as_bool().unwrap_or(false),
+            flags["subscriber"].as_bool().unwrap_or(false),
+            flags["hide_ads"].as_bool().unwrap_or(false),
+        );
+    }
 
     let random = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -156,7 +168,7 @@ pub fn resolve(agent: &ureq::Agent, login: &str, auth: Option<&str>) -> Result<L
         .query("allow_source", "true")
         .query("allow_audio_only", "true")
         .query("playlist_include_framerate", "true")
-        .query("supported_codecs", "h264")
+        .query("supported_codecs", codecs())
         .query("fast_bread", "true")
         .query("sig", &token.signature)
         .query("token", &token.value)
@@ -260,6 +272,18 @@ fn parse_master(text: &str) -> Vec<Variant> {
 
 /// The variant for `quality`: an exact match, or the best video for `best`
 /// and anything not on offer.
+/// Twitch lists its 1440p (Enhanced Broadcasting) renditions only to a
+/// signed-in viewer whose player accepts HEVC or AV1; with H.264 alone the top
+/// is 1080p. Media Engine decodes HEVC through Windows' HEVC Video Extensions
+/// (measured: summit1g at 2560x1440, 59.8 fps). AV1 needs a decoder many PCs
+/// lack, so it is opt-in through `VIOLETWIRE_CODECS`.
+fn codecs() -> String {
+    std::env::var("VIOLETWIRE_CODECS")
+        .ok()
+        .filter(|codecs| codecs.split(',').all(|codec| matches!(codec, "h264" | "h265" | "av1")))
+        .unwrap_or_else(|| "h265,h264".to_owned())
+}
+
 pub fn choose<'a>(variants: &'a [Variant], quality: &str) -> Option<&'a Variant> {
     variants
         .iter()
