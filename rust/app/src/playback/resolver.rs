@@ -6,8 +6,9 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     os::windows::process::CommandExt,
     process::{Child, Command, Stdio},
+    collections::HashMap,
     sync::{
-        Arc, OnceLock,
+        Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -19,6 +20,8 @@ const LIMIT: u64 = 128 * 1024;
 struct Request {
     login: String,
     quality: String,
+    /// Skip the hover cache (a reconnect wants a new playlist address).
+    fresh: bool,
     cancelled: Arc<AtomicBool>,
     reply: mpsc::SyncSender<Result<Resolved>>,
 }
@@ -39,6 +42,56 @@ struct Service {
 }
 static SERVICE: OnceLock<Service> = OnceLock::new();
 
+/// Lookups made ahead of a click (hovering a channel), by login and quality.
+/// Twitch's signed playlist addresses stay valid far longer than this.
+const CACHE_FOR: Duration = Duration::from_secs(25);
+/// (login, quality) → when it was looked up, and the answer.
+type Cache = HashMap<(String, String), (Instant, Resolved)>;
+static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+
+/// A recent lookup; `take` uses it up (a click), otherwise it stays.
+fn cached(login: &str, quality: &str, take: bool) -> Option<Resolved> {
+    let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    let cache = cache.get_or_insert_with(HashMap::new);
+    cache.retain(|_, (at, _)| at.elapsed() < CACHE_FOR);
+    let key = (login.to_owned(), quality.to_owned());
+    if take {
+        cache.remove(&key).map(|(_, resolved)| resolved)
+    } else {
+        cache.get(&key).map(|(_, resolved)| resolved.clone())
+    }
+}
+
+fn remember(login: &str, quality: &str, resolved: &Resolved) {
+    CACHE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get_or_insert_with(HashMap::new)
+        .insert((login.to_owned(), quality.to_owned()), (Instant::now(), resolved.clone()));
+}
+
+/// Starts looking a channel up before it is clicked (Electron's hover
+/// pre-resolve). The answer waits in the cache for [`resolve`].
+pub fn preresolve(login: &str, quality: &str) {
+    if !crate::format::is_login(login) || !is_quality(quality) {
+        return;
+    }
+    let login = login.to_ascii_lowercase();
+    if cached(&login, quality, false).is_some() {
+        return;
+    }
+    warm_up();
+    // Nobody waits on this reply; the result goes to the cache.
+    let (reply, _) = mpsc::sync_channel(1);
+    let _ = SERVICE.get().unwrap().requests.try_send(Request {
+        login,
+        quality: quality.to_owned(),
+        fresh: false,
+        cancelled: Arc::new(AtomicBool::new(false)),
+        reply,
+    });
+}
+
 pub struct Resolution {
     pub result: mpsc::Receiver<Result<Resolved>>,
     cancelled: Arc<AtomicBool>,
@@ -57,17 +110,64 @@ pub fn warm_up() {
         let _ = std::thread::Builder::new()
             .name("vw-stream-resolver".into())
             .spawn(move || {
-                let mut worker = Worker::start().ok();
+                // Native first; the Streamlink worker starts only if Twitch's
+                // API ever stops answering the native lookup.
+                let native = super::twitch::agent();
+                let mut worker: Option<Worker> = None;
+                let mut warmed = false;
                 while !stopping.load(Ordering::Acquire) {
                     let request = match receive.recv_timeout(Duration::from_millis(100)) {
                         Ok(request) => request,
-                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            // Once idle, open the connections a lookup uses so
+                            // the first click does not wait on them.
+                            if !warmed {
+                                warmed = true;
+                                super::twitch::warm(&native);
+                            }
+                            continue;
+                        }
                         Err(_) => break,
                     };
                     if request.cancelled.load(Ordering::Acquire) {
                         continue;
                     }
+                    // A hover may already have looked this one up.
+                    if !request.fresh
+                        && let Some(resolved) = cached(&request.login, &request.quality, false)
+                    {
+                        let _ = request.reply.try_send(Ok(resolved));
+                        continue;
+                    }
+                    let received = Instant::now();
                     let result = (|| {
+                        if std::env::var_os("VIOLETWIRE_STREAMLINK_ONLY").is_none() {
+                            match super::twitch::resolve(&native, &request.login) {
+                                Ok(super::twitch::Lookup::Live(variants)) => {
+                                    if let Some(variant) =
+                                        super::twitch::choose(&variants, &request.quality)
+                                    {
+                                        return Ok(Resolved {
+                                            url: variant.url.clone(),
+                                            qualities: variants
+                                                .iter()
+                                                .map(|variant| variant.name.clone())
+                                                .collect(),
+                                            quality: if variant.name == request.quality {
+                                                variant.name.clone()
+                                            } else {
+                                                "best".to_owned()
+                                            },
+                                        });
+                                    }
+                                }
+                                Ok(super::twitch::Lookup::Offline) => {
+                                    bail!("No playable stream was found.")
+                                }
+                                // Fall through to Streamlink.
+                                Err(_) => {}
+                            }
+                        }
                         if worker.is_none() {
                             worker = Worker::start().ok();
                         }
@@ -90,6 +190,12 @@ pub fn warm_up() {
                         cold.next_url(&request.cancelled, &stopping, &request.quality)?
                             .context("No playable stream was found.")
                     })();
+                    if std::env::var_os("VIOLETWIRE_PLAYBACK_LOG").is_some() {
+                        eprintln!("[lookup] answered after {} ms", received.elapsed().as_millis());
+                    }
+                    if let Ok(resolved) = &result {
+                        remember(&request.login, &request.quality, resolved);
+                    }
                     let _ = request.reply.try_send(result);
                 }
                 // Worker::drop terminates and reaps only our own child.
@@ -117,15 +223,28 @@ pub fn probe_cold(login: &str) -> Result<()> {
     Ok(())
 }
 pub fn resolve(login: &str, quality: &str) -> Result<Resolution> {
+    lookup(login, quality, false)
+}
+
+/// A new lookup even if a hover just made one: for reconnecting.
+pub fn resolve_fresh(login: &str, quality: &str) -> Result<Resolution> {
+    lookup(login, quality, true)
+}
+
+fn lookup(login: &str, quality: &str, fresh: bool) -> Result<Resolution> {
     if !crate::format::is_login(login) {
         bail!("Invalid Twitch channel.");
     }
     if !is_quality(quality) {
         bail!("Invalid stream quality.");
     }
-    warm_up();
     let (send, result) = mpsc::sync_channel(1);
     let cancelled = Arc::new(AtomicBool::new(false));
+    if !fresh && let Some(resolved) = cached(&login.to_ascii_lowercase(), quality, true) {
+        let _ = send.try_send(Ok(resolved));
+        return Ok(Resolution { result, cancelled });
+    }
+    warm_up();
     SERVICE
         .get()
         .unwrap()
@@ -133,6 +252,7 @@ pub fn resolve(login: &str, quality: &str) -> Result<Resolution> {
         .try_send(Request {
             login: login.to_ascii_lowercase(),
             quality: quality.to_owned(),
+            fresh,
             cancelled: cancelled.clone(),
             reply: send,
         })

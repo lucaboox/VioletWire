@@ -101,6 +101,7 @@ pub struct Root {
     notice: Option<SharedString>,
     notice_task: Option<Task<()>>,
     clip_task: Option<Task<()>>,
+    hover_task: Option<Task<()>>,
     // A held task is cancelled when it is replaced or dropped.
     auth_task: Option<Task<()>>,
     followed_task: Option<Task<()>>,
@@ -251,6 +252,7 @@ impl Root {
             notice: None,
             notice_task: None,
             clip_task: None,
+            hover_task: None,
             auth_task: None,
             followed_task: None,
             refresh_task: None,
@@ -466,6 +468,23 @@ impl Root {
             _chat_controls: chat_controls,
         });
         cx.notify();
+    }
+
+    /// Hovering a live channel starts looking it up, so a click plays sooner
+    /// (Electron's pre-resolve). Leaving it within 150 ms cancels that.
+    fn hover_preresolve(&mut self, login: &str, hovered: bool, cx: &mut Context<Self>) {
+        if !hovered {
+            self.hover_task = None;
+            return;
+        }
+        let login = login.to_owned();
+        let quality = crate::preferences::get(cx).player_quality;
+        self.hover_task = Some(cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
+            crate::playback::resolver::preresolve(&login, &quality);
+        }));
     }
 
     /// Shows `text` at the bottom of the window for a few seconds.
@@ -1204,6 +1223,12 @@ impl Root {
                     )
                 },
             )
+            .when(channel.stream.is_some(), |row| {
+                let hovered_login = login.clone();
+                row.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.hover_preresolve(&hovered_login, *hovered, cx)
+                }))
+            })
             .on_click(
                 cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)),
             )
@@ -1647,6 +1672,12 @@ impl Root {
                             }),
                     ),
             )
+            .when(channel.stream.is_some(), |row| {
+                let hovered_login = login.clone();
+                row.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.hover_preresolve(&hovered_login, *hovered, cx)
+                }))
+            })
             .on_click(
                 cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)),
             )

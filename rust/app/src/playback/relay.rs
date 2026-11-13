@@ -57,6 +57,9 @@ pub struct Status {
     ad_break: AtomicBool,
     ads_skipped: AtomicU32,
     failure: Mutex<Option<String>>,
+    /// Twitch's PROGRAM-DATE-TIME (ms) of the first listed segment: the
+    /// broadcast moment at the player's time zero.
+    start_date: Mutex<Option<f64>>,
 }
 
 struct Segment {
@@ -64,7 +67,11 @@ struct Segment {
     discontinuity: bool,
     tags: Vec<String>,
     uri: String,
+    /// The address without its signed query, to recognise a prefetch entry
+    /// when Twitch lists it as finished.
+    uri_key: String,
     duration: f64,
+    prefetch: bool,
 }
 
 #[derive(Default)]
@@ -174,6 +181,11 @@ impl Relayed {
     pub fn failure(&self) -> Option<String> {
         lock(&self.status.failure).clone()
     }
+    /// When (ms since the epoch) Twitch received the media at the player's
+    /// time zero; with the playhead it gives the latency to the broadcaster.
+    pub fn start_date_ms(&self) -> Option<f64> {
+        *lock(&self.status.start_date)
+    }
 }
 
 impl Drop for Relayed {
@@ -262,6 +274,7 @@ impl Relay {
     /// Reads Twitch's playlist into the session's and renders it. Refreshes
     /// of one session run one at a time, under its playlist lock.
     fn refresh(&self, session: &Session) -> Option<String> {
+        let timer = Instant::now();
         let mut playlist = lock(&session.playlist);
         if let Some((at, body)) = &playlist.cached
             && at.elapsed() < CACHE_FOR
@@ -290,6 +303,9 @@ impl Relay {
             session.status.ready.store(true, Ordering::Release);
         }
         let body = playlist.render()?;
+        if std::env::var_os("VIOLETWIRE_PLAYBACK_LOG").is_some() {
+            eprintln!("[relay] refresh took {} ms", timer.elapsed().as_millis());
+        }
         playlist.cached = Some((Instant::now(), body.clone()));
         Some(body)
     }
@@ -298,16 +314,28 @@ impl Relay {
     /// frame, read from their first bytes in parallel.
     fn probe_starts(&self, parsed: &Parsed) -> HashMap<usize, Option<bool>> {
         let candidates = start_candidates(parsed);
-        std::thread::scope(|scope| {
-            let probes: Vec<_> = candidates
-                .into_iter()
+        // The nearest one nearly always opens on a key frame: ask about it
+        // alone first (one connection), and only then about the others.
+        let Some((&nearest, older)) = candidates.split_first() else {
+            return HashMap::new();
+        };
+        let first = self.opens_on_keyframe(&parsed.segments[nearest].uri);
+        if first == Some(true) {
+            return HashMap::from([(nearest, first)]);
+        }
+        let mut found: HashMap<usize, Option<bool>> = std::thread::scope(|scope| {
+            let probes: Vec<_> = older
+                .iter()
+                .copied()
                 .map(|index| {
                     let uri = parsed.segments[index].uri.clone();
                     scope.spawn(move || (index, self.opens_on_keyframe(&uri)))
                 })
                 .collect();
             probes.into_iter().filter_map(|probe| probe.join().ok()).collect()
-        })
+        });
+        found.insert(nearest, first);
+        found
     }
 
     fn opens_on_keyframe(&self, uri: &str) -> Option<bool> {
@@ -353,9 +381,25 @@ struct ParsedSegment {
     /// Tags that travel with the segment (date, length, byte range, key, map).
     tags: Vec<String>,
     uri: String,
+    uri_key: String,
     duration: f64,
+    /// PROGRAM-DATE-TIME in ms (inferred for a prefetch entry).
+    date: Option<f64>,
     discontinuity: bool,
     ad: bool,
+    /// Twitch's hint for the segment it is still encoding. Listed as an
+    /// ordinary segment it brings playback a couple of segments closer to
+    /// live, as Streamlink's and the Electron client's low-latency modes do;
+    /// the player reads it as it is written.
+    prefetch: bool,
+}
+
+fn uri_key(uri: &str) -> String {
+    uri.split('?').next().unwrap_or(uri).to_owned()
+}
+
+fn prefetch_enabled() -> bool {
+    std::env::var_os("VIOLETWIRE_NO_PREFETCH").is_none()
 }
 
 struct Parsed {
@@ -455,6 +499,7 @@ fn parse(text: &str, base: &str) -> Parsed {
     let (mut duration, mut title, mut date): (Option<f64>, String, Option<f64>) = (None, String::new(), None);
     let (mut key_tag, mut map_tag): (Option<String>, Option<String>) = (None, None);
     let mut byte_range: Option<String> = None;
+    let mut previous_date: Option<f64> = None;
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
         if line == "#EXT-X-DISCONTINUITY" {
             discontinuity = true;
@@ -481,8 +526,37 @@ fn parse(text: &str, base: &str) -> Parsed {
             key_tag = Some(line.to_owned());
         } else if line.starts_with("#EXT-X-MAP:") {
             map_tag = Some(line.to_owned());
+        } else if let Some(hint) = line.strip_prefix("#EXT-X-TWITCH-PREFETCH:") {
+            let Some(previous) = parsed.segments.last() else {
+                continue;
+            };
+            if !prefetch_enabled() {
+                continue;
+            }
+            let uri = absolute(hint.trim(), base);
+            let length = previous.duration;
+            // The date it will have once finished: right after the one before.
+            let inferred = previous_date.map(|date| date + previous.duration * 1000.);
+            let key = match inferred {
+                Some(date) => format!("pdt:{date}|"),
+                None => format!("{}|", uri_key(&uri)),
+            };
+            let ad = previous.ad
+                || inferred.is_some_and(|date| ads.iter().any(|(start, end)| date >= *start && date < *end));
+            previous_date = inferred;
+            parsed.segments.push(ParsedSegment {
+                key,
+                tags: vec![format!("#EXTINF:{length:.3},live")],
+                uri_key: uri_key(&uri),
+                uri,
+                duration: length,
+                date: inferred,
+                discontinuity: false,
+                ad,
+                prefetch: true,
+            });
         } else if line.starts_with('#') {
-            // Prefetch hints, date ranges and Twitch's own tags stay behind.
+            // Date ranges and Twitch's own tags stay behind.
         } else if let Some(length) = duration.filter(|length| length.is_finite()) {
             let uri = absolute(line, base);
             let key = match date {
@@ -497,13 +571,17 @@ fn parse(text: &str, base: &str) -> Parsed {
                 || date.is_some_and(|date| ads.iter().any(|(start, end)| date >= *start && date < *end));
             let mut segment_tags: Vec<String> = key_tag.iter().chain(map_tag.iter()).cloned().collect();
             segment_tags.append(&mut tags);
+            previous_date = date;
             parsed.segments.push(ParsedSegment {
                 key,
                 tags: segment_tags,
+                uri_key: uri_key(&uri),
                 uri,
                 duration: length,
+                date,
                 discontinuity,
                 ad,
+                prefetch: false,
             });
             (discontinuity, duration, date, byte_range) = (false, None, None, None);
             title.clear();
@@ -512,8 +590,9 @@ fn parse(text: &str, base: &str) -> Parsed {
     parsed
 }
 
-/// The newest segment from which at least the cushion remains, then a few
-/// older ones, all after the last ad.
+/// The newest finished segment from which at least the cushion remains
+/// (prefetch entries count towards it), then a few older ones, all after the
+/// last ad. Playback never starts on a segment still being written.
 fn start_candidates(parsed: &Parsed) -> Vec<usize> {
     let segments = &parsed.segments;
     if segments.last().is_none_or(|segment| segment.ad) {
@@ -529,7 +608,11 @@ fn start_candidates(parsed: &Parsed) -> Vec<usize> {
         index -= 1;
         kept += segments[index].duration.max(0.);
     }
-    (first_live..=index).rev().take(PROBE_CANDIDATES).collect()
+    (first_live..=index)
+        .rev()
+        .filter(|&candidate| !segments[candidate].prefetch)
+        .take(PROBE_CANDIDATES)
+        .collect()
 }
 
 impl Playlist {
@@ -550,6 +633,7 @@ impl Playlist {
         self.version = parsed.version.max(3);
         self.ended = parsed.ended;
         self.next_sequence = parsed.media_sequence.unwrap_or(0) + start as u64;
+        *lock(&status.start_date) = parsed.segments.get(start).and_then(|segment| segment.date);
         for (index, segment) in parsed.segments.into_iter().enumerate() {
             if index < start || segment.ad {
                 self.remember(segment.key, u64::MAX);
@@ -588,10 +672,32 @@ impl Playlist {
                 continue;
             }
             if let Some(&sequence) = self.seen.get(&segment.key) {
-                // Already known: keep its number, take the newest address.
+                // Already known: keep its number, take the newest address,
+                // and Twitch's own tags once a prefetch entry is finished.
                 if let Some(kept) = self.segments.iter_mut().find(|kept| kept.sequence == sequence) {
                     kept.uri = segment.uri;
+                    kept.uri_key = segment.uri_key;
+                    if kept.prefetch && !segment.prefetch {
+                        kept.prefetch = false;
+                        kept.tags = segment.tags;
+                        kept.duration = segment.duration;
+                    }
                 }
+                continue;
+            }
+            // A finished segment whose date was not what the prefetch entry
+            // guessed: the same address is the same segment.
+            if let Some(kept) = self
+                .segments
+                .iter_mut()
+                .find(|kept| kept.prefetch && kept.uri_key == segment.uri_key)
+            {
+                let sequence = kept.sequence;
+                kept.prefetch = segment.prefetch;
+                kept.tags = segment.tags;
+                kept.duration = segment.duration;
+                kept.uri = segment.uri;
+                self.remember(segment.key, sequence);
                 continue;
             }
             self.push(segment);
@@ -615,7 +721,9 @@ impl Playlist {
             discontinuity,
             tags: segment.tags,
             uri: segment.uri,
+            uri_key: segment.uri_key,
             duration: segment.duration,
+            prefetch: segment.prefetch,
         });
     }
 
@@ -705,8 +813,36 @@ mod tests {
                 n % 60
             ));
         }
-        text.push_str("#EXT-X-TWITCH-PREFETCH:https://cdn.example/next.ts\n");
         text
+    }
+
+    /// Twitch's hints for the next segments, numbered after the listed ones.
+    fn with_prefetch(mut text: String, numbers: &[u64]) -> String {
+        for n in numbers {
+            text.push_str(&format!("#EXT-X-TWITCH-PREFETCH:https://cdn.example/{n}.ts?sig=p\n"));
+        }
+        text
+    }
+
+    #[test]
+    fn lists_prefetch_entries_and_keeps_their_numbers_once_finished() {
+        let status = Status::default();
+        let mut list = Playlist::default();
+        let first = with_prefetch(playlist(0, &[("live", ""); 10]), &[10, 11]);
+        assert!(list.begin(parse(&first, "https://up/x.m3u8"), &HashMap::new(), &status));
+        let (start, uris) = sequences(&list.render().unwrap());
+        // 5 s back counting the two prefetch entries, but never starting on one.
+        assert_eq!(uris, ["9.ts", "10.ts", "11.ts"]);
+        assert_eq!(start, 9);
+        // 10 finishes (its real date differs from the guess), 12 is the new hint.
+        let next = with_prefetch(playlist(1, &[("live", ""); 10]), &[11, 12]);
+        list.merge(parse(&next, "https://up/x.m3u8"), &status);
+        let body = list.render().unwrap();
+        let (start, uris) = sequences(&body);
+        assert_eq!(start, 9);
+        assert_eq!(uris, ["9.ts", "10.ts", "11.ts", "12.ts"]);
+        // The finished one now carries Twitch's own date.
+        assert!(body.contains("10.000Z\n#EXTINF:2.000,live\nhttps://cdn.example/10.ts"));
     }
 
     fn sequences(body: &str) -> (u64, Vec<String>) {
@@ -741,7 +877,7 @@ mod tests {
         assert_eq!(uris, ["107.ts", "108.ts", "109.ts", "110.ts"]);
         let body = list.render().unwrap();
         assert!(body.contains("#EXT-X-TARGETDURATION:2\n"));
-        assert!(!body.contains("PREFETCH") && !body.contains("next.ts"));
+        assert!(!body.contains("PREFETCH"));
     }
 
     #[test]

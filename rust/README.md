@@ -53,6 +53,18 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
   and the freeze watchdog ignores ad breaks. It declares the real 2 s target
   duration and drops prefetch hints. Only playlist text crosses the socket,
   behind a random per-process secret; segments come straight from Twitch's CDN.
+- Native stream lookup (`playback/twitch.rs`): Twitch's GraphQL playback token
+  and the usher playlist, as Streamlink does, without Python. About 0.25–0.5 s
+  instead of Streamlink's ~2 s (Streamlink also re-reads every quality's playlist
+  first). Quality names come from Twitch's `IVS-NAME`. Streamlink is only a
+  fallback now, started if the native lookup ever fails; GPU playback no longer
+  needs it installed. Lookups are cached briefly, and hovering a live channel
+  looks it up ahead of the click; the connections are opened once the app is idle.
+- Twitch's prefetch hints are listed as ordinary segments, as in Streamlink's and
+  Electron's low-latency modes: latency to the broadcaster fell from ~9.3 s to
+  ~5.5 s (sodapoppin, 1080p60, no stalls or recoveries). Stats show "Latency to
+  broadcaster" from the segments' PROGRAM-DATE-TIME, as Electron does. Click to
+  first frame is about 2.5–3 s (it was 4.5–5 s).
 - Media Engine runs without `MF_MEDIA_ENGINE_REAL_TIME_MODE`: its low-latency
   decoding skips B-frame reordering, and streams that use B-frames smeared into
   blocks until the next key frame.

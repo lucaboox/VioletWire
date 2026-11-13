@@ -8,6 +8,7 @@ mod job;
 mod pipeline;
 mod relay;
 mod ts;
+mod twitch;
 pub mod resolver;
 mod shared;
 mod tools;

@@ -100,6 +100,9 @@ pub struct Stats {
     pub latency: Option<f64>,
     /// Seconds of media buffered ahead of the picture.
     pub buffer: Option<f64>,
+    /// Seconds from Twitch receiving the frame on screen to now, from the
+    /// segments' PROGRAM-DATE-TIME — comparable to Twitch's own player.
+    pub broadcast_latency: Option<f64>,
     pub width: u32,
     pub height: u32,
     pub fps: f64,
@@ -314,6 +317,16 @@ impl GpuPlayback {
             let timing = engine.timing();
             stats.latency = timing.latency;
             stats.buffer = timing.buffer;
+            if let (Some(start), Some(position)) = (
+                self.relayed.as_ref().and_then(relay::Relayed::start_date_ms),
+                engine.position(),
+            ) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0., |elapsed| elapsed.as_secs_f64() * 1000.);
+                let seconds = (now - start) / 1000. - position;
+                stats.broadcast_latency = (0.0..120.0).contains(&seconds).then_some(seconds);
+            }
             stats.dropped_frames = engine.statistic(MF_MEDIA_ENGINE_STATISTIC_FRAMES_DROPPED);
             if let Some(bytes) = engine.statistic(MF_MEDIA_ENGINE_STATISTIC_BYTES_DOWNLOADED) {
                 match self.bytes_sample {
@@ -392,7 +405,13 @@ impl GpuPlayback {
                 .relayed
                 .as_ref()
                 .map_or(source.url.as_str(), |relayed| relayed.url.as_str());
+            if std::env::var_os("VIOLETWIRE_PLAYBACK_LOG").is_some() {
+                eprintln!("[start] relay ready, creating engine at {} ms", self.started.elapsed().as_millis());
+            }
             let engine = Engine::new(device, url, &self.compressor)?;
+            if std::env::var_os("VIOLETWIRE_PLAYBACK_LOG").is_some() {
+                eprintln!("[start] engine created at {} ms", self.started.elapsed().as_millis());
+            }
             // SAFETY: plain property set on the new engine.
             unsafe {
                 engine.engine().SetAutoPlay(!self.paused)?;
@@ -669,7 +688,7 @@ impl GpuPlayback {
         self.watchdog = Watchdog::Reconnecting;
         self.reconnects_without_frames += 1;
         self.lookup = Some((
-            resolver::resolve(&self.login, &self.requested_quality)?,
+            resolver::resolve_fresh(&self.login, &self.requested_quality)?,
             Purpose::Reconnect,
             Instant::now(),
         ));
@@ -827,6 +846,12 @@ impl Engine {
                 }
             }
         }
+    }
+
+    fn position(&self) -> Option<f64> {
+        // SAFETY: plain read on a live engine.
+        let now = unsafe { self.engine().GetCurrentTime() };
+        now.is_finite().then_some(now)
     }
 
     fn timing(&self) -> Timing {

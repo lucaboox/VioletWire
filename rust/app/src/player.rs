@@ -32,6 +32,8 @@ impl gpui::EventEmitter<PlayerAction> for Player {}
 /// Past this many seconds behind the newest media, the indicator says
 /// "Behind live" and offers to jump forward.
 const BEHIND_LIVE_SECONDS: f64 = 9.0;
+/// The same against the latency to the broadcaster.
+const BEHIND_BROADCAST_SECONDS: f64 = 12.0;
 
 pub struct Player {
     focus: Option<gpui::FocusHandle>,
@@ -121,12 +123,13 @@ impl Player {
             let (width, height) = gpu.video_size();
             let stats = gpu.last_stats();
             format!(
-                "backend=gpu frames={} size={width}x{height} cpu_frame_uploads=0 resolved_ms={:?} first_frame_ms={:?} quality={} latency={:?} buffer={:?} dropped={:?} recoveries={} compressor_active={}",
+                "backend=gpu frames={} size={width}x{height} cpu_frame_uploads=0 resolved_ms={:?} first_frame_ms={:?} quality={} latency={:?} broadcast={:?} buffer={:?} dropped={:?} recoveries={} compressor_active={}",
                 gpu.frames,
                 gpu.resolved_ms,
                 gpu.first_frame_ms,
                 gpu.quality(),
                 stats.latency,
+                stats.broadcast_latency,
                 stats.buffer,
                 stats.dropped_frames,
                 stats.stall_recoveries,
@@ -452,8 +455,12 @@ impl Player {
     fn controls(&self, stats: Option<&Stats>, window: &Window, cx: &Context<Self>) -> AnyElement {
         let width = self.controls_width;
         let wide = width >= 480.;
-        let latency = stats.and_then(|stats| stats.latency);
-        let behind = self.paused || latency.is_some_and(|latency| latency > BEHIND_LIVE_SECONDS);
+        // Latency to the broadcaster when Twitch's timestamps allow it.
+        let behind = self.paused
+            || stats.is_some_and(|stats| match stats.broadcast_latency {
+                Some(seconds) => seconds > BEHIND_BROADCAST_SECONDS,
+                None => stats.latency.is_some_and(|latency| latency > BEHIND_LIVE_SECONDS),
+            });
         let live_label = if self.paused {
             "Paused"
         } else if behind {
@@ -656,7 +663,7 @@ impl Player {
     /// Gauge plus the latency read-out; hover for a summary, click for the panel.
     fn stats_button(&self, stats: Option<&Stats>, show_latency: bool, cx: &Context<Self>) -> AnyElement {
         let latency = stats
-            .and_then(|stats| stats.latency)
+            .and_then(|stats| stats.broadcast_latency.or(stats.latency))
             .map(|latency| format!("{latency:.2}s"));
         let label = latency.clone();
         div()
@@ -749,6 +756,7 @@ impl Player {
             "Waiting for audio".into()
         };
         vec![
+            ("Latency to broadcaster", seconds(stats.broadcast_latency)),
             ("Latency", seconds(stats.latency)),
             ("Buffer size", seconds(stats.buffer)),
             (
@@ -979,7 +987,7 @@ fn stat_rows(rows: &[(&'static str, String)], size: f32, compact: bool) -> gpui:
         .text_size(px(size))
         .children(rows.iter().enumerate().flat_map(|(index, (label, value))| {
             let mut items = Vec::new();
-            if index == 2 || index == 6 {
+            if index == 3 || index == 7 {
                 items.push(
                     div()
                         .h(px(1.))
