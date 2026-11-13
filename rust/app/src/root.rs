@@ -86,6 +86,8 @@ pub struct Root {
     sidebar_collapsed: bool,
     sidebar_force_expanded: bool,
     settings_open: bool,
+    /// The keyboard shortcuts list ("?").
+    shortcuts_open: bool,
     settings: Entity<crate::settings::Settings>,
     _settings_close: gpui::Subscription,
     focus: gpui::FocusHandle,
@@ -124,6 +126,14 @@ impl Root {
         // Exercise the fullscreen layout offscreen without changing any desktop
         // window state. Normal use follows Window::is_fullscreen exclusively.
         self.probe_fullscreen = phase == 3;
+        // `--ui-probe-dialogs`: the shortcuts list, then a sidebar channel menu.
+        if std::env::args().any(|arg| arg == "--ui-probe-dialogs") {
+            self.shortcuts_open = phase == 1;
+            self.channel_menu = (phase == 2)
+                .then(|| self.channels.first())
+                .flatten()
+                .map(|channel| (channel.login.clone(), gpui::point(px(150.), px(250.))));
+        }
         // `--ui-probe-browse`: Browse, a category, the search dropdown, then
         // the search page, one per phase.
         if std::env::args().any(|arg| arg == "--ui-probe-browse")
@@ -216,8 +226,11 @@ impl Root {
             }
         });
         let settings = cx.new(|_| crate::settings::Settings);
-        let settings_close = crate::settings::subscribe(&settings, cx, |this, cx| {
+        let settings_close = crate::settings::subscribe(&settings, cx, |this, event, cx| {
             this.settings_open = false;
+            if matches!(event, crate::settings::Event::Shortcuts) {
+                this.shortcuts_open = true;
+            }
             cx.notify();
         });
         let mut root = Self {
@@ -238,6 +251,7 @@ impl Root {
             sidebar_collapsed: crate::preferences::get(cx).sidebar_collapsed,
             sidebar_force_expanded: false,
             settings_open: false,
+            shortcuts_open: false,
             settings,
             _settings_close: settings_close,
             focus: cx.focus_handle(),
@@ -1896,7 +1910,7 @@ impl Render for Root {
                 cx.observe(&self.category_input, |this, _, cx| this.category_query_changed(cx)),
             ];
         }
-        if self.settings_open || window.focused(cx).is_none() {
+        if self.settings_open || self.shortcuts_open || window.focused(cx).is_none() {
             window.focus(&self.focus);
         }
         if let Some(playing) = &self.playing {
@@ -2009,12 +2023,31 @@ impl Render for Root {
                     cx.stop_propagation();
                     return;
                 }
-                if this.settings_open {
+                if this.settings_open || this.shortcuts_open {
                     if key == "escape" {
                         this.settings_open = false;
+                        this.shortcuts_open = false;
                         cx.notify();
                         cx.stop_propagation();
                     }
+                    return;
+                }
+                let modifiers = event.keystroke.modifiers;
+                let typing = this.playing.as_ref().is_some_and(|playing| {
+                    playing.chat.read(cx).is_editing(window, cx)
+                }) || [&this.channel_input, &this.category_input].into_iter().any(|input| {
+                    gpui::Focusable::focus_handle(input.read(cx), cx).is_focused(window)
+                });
+                // "?" lists every shortcut, from anywhere outside a text box.
+                if !typing
+                    && !modifiers.control
+                    && !modifiers.alt
+                    && !modifiers.platform
+                    && (key == "?" || event.keystroke.key_char.as_deref() == Some("?"))
+                {
+                    this.shortcuts_open = true;
+                    cx.notify();
+                    cx.stop_propagation();
                     return;
                 }
                 if key == "f11" || (key == "escape" && window.is_fullscreen()) {
@@ -2024,14 +2057,7 @@ impl Render for Root {
                     return;
                 }
                 let Some(playing) = &this.playing else { return };
-                let modifiers = event.keystroke.modifiers;
-                if modifiers.control || modifiers.alt || modifiers.platform {
-                    return;
-                }
-                if playing.chat.read(cx).is_editing(window, cx)
-                    || gpui::Focusable::focus_handle(this.channel_input.read(cx), cx)
-                        .is_focused(window)
-                {
+                if modifiers.control || modifiers.alt || modifiers.platform || typing {
                     return;
                 }
                 match key {
@@ -2055,6 +2081,11 @@ impl Render for Root {
                     "o" => {
                         this.overlay_chat = !this.overlay_chat;
                         this.chat_visible = true;
+                        cx.notify();
+                    }
+                    // Esc leaves fullscreen (above), then theater mode.
+                    "escape" if this.theater => {
+                        this.theater = false;
                         cx.notify();
                     }
                     _ => {}
@@ -2130,6 +2161,28 @@ impl Render for Root {
                         ),
                 )
             })
+            .when(self.shortcuts_open, |v| {
+                v.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .id("shortcuts-backdrop")
+                                .absolute()
+                                .inset_0()
+                                .bg(rgba(0x00000099))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.shortcuts_open = false;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(self.shortcuts_dialog(window, cx)),
+                )
+            })
             .when(self.settings_open, |v| {
                 v.child(
                     div()
@@ -2152,6 +2205,198 @@ impl Render for Root {
                         .child(self.settings.clone()),
                 )
             })
+    }
+}
+
+/// One shortcut: the keys (pressed together unless `either`) and what they do.
+struct Shortcut {
+    keys: &'static [&'static str],
+    either: bool,
+    action: &'static str,
+}
+
+const fn keys(keys: &'static [&'static str], action: &'static str) -> Shortcut {
+    Shortcut { keys, either: false, action }
+}
+
+const fn either(keys: &'static [&'static str], action: &'static str) -> Shortcut {
+    Shortcut { keys, either: true, action }
+}
+
+/// Every shortcut the app has. Each one is backed by a handler: Root's key
+/// handler, the player's mouse handlers or the chat composer; keep them in step.
+const SHORTCUTS: &[(&str, Option<&str>, &[Shortcut])] = &[
+    (
+        "WATCHING A STREAM",
+        Some("While you are not typing in chat or a search box."),
+        &[
+            keys(&["Space"], "Pause, or resume at live"),
+            either(&["M", "Middle-click"], "Mute or unmute"),
+            either(&["↑", "↓"], "Volume up or down"),
+            keys(&["G"], "Jump to live"),
+            either(&["F", "Double-click"], "Fullscreen"),
+            keys(&["T"], "Theater mode"),
+            keys(&["C"], "Show or hide chat"),
+            keys(&["O"], "Chat over the video"),
+            keys(&["Esc"], "Leave fullscreen, then theater mode"),
+        ],
+    ),
+    (
+        "CHAT",
+        None,
+        &[
+            keys(&["Enter"], "Send, or take the highlighted suggestion"),
+            keys(&["Tab"], "Complete an emote or @name"),
+            either(&["↑", "↓"], "Move through suggestions"),
+            keys(&["Esc"], "Close suggestions"),
+        ],
+    ),
+    (
+        "SIDEBAR",
+        None,
+        &[keys(&["Right-click"], "Add or remove a favorite")],
+    ),
+    (
+        "WINDOW",
+        None,
+        &[
+            keys(&["F11"], "Fullscreen"),
+            keys(&["?"], "This list"),
+        ],
+    ),
+];
+
+fn key_chip(label: &'static str) -> impl IntoElement {
+    div()
+        .flex_none()
+        .h(px(24.))
+        .min_w(px(24.))
+        .px(px(7.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.))
+        .border_1()
+        .border_color(theme::button_border())
+        .bg(theme::surface())
+        .text_size(px(12.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme::text())
+        .child(label)
+}
+
+impl Root {
+    fn shortcuts_dialog(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        let groups = SHORTCUTS.iter().map(|(title, note, shortcuts)| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .pt_2()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme::text_dim())
+                        .child(*title),
+                )
+                .when_some(*note, |group, note| {
+                    group.child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(theme::text_dim())
+                            .child(note),
+                    )
+                })
+                .children(shortcuts.iter().map(|shortcut| {
+                    let separator = if shortcut.either { "or" } else { "+" };
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .py(px(3.))
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .text_color(theme::text())
+                                .child(shortcut.action),
+                        )
+                        .child(div().flex_none().flex().items_center().gap(px(6.)).children(
+                            shortcut.keys.iter().enumerate().flat_map(|(index, key)| {
+                                let mut parts = Vec::new();
+                                if index > 0 {
+                                    parts.push(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(theme::text_dim())
+                                            .child(separator)
+                                            .into_any_element(),
+                                    );
+                                }
+                                parts.push(key_chip(key).into_any_element());
+                                parts
+                            }),
+                        ))
+                }))
+        });
+        div()
+            .id("shortcuts")
+            .occlude()
+            .w(px(480.))
+            .max_w(gpui::relative(0.94))
+            .max_h((window.viewport_size().height - px(80.)).max(px(200.)))
+            .rounded(px(14.))
+            .border_1()
+            .border_color(theme::button_border())
+            .bg(theme::background())
+            .shadow_xl()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex_none()
+                    .p_5()
+                    .pb_2()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(ui::icon(Icon::Keyboard, 20.).text_color(theme::violet_hover()))
+                            .child(
+                                div()
+                                    .text_size(px(18.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Keyboard shortcuts"),
+                            ),
+                    )
+                    .child(
+                        ui::icon_button("shortcuts-close", Icon::Close, "Close", false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.shortcuts_open = false;
+                                cx.notify();
+                            }),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("shortcuts-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_5()
+                    .pb_5()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .children(groups),
+            )
     }
 }
 

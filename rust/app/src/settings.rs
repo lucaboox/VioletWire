@@ -5,15 +5,19 @@ use crate::{
     ui::{self, ButtonStyle, Icon},
 };
 use gpui::{Context, Entity, Render, Subscription, Window, div, prelude::*, px};
-pub struct Closed;
+pub enum Event {
+    Closed,
+    /// Open the keyboard shortcuts list (and close settings).
+    Shortcuts,
+}
 pub struct Settings;
-impl gpui::EventEmitter<Closed> for Settings {}
+impl gpui::EventEmitter<Event> for Settings {}
 pub fn subscribe<T: 'static>(
     view: &Entity<Settings>,
     cx: &mut Context<T>,
-    close: impl Fn(&mut T, &mut Context<T>) + 'static,
+    handle: impl Fn(&mut T, &Event, &mut Context<T>) + 'static,
 ) -> Subscription {
-    cx.subscribe(view, move |this, _, _: &Closed, cx| close(this, cx))
+    cx.subscribe(view, move |this, _, event: &Event, cx| handle(this, event, cx))
 }
 fn card(title: &str, description: &str, control: impl IntoElement) -> impl IntoElement {
     div()
@@ -151,7 +155,7 @@ impl Render for Settings {
                             "Close settings · Escape",
                             false,
                         )
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Closed))),
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Closed))),
                     ),
             )
             .child(
@@ -234,6 +238,14 @@ impl Render for Settings {
                                 ))
                             }),
                         ),
+                    ))
+                    .child(card(
+                        "Keyboard shortcuts",
+                        "Every key and mouse shortcut. Press ? to open it any time.",
+                        ui::button("show-shortcuts", "View", None, ButtonStyle::Secondary)
+                            .px_3()
+                            .h(px(30.))
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Shortcuts))),
                     ))
                     .child(
                         div()

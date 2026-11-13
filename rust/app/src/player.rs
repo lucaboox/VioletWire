@@ -54,6 +54,12 @@ pub struct Player {
     controls_task: Option<gpui::Task<()>>,
     volume_bounds: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     poll_scheduled: bool,
+    /// Bumped to abandon a scheduled poll. GPUI drops next-frame callbacks
+    /// when it cannot enter the window (Windows' modal loops while dragging or
+    /// resizing, say); a lost poll used to leave the picture frozen while the
+    /// Media Engine kept playing sound.
+    poll_generation: u64,
+    last_polled: std::time::Instant,
     login: String,
     gpu: Option<GpuPlayback>,
     gpu_frame: Option<gpui::WindowsSurface>,
@@ -168,6 +174,8 @@ impl Player {
             controls_task: None,
             volume_bounds: Default::default(),
             poll_scheduled: false,
+            poll_generation: 0,
+            last_polled: std::time::Instant::now(),
             login: login.to_owned(),
             gpu: None,
             gpu_frame: None,
@@ -211,9 +219,14 @@ impl Player {
             return;
         }
         self.poll_scheduled = true;
+        let generation = self.poll_generation;
         let view = cx.entity().downgrade();
         window.on_next_frame(move |window, cx| {
             let _ = view.update(cx, |player, cx| {
+                // A newer poll replaced this one.
+                if player.poll_generation != generation {
+                    return;
+                }
                 player.poll_scheduled = false;
                 player.poll_gpu(window, cx);
             });
@@ -221,6 +234,7 @@ impl Player {
     }
 
     fn poll_gpu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_polled = std::time::Instant::now();
         let Some(gpu) = &mut self.gpu else {
             return;
         };
@@ -496,6 +510,7 @@ impl Player {
                 cx.notify();
             }))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(gpui::MouseButton::Middle, |_, _, cx| cx.stop_propagation())
             .child(
                 ui::video_button(
                     "pause",
@@ -805,6 +820,7 @@ impl Player {
             .bg(rgba(0x0f0f12f5))
             .shadow_lg()
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(gpui::MouseButton::Middle, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
                     .flex()
@@ -903,6 +919,7 @@ impl Player {
             .bg(rgba(0x151519f7))
             .shadow_lg()
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(gpui::MouseButton::Middle, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
                     .px_3()
@@ -1032,6 +1049,18 @@ impl Render for Player {
                         .await;
                     if this
                         .update(cx, |this, cx| {
+                            // Polling should run every display frame. If the
+                            // scheduled poll was lost, start a new one (the
+                            // next render schedules it).
+                            if this.gpu.is_some()
+                                && this.poll_scheduled
+                                && this.last_polled.elapsed() > std::time::Duration::from_millis(750)
+                            {
+                                this.poll_generation += 1;
+                                this.poll_scheduled = false;
+                                this.last_polled = std::time::Instant::now();
+                                cx.notify();
+                            }
                             if !this.paused
                                 && !this.controls_hovered
                                 && !this.quality_menu
@@ -1115,6 +1144,14 @@ impl Render for Player {
                         window.toggle_fullscreen();
                         cx.notify();
                     }
+                }),
+            )
+            // Middle-click mutes or unmutes, as in Electron.
+            .on_mouse_down(
+                gpui::MouseButton::Middle,
+                cx.listener(|this, _, _, cx| {
+                    this.toggle_mute(cx);
+                    cx.stop_propagation();
                 }),
             )
             .size_full()
