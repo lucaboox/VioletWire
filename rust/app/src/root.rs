@@ -1942,6 +1942,17 @@ impl Render for Root {
             && let wry::raw_window_handle::RawWindowHandle::Win32(handle) = handle.as_raw()
         {
             self.hwnd = Some(handle.hwnd.get());
+            // A maximized window fills the monitor (see vendor/GPUI-PATCH.md).
+            // Tell the shell it is not a fullscreen app, so an auto-hidden
+            // taskbar still slides up over it.
+            // SAFETY: sets a window property on this app's own window.
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::SetPropW(
+                    windows::Win32::Foundation::HWND(handle.hwnd.get() as _),
+                    windows::core::w!("NonRudeHWND"),
+                    Some(windows::Win32::Foundation::HANDLE(1 as _)),
+                );
+            }
         }
         let fullscreen = window.is_fullscreen() || self.probe_fullscreen;
         if self.channel_subscription.is_none() {
