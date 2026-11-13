@@ -26,6 +26,10 @@ pub struct Preferences {
     /// The volume normaliser (Electron's "audio compression").
     pub audio_compression: bool,
     pub show_fps_overlay: bool,
+    /// Followed-channel logins pinned to the top of their sidebar group.
+    pub favorite_channels: Vec<String>,
+    /// Electron's favourites were copied in once; later edits are the user's.
+    pub favorites_imported: bool,
 }
 impl Global for Preferences {}
 impl Default for Preferences {
@@ -44,6 +48,8 @@ impl Default for Preferences {
             player_quality: "best".into(),
             audio_compression: false,
             show_fps_overlay: false,
+            favorite_channels: Vec::new(),
+            favorites_imported: false,
         }
     }
 }
@@ -59,6 +65,14 @@ impl Preferences {
         if !crate::playback::resolver::is_quality(&self.player_quality) {
             self.player_quality = "best".into();
         }
+        let mut favorites: Vec<String> = Vec::new();
+        for login in &self.favorite_channels {
+            let login = login.trim().to_ascii_lowercase();
+            if crate::format::is_login(&login) && !favorites.contains(&login) && favorites.len() < 500 {
+                favorites.push(login);
+            }
+        }
+        self.favorite_channels = favorites;
     }
 }
 fn directory() -> Option<PathBuf> {
@@ -80,6 +94,16 @@ pub fn initialize(cx: &mut App) {
             })
         })
         .unwrap_or_default();
+    if !settings.favorites_imported {
+        // Bring the Electron client's favourites across once.
+        if let Some(electron) = std::env::var_os("APPDATA").and_then(|path| {
+            read(PathBuf::from(path).join("twitch-windows-viewer/preferences.json"))
+        }) && settings.favorite_channels.is_empty()
+        {
+            settings.favorite_channels = electron.favorite_channels;
+        }
+        settings.favorites_imported = true;
+    }
     settings.validate();
     crate::theme::set_oled(settings.oled_mode);
     cx.set_global(settings);

@@ -102,6 +102,8 @@ pub struct Root {
     notice_task: Option<Task<()>>,
     clip_task: Option<Task<()>>,
     hover_task: Option<Task<()>>,
+    /// The sidebar's right-click menu: which channel, and where.
+    channel_menu: Option<(String, gpui::Point<gpui::Pixels>)>,
     // A held task is cancelled when it is replaced or dropped.
     auth_task: Option<Task<()>>,
     followed_task: Option<Task<()>>,
@@ -253,6 +255,7 @@ impl Root {
             notice_task: None,
             clip_task: None,
             hover_task: None,
+            channel_menu: None,
             auth_task: None,
             followed_task: None,
             refresh_task: None,
@@ -983,7 +986,38 @@ impl Root {
                     })),
             )
     }
+    /// Followed channels as the sidebar lists them: live, then offline, each
+    /// with favourites first and otherwise in Twitch's order. An offline
+    /// favourite never outranks a live channel.
+    fn sidebar_order(&self, favorites: &[String]) -> Vec<&FollowedChannel> {
+        let rank = |channel: &FollowedChannel| {
+            (
+                channel.stream.is_none(),
+                !favorites.contains(&channel.login),
+            )
+        };
+        let mut ordered: Vec<&FollowedChannel> = self.channels.iter().collect();
+        // Stable: within a rank the original order stays.
+        ordered.sort_by_key(|channel| rank(channel));
+        ordered
+    }
+
+    fn toggle_favorite(&mut self, login: &str, cx: &mut Context<Self>) {
+        let login = login.to_owned();
+        crate::preferences::update(cx, |prefs| {
+            if let Some(at) = prefs.favorite_channels.iter().position(|seen| *seen == login) {
+                prefs.favorite_channels.remove(at);
+            } else {
+                prefs.favorite_channels.push(login);
+            }
+        });
+        self.channel_menu = None;
+        cx.notify();
+    }
+
     fn sidebar(&self, collapsed: bool, cx: &Context<Self>) -> impl IntoElement {
+        let favorites = crate::preferences::get(cx).favorite_channels;
+        let ordered = self.sidebar_order(&favorites);
         let live = self
             .channels
             .iter()
@@ -1087,14 +1121,14 @@ impl Root {
                     .flex()
                     .flex_col()
                     .children(
-                        self.channels
+                        ordered
                             .iter()
                             .enumerate()
                             .flat_map(|(index, channel)| {
                                 let mut rows = Vec::new();
                                 if !collapsed
                                     && channel.stream.is_none()
-                                    && (index == 0 || self.channels[index - 1].stream.is_some())
+                                    && (index == 0 || ordered[index - 1].stream.is_some())
                                 {
                                     rows.push(
                                         div()
@@ -1115,7 +1149,13 @@ impl Root {
                                     );
                                 }
                                 rows.push(
-                                    self.channel_row(channel, collapsed, cx).into_any_element(),
+                                    self.channel_row(
+                                        channel,
+                                        collapsed,
+                                        favorites.contains(&channel.login),
+                                        cx,
+                                    )
+                                    .into_any_element(),
                                 );
                                 rows
                             }),
@@ -1127,9 +1167,11 @@ impl Root {
         &self,
         channel: &FollowedChannel,
         collapsed: bool,
+        favorite: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let login = channel.login.clone();
+        let menu_login = channel.login.clone();
         let name = SharedString::from(channel.display_name.clone());
         let selected = self
             .playing
@@ -1171,8 +1213,21 @@ impl Root {
                     .relative()
                     .flex_none()
                     .size(px(36.))
-                    .when(channel.stream.is_none(), |v| v.opacity(0.45))
-                    .child(self.avatar(channel.profile_image_url.as_deref(), 36.))
+                    .child(
+                        div()
+                            .size_full()
+                            .when(channel.stream.is_none(), |v| v.opacity(0.45))
+                            .child(self.avatar(channel.profile_image_url.as_deref(), 36.)),
+                    )
+                    .when(favorite, |v| {
+                        v.child(
+                            ui::icon(Icon::StarFilled, 11.)
+                                .absolute()
+                                .top(px(-3.))
+                                .right(px(-3.))
+                                .text_color(rgb(0xfacc15)),
+                        )
+                    })
                     .when(collapsed && channel.stream.is_some(), |v| {
                         v.child(
                             div()
@@ -1231,6 +1286,15 @@ impl Root {
             })
             .on_click(
                 cx.listener(move |this, _, window, cx| this.play(&login, name.clone(), window, cx)),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                    this.channel_menu = Some((menu_login.clone(), event.position));
+                    this.search.open = false;
+                    this.account_menu = false;
+                    cx.notify();
+                }),
             )
             .tooltip(move |_, cx| cx.new(|_| ui::Tooltip(hint.clone().into())).into())
     }
@@ -1374,6 +1438,19 @@ impl Root {
                             }),
                     ),
             )
+            .when(self.channels.iter().any(|followed| followed.login == login), |bar| {
+                let favorite = crate::preferences::get(cx).favorite_channels.contains(&login);
+                let star_login = login.clone();
+                bar.child(
+                    ui::icon_button(
+                        "toolbar-favorite",
+                        if favorite { Icon::StarFilled } else { Icon::Star },
+                        if favorite { "Remove from favorites" } else { "Add to favorites" },
+                        favorite,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_favorite(&star_login, cx))),
+                )
+            })
             .when(matches!(self.auth, Auth::SignedIn(_)), |bar| {
                 let login = login.clone();
                 let creating = self.clip_task.is_some();
@@ -1912,18 +1989,22 @@ impl Render for Root {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.search.open || this.account_menu {
+                    if this.search.open || this.account_menu || this.channel_menu.is_some() {
                         this.search.open = false;
                         this.account_menu = false;
+                        this.channel_menu = None;
                         cx.notify();
                     }
                 }),
             )
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
-                if key == "escape" && (this.search.open || this.account_menu) {
+                if key == "escape"
+                    && (this.search.open || this.account_menu || this.channel_menu.is_some())
+                {
                     this.search.open = false;
                     this.account_menu = false;
+                    this.channel_menu = None;
                     cx.notify();
                     cx.stop_propagation();
                     return;
@@ -1987,6 +2068,43 @@ impl Render for Root {
             .text_size(px(14.))
             .when(!fullscreen, |v| v.child(self.title_bar(window)))
             .child(body)
+            .when_some(self.channel_menu.clone(), |root, (login, at)| {
+                let favorite = crate::preferences::get(cx).favorite_channels.contains(&login);
+                root.child(
+                    gpui::deferred(
+                        div()
+                            .absolute()
+                            .left(at.x)
+                            .top(at.y)
+                            .min_w(px(196.))
+                            .p(px(4.))
+                            .rounded(px(9.))
+                            .border_1()
+                            .border_color(theme::button_border())
+                            .bg(theme::popup())
+                            .shadow_lg()
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(
+                                div()
+                                    .id("menu-favorite")
+                                    .h(px(34.))
+                                    .px(px(10.))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(9.))
+                                    .rounded(px(6.))
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(rgb(0x2a2a31)))
+                                    .child(ui::icon(if favorite { Icon::Star } else { Icon::StarFilled }, 15.))
+                                    .child(if favorite { "Remove from favorites" } else { "Add to favorites" })
+                                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_favorite(&login, cx))),
+                            ),
+                    )
+                    .with_priority(2),
+                )
+            })
             .when_some(self.notice.clone(), |root, notice| {
                 root.child(
                     div()

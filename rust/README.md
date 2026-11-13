@@ -70,6 +70,9 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
   blocks until the next key frame.
 - Clip: Twitch's official Create Clip API (`clips:edit`), then Twitch's editor in
   the browser.
+- Favourites as in Electron: right-click a followed channel (or use the star in
+  the stream header) to add or remove one. Favourites sort first within Live and
+  Offline and carry a star badge. Electron's list is imported once.
 - Player controls as in Electron: the live indicator ("Live", "Behind live" —
   click to return — or "Paused"), video stats (latency read-out on the bar, a hover
   summary, and a panel with latency, buffer, resolution, framerate, bitrate,
@@ -192,7 +195,7 @@ never waits on the network.
 
 ## Roadmap
 
-1. **Channel extras.** Favourites, channel pages and picture-in-picture.
+1. **Channel extras.** Channel pages and picture-in-picture.
 2. **Playback parity.** Authenticated resolution (subscriber/Turbo) and LL-HLS
    parts in the relay; see the next section.
 3. **Advanced chat.** User cards, moderation commands, room modes, editable emote
