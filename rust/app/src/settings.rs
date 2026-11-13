@@ -113,6 +113,14 @@ impl Render for Settings {
             |s| s.chat_overlay_opacity = s.chat_overlay_opacity.saturating_add(5),
             cx,
         );
+        let mention_volume = stepper(
+            "mention-volume-down",
+            "mention-volume-up",
+            format!("{}%", settings.mention_sound_volume),
+            |s| s.mention_sound_volume = s.mention_sound_volume.saturating_sub(10),
+            |s| s.mention_sound_volume = s.mention_sound_volume.saturating_add(10).min(200),
+            cx,
+        );
         let history = stepper(
             "history-down",
             "history-up",
@@ -199,6 +207,94 @@ impl Render for Settings {
                             },
                         )),
                     ))
+                    .child(card(
+                        "Chat on the left",
+                        "Put the chat sidebar on the left of the stream.",
+                        toggle("chat-left", settings.chat_on_left).on_click(cx.listener(
+                            |_, _, _, cx| {
+                                preferences::update(cx, |s| s.chat_on_left = !s.chat_on_left)
+                            },
+                        )),
+                    ))
+                    .child(card(
+                        "Deleted messages",
+                        "Replace a removed message, or keep its text faded.",
+                        div().flex().gap_1().children(
+                            [("deleted-placeholder", "placeholder", "Replace"), ("deleted-dimmed", "dimmed", "Fade")]
+                                .into_iter()
+                                .map(|(id, style, label)| {
+                                    ui::button(
+                                        id,
+                                        label,
+                                        None,
+                                        if settings.chat_deleted_message_style == style {
+                                            ButtonStyle::Selected
+                                        } else {
+                                            ButtonStyle::Secondary
+                                        },
+                                    )
+                                    .px_2()
+                                    .h(px(30.))
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        preferences::update(cx, |s| {
+                                            s.chat_deleted_message_style = style.into()
+                                        })
+                                    }))
+                                }),
+                        ),
+                    ))
+                    .child(card(
+                        "Mention sound",
+                        "Play a sound when someone mentions or replies to you.",
+                        toggle("mention-sound", settings.mention_sound_enabled).on_click(
+                            cx.listener(|_, _, _, cx| {
+                                preferences::update(cx, |s| {
+                                    s.mention_sound_enabled = !s.mention_sound_enabled
+                                });
+                                let s = preferences::get(cx);
+                                if s.mention_sound_enabled {
+                                    crate::sound::play_mention(&s.mention_sound_id, s.mention_sound_volume);
+                                }
+                            }),
+                        ),
+                    ))
+                    .when(settings.mention_sound_enabled, |list| {
+                        list.child(card(
+                            "Sound",
+                            "Click one to hear it.",
+                            div().flex().gap_1().children(
+                                crate::preferences::MENTION_SOUNDS.into_iter().map(|(id, label)| {
+                                    ui::button(
+                                        match id {
+                                            "chime" => "sound-chime",
+                                            "pop" => "sound-pop",
+                                            "knock" => "sound-knock",
+                                            _ => "sound-ping",
+                                        },
+                                        label,
+                                        None,
+                                        if settings.mention_sound_id == id {
+                                            ButtonStyle::Selected
+                                        } else {
+                                            ButtonStyle::Secondary
+                                        },
+                                    )
+                                    .px_2()
+                                    .h(px(30.))
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        preferences::update(cx, |s| s.mention_sound_id = id.into());
+                                        let s = preferences::get(cx);
+                                        crate::sound::play_mention(&s.mention_sound_id, s.mention_sound_volume);
+                                    }))
+                                }),
+                            ),
+                        ))
+                        .child(card(
+                            "Sound volume",
+                            "Up to 200% for a louder alert.",
+                            mention_volume,
+                        ))
+                    })
                     .child(card("Text size", "Message text size in pixels.", font))
                     .child(card(
                         "Emote size",

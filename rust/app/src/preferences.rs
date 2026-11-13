@@ -30,7 +30,35 @@ pub struct Preferences {
     pub favorite_channels: Vec<String>,
     /// Electron's favourites were copied in once; later edits are the user's.
     pub favorites_imported: bool,
+    /// The main window's last normal bounds, maximized state and monitor.
+    pub window: Option<WindowPlacement>,
+    pub chat_on_left: bool,
+    /// `placeholder` ("Message deleted") or `dimmed` (the text, faded).
+    pub chat_deleted_message_style: String,
+    pub mention_sound_enabled: bool,
+    /// 0–200 %.
+    pub mention_sound_volume: u8,
+    /// `ping`, `chime`, `pop` or `knock`.
+    pub mention_sound_id: String,
+    /// The chat and mention settings above were copied from Electron once.
+    pub chat_settings_imported: bool,
 }
+
+/// Logical pixels, as GPUI reports them for the window's monitor.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowPlacement {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub maximized: bool,
+    /// The monitor's GPUI UUID, so the window reopens where it was.
+    pub display: Option<String>,
+}
+
+pub const MENTION_SOUNDS: [(&str, &str); 4] =
+    [("ping", "Ping"), ("chime", "Chime"), ("pop", "Pop"), ("knock", "Knock")];
 impl Global for Preferences {}
 impl Default for Preferences {
     fn default() -> Self {
@@ -50,6 +78,13 @@ impl Default for Preferences {
             show_fps_overlay: false,
             favorite_channels: Vec::new(),
             favorites_imported: false,
+            window: None,
+            chat_on_left: false,
+            chat_deleted_message_style: "placeholder".into(),
+            mention_sound_enabled: false,
+            mention_sound_volume: 100,
+            mention_sound_id: "ping".into(),
+            chat_settings_imported: false,
         }
     }
 }
@@ -73,6 +108,23 @@ impl Preferences {
             }
         }
         self.favorite_channels = favorites;
+        if !matches!(self.chat_deleted_message_style.as_str(), "placeholder" | "dimmed") {
+            self.chat_deleted_message_style = "placeholder".into();
+        }
+        self.mention_sound_volume = self.mention_sound_volume.min(200);
+        if !MENTION_SOUNDS.iter().any(|(id, _)| *id == self.mention_sound_id) {
+            self.mention_sound_id = "ping".into();
+        }
+        if let Some(window) = &self.window
+            && !([window.x, window.y, window.width, window.height].iter().all(|v| v.is_finite())
+                && (760.0..=20_000.0).contains(&window.width)
+                && (480.0..=20_000.0).contains(&window.height)
+                && window.x.abs() < 100_000.
+                && window.y.abs() < 100_000.
+                && window.display.as_ref().is_none_or(|uuid| uuid.len() <= 64))
+        {
+            self.window = None;
+        }
     }
 }
 fn directory() -> Option<PathBuf> {
@@ -104,6 +156,19 @@ pub fn initialize(cx: &mut App) {
         }
         settings.favorites_imported = true;
     }
+    if !settings.chat_settings_imported {
+        // Chat side, deleted-message style and the mention sound, once.
+        if let Some(electron) = std::env::var_os("APPDATA").and_then(|path| {
+            read(PathBuf::from(path).join("twitch-windows-viewer/preferences.json"))
+        }) {
+            settings.chat_on_left = electron.chat_on_left;
+            settings.chat_deleted_message_style = electron.chat_deleted_message_style;
+            settings.mention_sound_enabled = electron.mention_sound_enabled;
+            settings.mention_sound_volume = electron.mention_sound_volume;
+            settings.mention_sound_id = electron.mention_sound_id;
+        }
+        settings.chat_settings_imported = true;
+    }
     settings.validate();
     crate::theme::set_oled(settings.oled_mode);
     cx.set_global(settings);
@@ -120,6 +185,8 @@ pub fn update(cx: &mut App, edit: impl FnOnce(&mut Preferences)) {
         return;
     }
     previous.player_volume = settings.player_volume;
+    // Moving or resizing the window is not a reason to redraw everything.
+    previous.window = settings.window.clone();
     let redraw = previous != settings;
     crate::theme::set_oled(settings.oled_mode);
     cx.set_global(settings.clone());

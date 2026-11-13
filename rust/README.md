@@ -80,6 +80,12 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
 - Keyboard and mouse shortcuts as in Electron: Space, M or middle-click, F or
   double-click, T, C, O, G, the arrow keys and Esc. Press `?` (or open
   Settings > Keyboard shortcuts) for the full list.
+- Window placement as in Electron: position, size, maximized state and monitor
+  are restored on launch (if that monitor is still connected).
+- Chat on the left, deleted messages replaced or faded, and Electron's mention
+  sound (Ping, Chime, Pop or Knock, 0–200 %), synthesized in `sound.rs`. The
+  pointer hides with the player controls. These settings were copied from
+  Electron once.
 - Favourites as in Electron: right-click a followed channel (or use the star in
   the stream header) to add or remove one. Favourites sort first within Live and
   Offline and carry a star badge. Electron's list is imported once.

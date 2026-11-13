@@ -76,6 +76,24 @@ impl Chat {
             cx.notify();
         }
     }
+    /// Electron's mention alert: someone else's live message that mentions
+    /// or replies to the signed-in viewer. History never arrives here.
+    fn alerts_for(&self, message: &model::Message) -> bool {
+        let Some(session) = &self.session else {
+            return false;
+        };
+        let login = &session.identity.login;
+        self.preferences.mention_sound_enabled
+            && message.system.is_none()
+            && !message.deleted
+            && !message.login.eq_ignore_ascii_case(login)
+            && (model::mentioned(&message.text, login)
+                || message
+                    .reply
+                    .as_ref()
+                    .is_some_and(|reply| reply.name.eq_ignore_ascii_case(login)))
+    }
+
     pub fn set_preferences(
         &mut self,
         settings: crate::preferences::Preferences,
@@ -84,7 +102,9 @@ impl Chat {
         let changed = self.preferences.chat_font_size != settings.chat_font_size
             || self.preferences.chat_emote_size != settings.chat_emote_size
             || self.preferences.chat_timestamps != settings.chat_timestamps
-            || self.preferences.chat_overlay_opacity != settings.chat_overlay_opacity;
+            || self.preferences.chat_overlay_opacity != settings.chat_overlay_opacity
+            || self.preferences.chat_deleted_message_style != settings.chat_deleted_message_style
+            || self.preferences.chat_on_left != settings.chat_on_left;
         self.preferences = settings;
         if changed {
             self.invalidate_messages();
@@ -302,6 +322,12 @@ impl Chat {
                 Event::Message(message) => {
                     if !message.id.is_empty() && !self.ids.insert(message.id.clone()) {
                         continue;
+                    }
+                    if self.alerts_for(&message) {
+                        crate::sound::play_mention(
+                            &self.preferences.mention_sound_id,
+                            self.preferences.mention_sound_volume,
+                        );
                     }
                     self.messages.push_back(message);
                     let n = self.messages.len();
@@ -603,7 +629,7 @@ impl Chat {
                 true,
             );
         }
-        if message.deleted {
+        if message.deleted && self.preferences.chat_deleted_message_style != "dimmed" {
             flow.text("[Message deleted]", theme::text_dim(), false);
         } else {
             for (part_index, part) in model::parts(&message, &self.assets.providers)
@@ -689,6 +715,11 @@ impl Chat {
             .py(px(3.))
             .rounded(px(4.))
             .text_color(theme::text_secondary())
+            // "Dimmed" keeps a deleted message's text, faded.
+            .when(
+                message.deleted && self.preferences.chat_deleted_message_style == "dimmed",
+                |v| v.opacity(0.4),
+            )
             .when(mentioned, |v| {
                 v.bg(rgba(0x9147ff29))
                     .border_l_2()
@@ -1113,7 +1144,8 @@ impl Render for Chat {
             } else {
                 theme::surface()
             })
-            .when(!self.overlay, |v| v.border_l_1())
+            .when(!self.overlay && !self.preferences.chat_on_left, |v| v.border_l_1())
+            .when(!self.overlay && self.preferences.chat_on_left, |v| v.border_r_1())
             .when(self.overlay, |v| v.rounded(px(11.)))
             .border_color(theme::border())
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {

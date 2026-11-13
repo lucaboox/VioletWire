@@ -13,6 +13,7 @@ mod preferences;
 mod root;
 mod session;
 mod settings;
+mod sound;
 mod theme;
 mod twitch;
 mod ui;
@@ -115,10 +116,34 @@ fn main() {
                 },
                 cx,
             );
+            // Reopen where the window was last, if that monitor is still
+            // there and the window would be visible on it.
+            let restored = (probe_seconds.is_none() && ui_probe.is_none())
+                .then(|| preferences::get(cx).window)
+                .flatten()
+                .and_then(|placement| {
+                    let displays = cx.displays();
+                    let display = displays.iter().find(|display| {
+                        placement.display.as_deref()
+                            == display.uuid().ok().map(|uuid| uuid.to_string()).as_deref()
+                    })?;
+                    let saved = Bounds::new(
+                        gpui::point(px(placement.x), px(placement.y)),
+                        size(px(placement.width), px(placement.height)),
+                    );
+                    let visible = display.bounds().intersect(&saved);
+                    (visible.size.width > px(200.) && visible.size.height > px(120.))
+                        .then_some((display.id(), saved, placement.maximized))
+                });
             let options = WindowOptions {
                 show: probe_seconds.is_none() && ui_probe.is_none(),
                 focus: probe_seconds.is_none() && ui_probe.is_none(),
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                display_id: restored.as_ref().map(|(display, _, _)| *display),
+                window_bounds: Some(match restored {
+                    Some((_, saved, true)) => WindowBounds::Maximized(saved),
+                    Some((_, saved, false)) => WindowBounds::Windowed(saved),
+                    None => WindowBounds::Windowed(bounds),
+                }),
                 // VioletWire draws its own dark title bar; GPUI still gives
                 // Windows the real caption areas, so snap layouts keep working.
                 titlebar: Some(TitlebarOptions {

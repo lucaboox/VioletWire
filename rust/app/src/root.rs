@@ -90,6 +90,8 @@ pub struct Root {
     shortcuts_open: bool,
     /// This window's handle, to own the twitch.tv sign-in window.
     hwnd: Option<isize>,
+    /// Saves the window's position and size as it changes.
+    window_observer: Option<gpui::Subscription>,
     settings: Entity<crate::settings::Settings>,
     _settings_close: gpui::Subscription,
     focus: gpui::FocusHandle,
@@ -266,6 +268,7 @@ impl Root {
             settings_open: false,
             shortcuts_open: false,
             hwnd: None,
+            window_observer: None,
             settings,
             _settings_close: settings_close,
             focus: cx.focus_handle(),
@@ -1589,6 +1592,7 @@ impl Root {
             .h_full()
             .flex()
             .bg(theme::surface())
+            .when(crate::preferences::get(cx).chat_on_left, |v| v.flex_row_reverse())
             .child(player)
             .when(self.chat_visible && !self.overlay_chat, |v| {
                 v.child(
@@ -1953,6 +1957,14 @@ impl Render for Root {
                     Some(windows::Win32::Foundation::HANDLE(1 as _)),
                 );
             }
+        }
+        // Probes use their own window sizes; never save those.
+        if self.window_observer.is_none()
+            && !std::env::args().any(|argument| argument.contains("probe"))
+        {
+            self.window_observer = Some(cx.observe_window_bounds(window, |_, window, cx| {
+                remember_window(window, cx)
+            }));
         }
         let fullscreen = window.is_fullscreen() || self.probe_fullscreen;
         if self.channel_subscription.is_none() {
@@ -2454,6 +2466,30 @@ impl Root {
                     .children(groups),
             )
     }
+}
+
+/// Electron's window-state persistence: the normal bounds, whether the window
+/// was maximized, and on which monitor. Fullscreen is not remembered.
+fn remember_window(window: &Window, cx: &mut gpui::App) {
+    let (bounds, maximized) = match window.window_bounds() {
+        gpui::WindowBounds::Windowed(bounds) => (bounds, false),
+        gpui::WindowBounds::Maximized(bounds) => (bounds, true),
+        gpui::WindowBounds::Fullscreen(_) => return,
+    };
+    let display = window
+        .display(cx)
+        .and_then(|display| display.uuid().ok())
+        .map(|uuid| uuid.to_string());
+    crate::preferences::update(cx, |preferences| {
+        preferences.window = Some(crate::preferences::WindowPlacement {
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+            maximized,
+            display,
+        });
+    });
 }
 
 fn caption_button(

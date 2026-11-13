@@ -1125,6 +1125,9 @@ impl Render for Player {
         div()
             .id("native-video")
             .track_focus(&focus)
+            // Electron hides the pointer with the controls; moving it brings
+            // both back.
+            .when(!self.controls_visible, |video| video.cursor(gpui::CursorStyle::None))
             .capture_any_mouse_down(move |_, window, _| window.focus(&focus))
             .on_mouse_move(cx.listener(|this, _, _, cx| {
                 this.last_pointer = std::time::Instant::now();
