@@ -107,24 +107,72 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
     // animations become a still image instead of occupying an unbounded atlas.
     let (mut decoded, mut size) = (Vec::new(), 0usize);
     for frame in frames {
-        let mut frame = frame?;
+        let frame = frame?;
         size += frame.buffer().len();
-        if size > 2 * 1024 * 1024 || decoded.len() >= 120 {
+        if size > 8 * 1024 * 1024 || decoded.len() >= 300 {
             decoded.truncate(1);
             break;
         }
-        for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+        // Browsers play a GIF frame of 10 ms or less at 100 ms; GPUI would
+        // spin through it at the display rate.
+        let (numerator, denominator) = frame.delay().numer_denom_ms();
+        let delay = if numerator <= 10 * denominator.max(1) {
+            image::Delay::from_numer_denom_ms(100, 1)
+        } else {
+            frame.delay()
+        };
+        let (left, top) = (frame.left(), frame.top());
+        let mut buffer = frame.into_buffer();
+        for pixel in buffer.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
+        let frame = Frame::from_parts(buffer, left, top, delay);
         decoded.push(frame);
         if !animated {
             break;
         }
     }
     if decoded.is_empty() {
-        bail!("Emote has no image frames.");
+        // A still WebP yields no frames from the animation decoder: it was
+        // every static 7TV emote.
+        let mut still = image::load_from_memory(bytes)
+            .context("Emote has no image frames.")?
+            .into_rgba8();
+        for pixel in still.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        decoded.push(Frame::new(still));
     }
     Ok(Arc::new(RenderImage::new(decoded)))
+}
+
+/// A flipped or rotated copy of an emote, for Electron's emote modifiers
+/// (`h!`, `v!`, `l!`, `r!` and FFZ's flip flags). Every frame keeps its delay.
+pub fn transformed(
+    image: &RenderImage,
+    flip_x: bool,
+    flip_y: bool,
+    rotate: i8,
+) -> Option<Arc<RenderImage>> {
+    let mut frames = Vec::with_capacity(image.frame_count());
+    for index in 0..image.frame_count() {
+        let size = image.size(index);
+        let (width, height) = (u32::try_from(size.width.0).ok()?, u32::try_from(size.height.0).ok()?);
+        let buffer = image::RgbaImage::from_raw(width, height, image.as_bytes(index)?.to_vec())?;
+        let mut buffer = match rotate {
+            1 => image::imageops::rotate90(&buffer),
+            -1 => image::imageops::rotate270(&buffer),
+            _ => buffer,
+        };
+        if flip_x {
+            image::imageops::flip_horizontal_in_place(&mut buffer);
+        }
+        if flip_y {
+            image::imageops::flip_vertical_in_place(&mut buffer);
+        }
+        frames.push(Frame::from_parts(buffer, 0, 0, image.delay(index)));
+    }
+    (!frames.is_empty()).then(|| Arc::new(RenderImage::new(frames)))
 }
 
 pub fn decoded_bytes(image: &RenderImage) -> usize {
@@ -137,6 +185,20 @@ pub fn decoded_bytes(image: &RenderImage) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "decodes files named in VIOLETWIRE_TEST_IMAGES"]
+    fn decodes_listed_files() {
+        for path in std::env::var("VIOLETWIRE_TEST_IMAGES").unwrap_or_default().split(';') {
+            if path.is_empty() {
+                continue;
+            }
+            let bytes = std::fs::read(path).unwrap();
+            match decode_chat(&bytes, true) {
+                Ok(image) => println!("{path}: {} frames", image.frame_count()),
+                Err(error) => println!("{path}: ERROR {error:#}"),
+            }
+        }
+    }
 
     #[test]
     fn recognises_formats_by_their_bytes() {

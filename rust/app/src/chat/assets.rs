@@ -1,16 +1,54 @@
 use super::model::asset_id;
 use crate::session::Session;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct Assets {
-    pub aspect_ratios: HashMap<String, f32>,
-    pub zero_width: HashSet<String>,
+    /// Every emote name this account can type, for the picker and completion.
     pub emotes: HashMap<String, String>,
-    pub providers: HashMap<String, String>,
+    /// Third-party emotes found by name in message text, with what is needed
+    /// to draw them as Electron does.
+    pub providers: HashMap<String, ProviderEmote>,
     pub badges: HashMap<String, String>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Provider {
+    Twitch,
+    SevenTv,
+    Ffz,
+    Bttv,
+}
+
+impl Provider {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Twitch => "Twitch",
+            Self::SevenTv => "7TV",
+            Self::Ffz => "FrankerFaceZ",
+            Self::Bttv => "BetterTTV",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ProviderEmote {
+    pub url: String,
+    pub provider: Provider,
+    /// The emote's 1x size: Electron scales small emotes down rather than
+    /// stretching everything to the chat emote height.
+    pub width: f32,
+    pub height: f32,
+    /// Drawn over the emote before it (7TV's zero-width flag).
+    pub zero_width: bool,
+    /// BTTV/FFZ modifier emotes change a neighbouring emote instead of
+    /// showing themselves.
+    pub modifier: bool,
+    /// FFZ's modifier effect bits.
+    pub modifier_flags: u32,
+}
+
 pub fn image_url(url: &str) -> bool {
     url.strip_prefix("https://")
         .and_then(|s| s.split(['/', '?', '#']).next())
@@ -70,6 +108,30 @@ fn insert(map: &mut HashMap<String, String>, name: &str, url: String) {
         map.insert(name.into(), url);
     }
 }
+fn insert_provider(map: &mut HashMap<String, ProviderEmote>, name: &str, emote: ProviderEmote) {
+    if !name.is_empty()
+        && name.len() <= 100
+        && !name.chars().any(char::is_whitespace)
+        && !name.chars().any(char::is_control)
+        && image_url(&emote.url)
+        && map.len() < 8000
+    {
+        map.insert(name.into(), emote);
+    }
+}
+
+/// A 1x size within reason, or the provider's usual square.
+fn logical(width: &Value, height: &Value, fallback: f32) -> (f32, f32) {
+    match (width.as_f64(), height.as_f64()) {
+        (Some(width), Some(height))
+            if width > 0. && height > 0. && width <= 512. && height <= 128. =>
+        {
+            (width as f32, height as f32)
+        }
+        _ => (fallback, fallback),
+    }
+}
+
 pub fn load(room: &str, session: Option<&Session>) -> Assets {
     if !room.bytes().all(|b| b.is_ascii_digit()) || room.is_empty() {
         return Assets::default();
@@ -77,7 +139,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
     let agent = crate::http::agent();
     std::thread::scope(|scope| {
         let bttv = scope.spawn(|| {
-            let mut emotes = HashMap::new();
+            let mut emotes = Vec::new();
             for endpoint in [
                 "https://api.betterttv.net/3/cached/emotes/global".into(),
                 format!("https://api.betterttv.net/3/cached/users/twitch/{room}"),
@@ -95,11 +157,19 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
                         if let (Some(name), Some(id)) = (e["code"].as_str(), e["id"].as_str())
                             && asset_id(id)
                         {
-                            insert(
-                                &mut emotes,
-                                name,
-                                format!("https://cdn.betterttv.net/emote/{id}/2x"),
-                            );
+                            let (width, height) = logical(&e["width"], &e["height"], 28.);
+                            emotes.push((
+                                name.to_owned(),
+                                ProviderEmote {
+                                    url: format!("https://cdn.betterttv.net/emote/{id}/2x.webp"),
+                                    provider: Provider::Bttv,
+                                    width,
+                                    height,
+                                    zero_width: false,
+                                    modifier: e["modifier"].as_bool().unwrap_or(false),
+                                    modifier_flags: 0,
+                                },
+                            ));
                         }
                     }
                 }
@@ -107,8 +177,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
             emotes
         });
         let ffz = scope.spawn(|| {
-            let mut emotes = HashMap::new();
-            let mut ratios = HashMap::new();
+            let mut emotes = Vec::new();
             for endpoint in [
                 "https://api.frankerfacez.com/v1/set/global".into(),
                 format!("https://api.frankerfacez.com/v1/room/id/{room}"),
@@ -118,35 +187,45 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
                 {
                     for set in sets.values() {
                         for e in set["emoticons"].as_array().into_iter().flatten() {
-                            if let Some(name) = e["name"].as_str() {
-                                let url = e["animated"]["2"]
-                                    .as_str()
-                                    .or(e["urls"]["2"].as_str())
-                                    .or(e["urls"]["1"].as_str());
-                                if let Some(url) = url {
-                                    let address = if url.starts_with("//") {
+                            let Some(name) = e["name"].as_str() else {
+                                continue;
+                            };
+                            let url = e["animated"]["2"]
+                                .as_str()
+                                .or(e["urls"]["2"].as_str())
+                                .or(e["animated"]["1"].as_str())
+                                .or(e["urls"]["1"].as_str());
+                            let Some(url) = url else {
+                                continue;
+                            };
+                            let (width, height) = logical(&e["width"], &e["height"], 32.);
+                            emotes.push((
+                                name.to_owned(),
+                                ProviderEmote {
+                                    url: if url.starts_with("//") {
                                         format!("https:{url}")
                                     } else {
                                         url.into()
-                                    };
-                                    if ratios.len() < 8000
-                                        && let Some(ratio) = aspect_ratio(&e["width"], &e["height"])
-                                    {
-                                        ratios.insert(address.clone(), ratio);
-                                    }
-                                    insert(&mut emotes, name, address);
-                                }
-                            }
+                                    },
+                                    provider: Provider::Ffz,
+                                    width,
+                                    height,
+                                    zero_width: false,
+                                    modifier: e["modifier"].as_bool().unwrap_or(false),
+                                    modifier_flags: e["modifier_flags"]
+                                        .as_u64()
+                                        .and_then(|flags| u32::try_from(flags).ok())
+                                        .unwrap_or(0),
+                                },
+                            ));
                         }
                     }
                 }
             }
-            (emotes, ratios)
+            emotes
         });
         let seven = scope.spawn(|| {
-            let mut emotes = HashMap::new();
-            let mut zero_width = HashSet::new();
-            let mut ratios = HashMap::new();
+            let mut emotes = Vec::new();
             for endpoint in [
                 "https://7tv.io/v3/emote-sets/global".into(),
                 format!("https://7tv.io/v3/users/twitch/{room}"),
@@ -161,49 +240,54 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
                         if let (Some(name), Some(id)) = (e["name"].as_str(), e["id"].as_str())
                             && asset_id(id)
                         {
-                            let address = format!("https://cdn.7tv.app/emote/{id}/2x.webp");
-                            if ratios.len() < 8000
-                                && let Some(file) = e["data"]["host"]["files"]
-                                    .as_array()
-                                    .and_then(|files| files.first())
-                                && let Some(ratio) = aspect_ratio(&file["width"], &file["height"])
-                            {
-                                ratios.insert(address.clone(), ratio);
-                            }
-                            insert(&mut emotes, name, address);
-                            if emotes.contains_key(name) {
-                                if seven_zero_width(e) {
-                                    zero_width.insert(name.to_owned());
-                                } else {
-                                    zero_width.remove(name);
-                                }
-                            }
+                            let files = e["data"]["host"]["files"].as_array();
+                            let one = files.and_then(|files| {
+                                files
+                                    .iter()
+                                    .find(|file| {
+                                        file["name"].as_str().is_some_and(|n| n.starts_with("1x."))
+                                    })
+                                    .or_else(|| files.first())
+                            });
+                            let (width, height) = one
+                                .map(|file| logical(&file["width"], &file["height"], 32.))
+                                .unwrap_or((32., 32.));
+                            emotes.push((
+                                name.to_owned(),
+                                ProviderEmote {
+                                    url: format!("https://cdn.7tv.app/emote/{id}/2x.webp"),
+                                    provider: Provider::SevenTv,
+                                    width,
+                                    height,
+                                    zero_width: seven_zero_width(e),
+                                    modifier: false,
+                                    modifier_flags: 0,
+                                },
+                            ));
                         }
                     }
                 }
             }
-            (emotes, zero_width, ratios)
+            emotes
         });
         let twitch = scope.spawn(|| twitch_assets(&agent, room, session));
         let mut result = twitch.join().unwrap_or_default();
-        let (seven_emotes, zero_width, seven_ratios) = seven.join().unwrap_or_default();
-        let (ffz_emotes, ffz_ratios) = ffz.join().unwrap_or_default();
-        result.aspect_ratios = ffz_ratios;
-        result.aspect_ratios.extend(seven_ratios);
-        result.zero_width = zero_width;
-        for provider in [bttv.join().unwrap_or_default(), ffz_emotes, seven_emotes] {
-            for (name, url) in provider {
-                insert(&mut result.providers, &name, url.clone());
-                insert(&mut result.emotes, &name, url);
+        // Electron's precedence: 7TV, then FFZ, then BTTV; within each, the
+        // channel's set over the global one (listed later, so it replaces).
+        let mut providers = HashMap::new();
+        for provider in [
+            bttv.join().unwrap_or_default(),
+            ffz.join().unwrap_or_default(),
+            seven.join().unwrap_or_default(),
+        ] {
+            for (name, emote) in provider {
+                insert(&mut result.emotes, &name, emote.url.clone());
+                insert_provider(&mut providers, &name, emote);
             }
         }
+        result.providers = providers;
         result
     })
-}
-fn aspect_ratio(width: &Value, height: &Value) -> Option<f32> {
-    let (width, height) = (width.as_u64()?, height.as_u64()?);
-    (width > 0 && width <= 1536 && height > 0 && height <= 256)
-        .then(|| (width as f32 / height as f32).clamp(0.33, 6.))
 }
 fn seven_zero_width(emote: &Value) -> bool {
     emote["flags"]
@@ -361,13 +445,13 @@ fn outgoing_body(
 mod tests {
     use super::*;
     #[test]
-    fn emote_metadata_reserves_wide_images_and_rejects_invalid_sizes() {
-        assert_eq!(aspect_ratio(&600.into(), &100.into()), Some(6.));
-        assert_eq!(aspect_ratio(&56.into(), &56.into()), Some(1.));
-        for (width, height) in [(0, 1), (1, 0), (1537, 100), (56, 257)] {
-            assert_eq!(aspect_ratio(&width.into(), &height.into()), None);
+    fn emote_sizes_fall_back_to_the_provider_square() {
+        assert_eq!(logical(&96.into(), &32.into(), 32.), (96., 32.));
+        assert_eq!(logical(&20.into(), &18.into(), 28.), (20., 18.));
+        for (width, height) in [(0, 1), (1, 0), (513, 100), (56, 129)] {
+            assert_eq!(logical(&width.into(), &height.into(), 28.), (28., 28.));
         }
-        assert_eq!(aspect_ratio(&"wide".into(), &56.into()), None);
+        assert_eq!(logical(&"wide".into(), &56.into(), 32.), (32., 32.));
     }
     #[test]
     fn reply_payload_preserves_unicode_and_excludes_unused_fields() {

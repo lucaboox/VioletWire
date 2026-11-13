@@ -1,3 +1,4 @@
+use super::assets::{Provider, ProviderEmote};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -20,6 +21,7 @@ pub struct Message {
 pub struct Reply {
     pub id: String,
     pub name: String,
+    pub login: String,
     pub text: String,
 }
 #[derive(Clone, Debug)]
@@ -160,6 +162,11 @@ pub fn parse(line: &str, channel: &str) -> Option<Event> {
                     .map(|id| {
                         Box::new(Reply {
                             id: (*id).into(),
+                            login: tags
+                                .get("reply-parent-user-login")
+                                .filter(|login| crate::format::is_login(login))
+                                .map(|login| login.to_ascii_lowercase())
+                                .unwrap_or_default(),
                             name: tag_text(
                                 tags.get("reply-parent-display-name")
                                     .copied()
@@ -241,14 +248,100 @@ pub fn local_time(millis: u64) -> Option<String> {
     Some(format!("{:02}:{:02}", local.wHour, local.wMinute))
 }
 
+/// Electron's emote effects that a still image can show (`emote-effects.ts`).
+/// The animated ones (party, shake, rainbow, hyper, jam, bounce) are dropped.
+pub mod effect {
+    pub const FLIP_X: u8 = 1;
+    pub const FLIP_Y: u8 = 2;
+    pub const WIDE: u8 = 4;
+    pub const ZERO_SPACE: u8 = 8;
+    pub const CURSED: u8 = 16;
+    pub const ROTATE_LEFT: u8 = 32;
+    pub const ROTATE_RIGHT: u8 = 64;
+}
+
+fn effects_of(modifier: &str, emote: &ProviderEmote) -> u8 {
+    use effect::*;
+    let named = match modifier {
+        "w!" | "ffzW" => WIDE,
+        "h!" | "ffzX" => FLIP_X,
+        "v!" | "ffzY" => FLIP_Y,
+        "z!" => ZERO_SPACE,
+        "c!" | "ffzCursed" => CURSED,
+        "l!" => ROTATE_LEFT,
+        "r!" => ROTATE_RIGHT,
+        _ => 0,
+    };
+    let flags = emote.modifier_flags;
+    let mut bits = named;
+    if flags & 2 != 0 {
+        bits |= FLIP_X;
+    }
+    if flags & 4 != 0 {
+        bits |= FLIP_Y;
+    }
+    if flags & 8 != 0 {
+        bits |= WIDE;
+    }
+    if flags & 16_384 != 0 {
+        bits |= CURSED;
+    }
+    bits
+}
+
+#[derive(Clone)]
+pub struct EmotePart {
+    pub name: String,
+    pub url: String,
+    pub provider: Provider,
+    /// The emote's 1x size, when the provider says; Twitch's own are not
+    /// scaled.
+    pub logical: Option<(f32, f32)>,
+    /// Drawn over the emote before it.
+    pub overlay: bool,
+    pub effects: u8,
+}
+
 #[derive(Clone)]
 pub enum Part {
     Text(String),
-    Emote { name: String, url: String },
+    /// `@name`, drawn bold as in Electron.
+    Mention(String),
+    Emote(EmotePart),
 }
-pub fn parts(message: &Message, providers: &HashMap<String, String>) -> Vec<Part> {
+
+fn twitch_url(id: &str) -> String {
+    format!("https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/2.0")
+}
+
+/// Electron's `withoutRedundantReplyMention`: a reply's leading `@parent` is
+/// already shown by the reply line. Returns the bytes to skip.
+fn reply_prefix(message: &Message) -> usize {
+    let Some(reply) = &message.reply else {
+        return 0;
+    };
+    let lower = message.text.to_lowercase();
+    for name in [&reply.login, &reply.name] {
+        if name.is_empty() {
+            continue;
+        }
+        let prefix = format!("@{}", name.to_lowercase());
+        if lower == prefix {
+            return message.text.len();
+        }
+        if lower.starts_with(&format!("{prefix} ")) && message.text.is_char_boundary(prefix.len() + 1)
+        {
+            return prefix.len() + 1;
+        }
+    }
+    0
+}
+
+pub fn parts(message: &Message, providers: &HashMap<String, ProviderEmote>) -> Vec<Part> {
+    let skip = reply_prefix(message);
     let mut output = Vec::new();
-    let mut cursor = 0;
+    let mut cursor = skip;
+    let mut any_emote = false;
     for emote in &message.emotes {
         if emote.start < cursor
             || emote.end <= emote.start
@@ -258,34 +351,160 @@ pub fn parts(message: &Message, providers: &HashMap<String, String>) -> Vec<Part
         {
             continue;
         }
-        words(&message.text[cursor..emote.start], providers, &mut output);
-        output.push(Part::Emote {
+        words(&message.text[cursor..emote.start], providers, any_emote, &mut output);
+        output.push(Part::Emote(EmotePart {
             name: message.text[emote.start..emote.end].into(),
-            url: format!(
-                "https://static-cdn.jtvnw.net/emoticons/v2/{}/default/dark/2.0",
-                emote.id
-            ),
-        });
+            url: twitch_url(&emote.id),
+            provider: Provider::Twitch,
+            logical: None,
+            overlay: false,
+            effects: 0,
+        }));
+        any_emote = true;
         cursor = emote.end;
     }
-    words(&message.text[cursor..], providers, &mut output);
+    if cursor < message.text.len() {
+        words(&message.text[cursor..], providers, any_emote, &mut output);
+    }
     output
 }
-fn words(text: &str, providers: &HashMap<String, String>, output: &mut Vec<Part>) {
-    for word in text.split_inclusive(char::is_whitespace) {
-        let name = word.trim_end();
-        if let Some(url) = providers.get(name) {
-            output.push(Part::Emote {
-                name: name.into(),
-                url: url.clone(),
-            });
-            if word.len() > name.len() {
-                output.push(Part::Text(word[name.len()..].into()));
-            }
-        } else {
-            output.push(Part::Text(word.into()));
-        }
+
+fn push_text(output: &mut Vec<Part>, text: &str) {
+    if text.is_empty() {
+        return;
     }
+    if let Some(Part::Text(last)) = output.last_mut() {
+        last.push_str(text);
+    } else {
+        output.push(Part::Text(text.to_owned()));
+    }
+}
+
+fn push_word(output: &mut Vec<Part>, word: &str) {
+    let name = word.trim_start_matches('@');
+    let login = name.trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+    if word.starts_with('@') && word.len() > 1 && crate::format::is_login(login) {
+        output.push(Part::Mention(word.to_owned()));
+    } else {
+        push_text(output, word);
+    }
+}
+
+/// Splits text into words and the whitespace between them, keeping both.
+fn tokens(text: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = 0;
+    let mut space = None;
+    for (index, c) in text.char_indices() {
+        let is_space = c.is_whitespace();
+        if space.is_some_and(|was| was != is_space) {
+            tokens.push(&text[start..index]);
+            start = index;
+        }
+        space = Some(is_space);
+    }
+    if start < text.len() {
+        tokens.push(&text[start..]);
+    }
+    tokens
+}
+
+fn is_space(token: &str) -> bool {
+    token.chars().all(char::is_whitespace)
+}
+
+/// Electron's `plainTextSegments`. `preceded` says an emote already stands to
+/// the left (a Twitch emote earlier in the message), so a zero-width emote has
+/// something to stack on.
+fn words(
+    text: &str,
+    providers: &HashMap<String, ProviderEmote>,
+    preceded: bool,
+    output: &mut Vec<Part>,
+) {
+    let tokens = tokens(text);
+    let mut pending: Vec<(&str, &ProviderEmote)> = Vec::new();
+    let mut any_emote = preceded;
+    let emote_part = |name: &str, emote: &ProviderEmote, overlay: bool, effects: u8| {
+        Part::Emote(EmotePart {
+            name: name.to_owned(),
+            url: emote.url.clone(),
+            provider: emote.provider,
+            logical: Some((emote.width, emote.height)),
+            overlay,
+            effects,
+        })
+    };
+    let flush = |pending: &mut Vec<(&str, &ProviderEmote)>, output: &mut Vec<Part>| {
+        if !pending.is_empty() {
+            let names: Vec<&str> = pending.iter().map(|(name, _)| *name).collect();
+            push_text(output, &format!("{} ", names.join(" ")));
+            pending.clear();
+        }
+    };
+    let pending_effects = |pending: &[(&str, &ProviderEmote)]| {
+        pending
+            .iter()
+            .fold(0, |bits, (name, emote)| bits | effects_of(name, emote))
+    };
+    for (index, token) in tokens.iter().enumerate() {
+        if is_space(token) {
+            if pending.is_empty() {
+                push_text(output, token);
+            }
+            continue;
+        }
+        let emote = providers.get(*token);
+        if let Some(emote) = emote.filter(|emote| emote.zero_width) {
+            // Drawn over the emote before it, without the space between; with
+            // nothing to stack on, it is an ordinary emote.
+            if any_emote
+                && let Some(Part::Text(last)) = output.last()
+                && is_space(last)
+            {
+                output.pop();
+            }
+            output.push(emote_part(token, emote, any_emote, pending_effects(&pending)));
+            pending.clear();
+            any_emote = true;
+            continue;
+        }
+        if let Some(emote) = emote.filter(|emote| emote.modifier) {
+            let next = tokens[index + 1..].iter().find(|token| !is_space(token));
+            let next_emote = next.and_then(|next| providers.get(*next));
+            let prefix = emote.provider == Provider::Bttv
+                || token.ends_with('!')
+                || next_emote.is_some_and(|next| !next.modifier);
+            if prefix {
+                pending.push((token, emote));
+                continue;
+            }
+            // A suffix modifier changes the emote just before it.
+            let last_emote = output.iter().rposition(|part| matches!(part, Part::Emote(_)));
+            if let Some(at) = last_emote
+                && output[at + 1..]
+                    .iter()
+                    .all(|part| matches!(part, Part::Text(text) if is_space(text)))
+            {
+                output.truncate(at + 1);
+                if let Some(Part::Emote(part)) = output.last_mut() {
+                    part.effects |= effects_of(token, emote);
+                }
+                continue;
+            }
+            push_text(output, token);
+            continue;
+        }
+        if let Some(emote) = emote {
+            output.push(emote_part(token, emote, false, pending_effects(&pending)));
+            pending.clear();
+            any_emote = true;
+            continue;
+        }
+        flush(&mut pending, output);
+        push_word(output, token);
+    }
+    flush(&mut pending, output);
 }
 
 #[cfg(test)]
@@ -336,8 +555,63 @@ mod tests {
         assert!(
             parts(&m, &HashMap::new())
                 .iter()
-                .any(|p| matches!(p,Part::Emote{name,..} if name=="Kappa"))
+                .any(|p| matches!(p, Part::Emote(e) if e.name == "Kappa"))
         );
+    }
+    fn emote(provider: Provider, zero_width: bool, modifier: bool, flags: u32) -> ProviderEmote {
+        ProviderEmote {
+            url: "https://cdn.7tv.app/emote/a/2x.webp".into(),
+            provider,
+            width: 32.,
+            height: 32.,
+            zero_width,
+            modifier,
+            modifier_flags: flags,
+        }
+    }
+    fn message(text: &str) -> Message {
+        let Event::Message(m) = parse(&format!(":v!v@h PRIVMSG #room :{text}"), "room").unwrap()
+        else {
+            panic!()
+        };
+        m
+    }
+    #[test]
+    fn stacks_zero_width_emotes_and_applies_modifiers() {
+        let providers = HashMap::from([
+            ("PepeLaugh".to_owned(), emote(Provider::SevenTv, false, false, 0)),
+            ("RainTime".to_owned(), emote(Provider::SevenTv, true, false, 0)),
+            ("h!".to_owned(), emote(Provider::Bttv, false, true, 0)),
+            ("ffzX".to_owned(), emote(Provider::Ffz, false, true, 2)),
+        ]);
+        let got = parts(&message("PepeLaugh RainTime"), &providers);
+        assert_eq!(got.len(), 2, "the space before an overlay goes");
+        assert!(matches!(&got[1], Part::Emote(e) if e.overlay));
+        // Alone, a zero-width emote is an ordinary one.
+        let got = parts(&message("RainTime"), &providers);
+        assert!(matches!(&got[0], Part::Emote(e) if !e.overlay));
+        // BTTV modifiers come first; FFZ ones can follow.
+        let got = parts(&message("h! PepeLaugh"), &providers);
+        assert!(matches!(&got[..], [Part::Emote(e)] if e.effects & effect::FLIP_X != 0));
+        let got = parts(&message("PepeLaugh ffzX hi"), &providers);
+        assert!(matches!(&got[0], Part::Emote(e) if e.effects & effect::FLIP_X != 0));
+        assert!(matches!(&got[1], Part::Text(text) if text == " hi"));
+        // A modifier with nothing to change is just text.
+        let got = parts(&message("h! hello"), &providers);
+        assert!(matches!(&got[0], Part::Text(text) if text.starts_with("h! hello")));
+    }
+    #[test]
+    fn drops_a_replys_leading_mention_and_bolds_others() {
+        let Event::Message(m) = parse(
+            "@reply-parent-msg-id=p;reply-parent-user-login=streamer;reply-parent-display-name=Streamer :v!v@h PRIVMSG #room :@Streamer hi @someone",
+            "room",
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let got = parts(&m, &HashMap::new());
+        assert!(matches!(&got[0], Part::Text(text) if text == "hi "));
+        assert!(matches!(&got[1], Part::Mention(text) if text == "@someone"));
     }
     #[test]
     fn ignores_other_rooms_and_invalid_ranges() {

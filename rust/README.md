@@ -80,6 +80,12 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
 - Keyboard and mouse shortcuts as in Electron: Space, M or middle-click, F or
   double-click, T, C, O, G, the arrow keys and Esc. Press `?` (or open
   Settings > Keyboard shortcuts) for the full list.
+- Chat emotes as in Electron (`ProviderEmoteText.tsx`, `ChatEmote.tsx`):
+  animated GIF/WebP emotes play; small 7TV/FFZ/BTTV emotes keep their size;
+  zero-width emotes stack on the emote before them; BTTV and FFZ modifiers flip,
+  rotate, widen or fade the emote next to them (the animated effects are not
+  ported); hovering shows a large preview with the provider; a reply's leading
+  `@name` is dropped and other `@mentions` are bold.
 - Window placement as in Electron: position, size, maximized state and monitor
   are restored on launch (if that monitor is still connected).
 - Chat on the left, deleted messages replaced or faded, and Electron's mention

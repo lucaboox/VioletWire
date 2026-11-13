@@ -119,6 +119,7 @@ impl Chat {
             self.replying = Some(model::Reply {
                 id: message.id.clone(),
                 name: message.name.clone(),
+                login: message.login.clone(),
                 text: message.text.clone(),
             });
             self.menu = Some((message.clone(), gpui::point(px(40.), px(160.))));
@@ -417,6 +418,114 @@ impl Chat {
             cx.defer(move |cx| cx.drop_image(image, None));
         }
     }
+    /// One emote, sized and decorated as Electron's `ChatEmote` does: small
+    /// third-party emotes keep their size (height scales with the 1x height
+    /// over 28 px for BetterTTV, 32 px otherwise), modifiers flip, rotate,
+    /// widen or fade it, and zero-width emotes stack on the one before.
+    fn emote_into(
+        &mut self,
+        flow: &mut super::flow::MessageFlow,
+        row_id: &str,
+        part_index: usize,
+        emote: model::EmotePart,
+        cx: &mut Context<Self>,
+    ) {
+        use model::effect;
+        let base = self.image(&emote.url, true, cx);
+        let full = f32::from(self.preferences.chat_emote_size);
+        let (height, mut ratio) = match emote.logical {
+            Some((width, height)) => {
+                let natural = if emote.provider == assets::Provider::Bttv { 28. } else { 32. };
+                (full * (height / natural).min(1.), width / height.max(1.))
+            }
+            None => (
+                full,
+                base.as_ref().map_or(1., |image| {
+                    let size = image.size(0);
+                    size.width.0 as f32 / size.height.0.max(1) as f32
+                }),
+            ),
+        };
+        let rotate = if emote.effects & effect::ROTATE_LEFT != 0 {
+            -1
+        } else if emote.effects & effect::ROTATE_RIGHT != 0 {
+            1
+        } else {
+            0
+        };
+        if rotate != 0 {
+            ratio = 1. / ratio.max(0.01);
+        }
+        if emote.effects & effect::WIDE != 0 {
+            ratio *= 2.;
+        }
+        let flip_x = emote.effects & effect::FLIP_X != 0;
+        let flip_y = emote.effects & effect::FLIP_Y != 0;
+        let image = base.and_then(|image| {
+            if !flip_x && !flip_y && rotate == 0 {
+                return Some(image);
+            }
+            let key = format!("{}#{}{}{}", emote.url, u8::from(flip_x), u8::from(flip_y), rotate);
+            if let Some(Some(done)) = self.images.get(&key) {
+                return Some(done.clone());
+            }
+            let done = crate::images::transformed(&image, flip_x, flip_y, rotate)?;
+            self.images.insert(key.clone(), Some(done.clone()));
+            self.order.push_back(key);
+            Some(done)
+        });
+        // Freeze each displayed message's geometry, rather than freezing an
+        // unknown image's square fallback forever.
+        let ratios = self.emote_ratios.entry(row_id.to_owned()).or_default();
+        let ratio = if ratios.len() < 32 || ratios.contains_key(&emote.url) {
+            *ratios.entry(emote.url.clone()).or_insert(ratio)
+        } else {
+            1.
+        };
+        let width = (ratio * height).clamp(8., full * 6.);
+        let gap = if emote.effects & effect::ZERO_SPACE != 0 { 0. } else { 1. };
+        let cursed = emote.effects & effect::CURSED != 0;
+        let tooltip = EmoteTooltip {
+            image: image.clone(),
+            name: emote.name.clone().into(),
+            provider: emote.provider.label(),
+            height: (height * 2.2).min(150.),
+            ratio,
+        };
+        let element_id = SharedString::from(format!("emote-{part_index}"));
+        flow.image_layer(
+            div()
+                .id(element_id.clone())
+                .w(px(width + gap * 2.))
+                .h(px(height))
+                .px(px(gap))
+                .when_some(image, |v, image| {
+                    v.child(
+                        // The id keeps GPUI's frame clock, so GIF and WebP
+                        // emotes animate.
+                        img(ImageSource::Render(image))
+                            .id(SharedString::from(format!("{element_id}-image")))
+                            .w(px(width))
+                            .h(px(height))
+                            .object_fit(if emote.effects & effect::WIDE != 0 {
+                                ObjectFit::Fill
+                            } else {
+                                ObjectFit::Contain
+                            })
+                            .when(cursed, |image| image.grayscale(true).opacity(0.85)),
+                    )
+                })
+                .when(self.images.get(&emote.url).is_some_and(Option::is_none) && self.failed_images.contains_key(&emote.url), |v| {
+                    v.text_size(px(10.)).truncate().child(emote.name.clone())
+                })
+                .tooltip(move |_, cx| cx.new(|_| tooltip.clone()).into())
+                .into_any_element(),
+            width + gap * 2.,
+            height,
+            emote.overlay,
+        );
+    }
+
     fn image(
         &mut self,
         url: &str,
@@ -646,57 +755,9 @@ impl Chat {
                         },
                         false,
                     ),
-                    Part::Emote { name, url } => {
-                        let image = self.image(&url, true, cx);
-                        let height = f32::from(self.preferences.chat_emote_size);
-                        let ratio =
-                            self.assets
-                                .aspect_ratios
-                                .get(&url)
-                                .copied()
-                                .unwrap_or_else(|| {
-                                    image.as_ref().map_or(1., |image| {
-                                        let size = image.size(0);
-                                        size.width.0 as f32 / size.height.0.max(1) as f32
-                                    })
-                                });
-                        // Freeze each displayed message's geometry, rather than
-                        // freezing an unknown image's square fallback forever.
-                        // Later messages can use its decoded natural aspect ratio.
-                        let ratios = self.emote_ratios.entry(row_id.clone()).or_default();
-                        let ratio = if ratios.len() < 32 || ratios.contains_key(&url) {
-                            *ratios.entry(url).or_insert(ratio)
-                        } else {
-                            1.
-                        };
-                        let width = (ratio * height).clamp(10., height * 6.);
-                        let label = name.clone();
-                        let layered = self.assets.zero_width.contains(&name);
-                        flow.image_layer(
-                            div()
-                                .id(SharedString::from(format!("emote-{part_index}")))
-                                .w(px(width + 2.))
-                                .h(px(height))
-                                .px(px(1.))
-                                .when_some(image.clone(), |v, image| {
-                                    v.child(
-                                        img(ImageSource::Render(image))
-                                            .w(px(width))
-                                            .h(px(height))
-                                            .object_fit(ObjectFit::Contain),
-                                    )
-                                })
-                                .when(image.is_none(), |v| {
-                                    v.text_size(px(10.)).truncate().child(name)
-                                })
-                                .tooltip(move |_, cx| {
-                                    cx.new(|_| ui::Tooltip(label.clone().into())).into()
-                                })
-                                .into_any_element(),
-                            width + 2.,
-                            height,
-                            layered,
-                        );
+                    Part::Mention(text) => flow.text(&text, theme::text(), true),
+                    Part::Emote(emote) => {
+                        self.emote_into(&mut flow, &row_id, part_index, emote, cx);
                     }
                 }
             }
@@ -822,6 +883,7 @@ impl Chat {
         self.replying = Some(model::Reply {
             id: message.id.clone(),
             name: message.name.clone(),
+            login: message.login.clone(),
             text: message.text.clone(),
         });
         self.menu = None;
@@ -1399,5 +1461,54 @@ impl Render for Chat {
             })
             .when_some(picker, |v, picker| v.child(picker))
             .when_some(menu, |v, menu| v.child(menu))
+    }
+}
+
+/// Electron's emote preview: the emote at about 2.2x, its name and provider.
+#[derive(Clone)]
+struct EmoteTooltip {
+    image: Option<Arc<RenderImage>>,
+    name: SharedString,
+    provider: &'static str,
+    height: f32,
+    ratio: f32,
+}
+
+impl Render for EmoteTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let width = (self.height * self.ratio).min(320.);
+        div()
+            .p(px(8.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(4.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(theme::button_border())
+            .bg(theme::popup())
+            .shadow_lg()
+            .when_some(self.image.clone(), |v, image| {
+                v.child(
+                    img(ImageSource::Render(image))
+                        .id("emote-tooltip-image")
+                        .w(px(width))
+                        .h(px(self.height))
+                        .object_fit(ObjectFit::Contain),
+                )
+            })
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme::text())
+                    .child(self.name.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(theme::text_dim())
+                    .child(self.provider),
+            )
     }
 }
