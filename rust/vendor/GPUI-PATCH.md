@@ -19,6 +19,12 @@ Local changes are restricted to:
   Unbind both vertex/pixel SRVs before the decoder writes the next frame.
 - `src/platform/windows/directx_devices.rs`: prefer a video-capable device,
   retaining upstream device creation as a fallback on older adapters.
+- `src/window.rs` (`on_request_frame`): when a frame is requested while the app
+  is already inside an update, keep the `on_next_frame` callbacks for the next
+  frame instead of dropping them. Media Engine's COM calls (mute, volume,
+  start-up) pump messages on the UI thread, so a frame can be requested from
+  inside a click handler. Upstream lost the callbacks silently, which ended the
+  player's per-frame poll: the picture froze while the sound kept playing.
 
 No new shaders or dependency versions are needed. The video engine and renderer
 share a multithread-protected device. Texture ownership is checked, and the app

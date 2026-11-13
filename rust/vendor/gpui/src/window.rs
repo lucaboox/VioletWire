@@ -1023,15 +1023,34 @@ impl Window {
             let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move |request_frame_options| {
-                let next_frame_callbacks = next_frame_callbacks.take();
-                if !next_frame_callbacks.is_empty() {
-                    handle
-                        .update(&mut cx, |_, window, cx| {
-                            for callback in next_frame_callbacks {
+                let callbacks = next_frame_callbacks.take();
+                if !callbacks.is_empty() {
+                    // VioletWire patch: a frame can be requested while the app
+                    // is already inside an update. A COM call made on the UI
+                    // thread may pump messages while it waits, and Windows'
+                    // modal loops do too. The update then fails. Upstream
+                    // dropped the callbacks here, which silently ended any
+                    // per-frame loop (video froze while audio played). Keep
+                    // them for the next frame instead.
+                    let pending = Rc::new(RefCell::new(Some(callbacks)));
+                    let result = handle.update(&mut cx, {
+                        let pending = pending.clone();
+                        move |_, window, cx| {
+                            for callback in pending.take().into_iter().flatten() {
                                 callback(window, cx);
                             }
-                        })
-                        .log_err();
+                        }
+                    });
+                    if result.is_err()
+                        && let Some(callbacks) = pending.take()
+                    {
+                        if std::env::var_os("VIOLETWIRE_PLAYBACK_LOG").is_some() {
+                            eprintln!("[gpui] frame requested during an update; callbacks kept");
+                        }
+                        let mut queued = next_frame_callbacks.borrow_mut();
+                        let later = std::mem::replace(&mut *queued, callbacks);
+                        queued.extend(later);
+                    }
                 }
 
                 // Keep presenting the current scene for 1 extra second since the

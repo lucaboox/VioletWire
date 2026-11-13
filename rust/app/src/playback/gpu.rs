@@ -438,6 +438,16 @@ impl GpuPlayback {
         }
         let frame = engine.frame()?;
         if frame.is_some() {
+            if log_enabled() {
+                let gap = now.duration_since(self.last_frame_at);
+                if gap > Duration::from_millis(150) {
+                    eprintln!(
+                        "[gap] {} ms without a frame, at t={:.1}s",
+                        gap.as_millis(),
+                        self.started.elapsed().as_secs_f64()
+                    );
+                }
+            }
             self.first_frame_ms
                 .get_or_insert_with(|| self.started.elapsed().as_millis());
             self.frames += 1;

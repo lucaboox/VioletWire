@@ -54,10 +54,11 @@ pub struct Player {
     controls_task: Option<gpui::Task<()>>,
     volume_bounds: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     poll_scheduled: bool,
-    /// Bumped to abandon a scheduled poll. GPUI drops next-frame callbacks
-    /// when it cannot enter the window (Windows' modal loops while dragging or
-    /// resizing, say); a lost poll used to leave the picture frozen while the
-    /// Media Engine kept playing sound.
+    /// Bumped to abandon a scheduled poll. Upstream GPUI dropped next-frame
+    /// callbacks when a frame was requested during an update: Media Engine's
+    /// COM calls (mute, volume) pump messages on this thread. A lost poll left
+    /// the picture frozen while the sound played. The vendored GPUI now keeps
+    /// them (see vendor/GPUI-PATCH.md); this remains a safety net.
     poll_generation: u64,
     last_polled: std::time::Instant,
     login: String,
