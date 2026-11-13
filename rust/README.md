@@ -92,6 +92,12 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
 - 1440p: Twitch offers it only to a signed-in viewer (the linked website
   session) whose player accepts HEVC, so lookups ask for `h265,h264`. Windows'
   HEVC Video Extensions decode it (summit1g at 2560x1440, 59.8 fps).
+- Chat user cards as in Electron (`ChatUserCard.tsx`): click a name for the
+  chatter's picture, bio, badges, account age, follow and subscription
+  details (IVR's public subage API, as Chatterino uses), their recent
+  messages here, and Block. Blocking hides their messages in VioletWire only;
+  the list is in Settings > Chat and was copied from Electron once.
+- The account chip shows the signed-in account's profile picture.
 - Chat emotes as in Electron (`ProviderEmoteText.tsx`, `ChatEmote.tsx`):
   animated GIF/WebP emotes play; small 7TV/FFZ/BTTV emotes keep their size;
   zero-width emotes stack on the emote before them; BTTV and FFZ modifiers flip,
@@ -231,7 +237,7 @@ never waits on the network.
 
 1. **Channel extras.** Channel pages and picture-in-picture.
 2. **Playback parity.** LL-HLS parts in the relay; see the next section.
-3. **Advanced chat.** User cards, moderation commands, room modes, editable emote
+3. **Advanced chat.** Moderation commands, room modes, editable emote
    chips in the composer, rich selection and pop-out windows. The live reader,
    history, regular/layered emotes, picker, replies, mentions, timestamps, sending
    and basic moderation events work now.

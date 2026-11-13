@@ -61,6 +61,11 @@ pub struct Chat {
     sending: bool,
     replying: Option<model::Reply>,
     menu: Option<(Message, gpui::Point<gpui::Pixels>)>,
+    /// This chat's channel login, for the user card's lookups.
+    channel: String,
+    /// Electron's chat user card, open for one chatter.
+    card: Option<Card>,
+    _card: Option<Task<()>>,
     _poll: Option<Task<()>>,
     _metadata: Option<Task<()>>,
     _send: Option<Task<()>>,
@@ -76,6 +81,339 @@ impl Chat {
             cx.notify();
         }
     }
+    fn blocked(&self, login: &str) -> bool {
+        self.preferences
+            .blocked_chat_users
+            .iter()
+            .any(|blocked| blocked.eq_ignore_ascii_case(login))
+    }
+
+    /// Removes messages from chatters just blocked.
+    fn drop_blocked(&mut self) {
+        let before = self.messages.len();
+        let blocked = self.preferences.blocked_chat_users.clone();
+        self.messages
+            .retain(|message| !blocked.iter().any(|login| login.eq_ignore_ascii_case(&message.login)));
+        if self.messages.len() != before {
+            self.ids = self
+                .messages
+                .iter()
+                .filter(|message| !message.id.is_empty())
+                .map(|message| message.id.clone())
+                .collect();
+            self.list.reset(self.messages.len());
+        }
+    }
+
+    fn on_user(&self, cx: &Context<Self>) -> super::flow::OnUser {
+        let view = cx.entity().downgrade();
+        std::rc::Rc::new(move |login, at, _, cx| {
+            let _ = view.update(cx, |chat, cx| chat.open_card(login, at, cx));
+        })
+    }
+
+    pub fn probe_card(&mut self, cx: &mut Context<Self>) {
+        if self.card.is_none()
+            && let Some(login) = self.messages.back().map(|message| message.login.clone())
+        {
+            self.open_card(&login, gpui::point(px(1180.), px(260.)), cx);
+        }
+    }
+
+    pub fn has_card(&self) -> bool {
+        self.card.is_some()
+    }
+
+    pub fn close_card(&mut self, cx: &mut Context<Self>) {
+        self.card = None;
+        self._card = None;
+        cx.notify();
+    }
+
+    fn open_card(&mut self, login: &str, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        if !crate::format::is_login(login) {
+            return;
+        }
+        let login = login.to_ascii_lowercase();
+        let latest = self.messages.iter().rev().find(|message| message.login == login);
+        self.card = Some(Card {
+            login: login.clone(),
+            name: latest.map_or_else(|| login.clone(), |message| message.name.clone()),
+            color: latest.map_or(0xa78bfa, |message| message.color),
+            badges: latest.map(|message| message.badges.clone()).unwrap_or_default(),
+            at,
+            profile: None,
+        });
+        self.menu = None;
+        let agent = self.agent.clone();
+        let session = self.session.clone();
+        let channel = self.channel.clone();
+        self._card = Some(cx.spawn(async move |this, cx| {
+            let wanted = login.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { super::profile::load(&agent, session.as_ref(), &channel, &login) })
+                .await
+                .map_err(|error| SharedString::from(error.to_string()));
+            let _ = this.update(cx, |this, cx| {
+                if let Some(card) = &mut this.card
+                    && card.login == wanted
+                {
+                    card.profile = Some(result);
+                    cx.notify();
+                }
+            });
+        }));
+        cx.notify();
+    }
+
+    fn toggle_block(&mut self, login: &str, cx: &mut Context<Self>) {
+        let login = login.to_ascii_lowercase();
+        crate::preferences::update(cx, |preferences| {
+            if let Some(at) = preferences.blocked_chat_users.iter().position(|blocked| *blocked == login) {
+                preferences.blocked_chat_users.remove(at);
+            } else {
+                preferences.blocked_chat_users.push(login);
+            }
+        });
+        self.set_preferences(crate::preferences::get(cx), cx);
+    }
+
+    /// Electron's `ChatUserCard`: profile, badges, account age, follow and
+    /// subscription details, a local Block, and their messages here.
+    fn user_card(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let card = self.card.clone()?;
+        let blocked = self.blocked(&card.login);
+        let mut messages: Vec<Message> = self
+            .messages
+            .iter()
+            .rev()
+            .filter(|message| message.login == card.login)
+            .take(40)
+            .cloned()
+            .collect();
+        messages.reverse();
+        let count = messages.len();
+        let rows: Vec<AnyElement> = messages
+            .into_iter()
+            .map(|message| self.card_message(message, cx))
+            .collect();
+        let profile = card.profile.as_ref().and_then(|profile| profile.as_ref().ok());
+        let error = card.profile.as_ref().and_then(|profile| profile.as_ref().err()).cloned();
+        let avatar = profile
+            .and_then(|profile| profile.image.clone())
+            .map(|url| url.replace("300x300", "70x70"))
+            .and_then(|url| self.image(&url, false, cx));
+        let badges: Vec<AnyElement> = card
+            .badges
+            .iter()
+            .filter_map(|badge| {
+                let url = self.assets.badges.get(badge)?.clone();
+                let image = self.image(&url, false, cx)?;
+                Some(img(ImageSource::Render(image)).size(px(20.)).into_any_element())
+            })
+            .collect();
+        let loading = if error.is_some() { "Unavailable" } else { "Loading…" };
+        let row = |label: &'static str, value: String| {
+            div()
+                .flex()
+                .justify_between()
+                .gap_3()
+                .text_size(px(12.))
+                .child(div().text_color(theme::text_dim()).child(label))
+                .child(div().text_color(theme::text()).child(value))
+        };
+        let created = profile.map_or(loading.to_owned(), |profile| {
+            profile.created.clone().unwrap_or_else(|| "Unknown".into())
+        });
+        let following = profile.map_or(loading.to_owned(), |profile| {
+            profile.following.clone().unwrap_or_else(|| "Unavailable".into())
+        });
+        let subscription = profile.map_or(loading.to_owned(), |profile| {
+            profile.subscription.clone().unwrap_or_else(|| "Unavailable".into())
+        });
+        let description = profile.map(|profile| profile.description.clone()).filter(|text| !text.is_empty());
+        let display = profile
+            .map(|profile| profile.display_name.clone())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| card.name.clone());
+        let initial: String = display.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+        let login = card.login.clone();
+        let block_login = card.login.clone();
+        let panel = div()
+            .id("user-card")
+            .occlude()
+            .w(px(320.))
+            .max_h(px(560.))
+            .p(px(14.))
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .rounded(px(12.))
+            .border_1()
+            .border_color(theme::button_border())
+            .bg(theme::popup())
+            .shadow_xl()
+            .text_color(theme::text())
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_card(cx)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(match avatar {
+                        Some(image) => img(ImageSource::Render(image))
+                            .size(px(44.))
+                            .flex_none()
+                            .rounded_full()
+                            .into_any_element(),
+                        None => div()
+                            .size(px(44.))
+                            .flex_none()
+                            .rounded_full()
+                            .bg(theme::selected())
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .font_weight(FontWeight::BOLD)
+                            .child(initial)
+                            .into_any_element(),
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(15.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(card.color))
+                                    .child(display),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(theme::text_dim())
+                                    .child(format!("@{}", card.login)),
+                            ),
+                    )
+                    .child(
+                        ui::icon_button("card-profile", Icon::External, "Open Twitch profile", false)
+                            .on_click(move |_, _, cx| cx.open_url(&format!("https://www.twitch.tv/{login}"))),
+                    )
+                    .child(
+                        ui::icon_button("card-close", Icon::Close, "Close", false)
+                            .on_click(cx.listener(|this, _, _, cx| this.close_card(cx))),
+                    ),
+            )
+            .when_some(description, |v, text| {
+                v.child(div().text_size(px(12.)).text_color(theme::text_secondary()).child(text))
+            })
+            .when(!badges.is_empty(), |v| v.child(div().flex().flex_wrap().gap(px(4.)).children(badges)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .p(px(10.))
+                    .rounded(px(8.))
+                    .bg(theme::surface())
+                    .child(row("Account created", created))
+                    .child(row("Following since", following))
+                    .child(row("Subscription", subscription)),
+            )
+            .when_some(error, |v, error| {
+                v.child(div().text_size(px(11.)).text_color(theme::live()).child(error))
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        ui::button(
+                            "card-block",
+                            if blocked { "Unblock" } else { "Block" },
+                            None,
+                            ButtonStyle::Secondary,
+                        )
+                        .px_3()
+                        .h(px(28.))
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_block(&block_login, cx))),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(theme::text_dim())
+                            .child("Hides their messages in VioletWire only."),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme::text_dim())
+                    .child("MESSAGES IN CURRENT CHAT")
+                    .child(count.to_string()),
+            )
+            .child(
+                div()
+                    .id("card-messages")
+                    .max_h(px(220.))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .when(rows.is_empty(), |v| {
+                        v.child(div().text_size(px(12.)).text_color(theme::text_dim()).child("No retained messages."))
+                    })
+                    .children(rows),
+            );
+        Some(
+            gpui::deferred(
+                gpui::anchored()
+                    .position(card.at)
+                    .anchor(if self.preferences.chat_on_left {
+                        gpui::Corner::TopLeft
+                    } else {
+                        gpui::Corner::TopRight
+                    })
+                    .snap_to_window_with_margin(px(8.))
+                    .child(panel),
+            )
+            .with_priority(3)
+            .into_any_element(),
+        )
+    }
+
+    fn card_message(&mut self, message: Message, cx: &mut Context<Self>) -> AnyElement {
+        let row_id = format!("card-{}", message.id);
+        let mut flow = super::flow::MessageFlow::new(self.preferences.chat_font_size.saturating_sub(1));
+        if let Some(time) = message.sent_at.and_then(model::local_time) {
+            flow.text(&format!("{time} "), theme::text_dim(), false);
+        }
+        if message.deleted && self.preferences.chat_deleted_message_style != "dimmed" {
+            flow.text("[Message deleted]", theme::text_dim(), false);
+        } else {
+            for (part_index, part) in model::parts(&message, &self.assets.providers).into_iter().enumerate() {
+                match part {
+                    Part::Text(text) => flow.text(&text, theme::text_secondary(), false),
+                    Part::Mention(text) => flow.text(&text, theme::text(), true),
+                    Part::Emote(emote) => self.emote_into(&mut flow, &row_id, part_index, emote, cx),
+                }
+            }
+        }
+        div()
+            .id(SharedString::from(row_id))
+            .child(flow)
+            .into_any_element()
+    }
+
     /// Electron's mention alert: someone else's live message that mentions
     /// or replies to the signed-in viewer. History never arrives here.
     fn alerts_for(&self, message: &model::Message) -> bool {
@@ -99,6 +437,10 @@ impl Chat {
         settings: crate::preferences::Preferences,
         cx: &mut Context<Self>,
     ) {
+        let newly_blocked = settings
+            .blocked_chat_users
+            .iter()
+            .any(|login| !self.preferences.blocked_chat_users.contains(login));
         let changed = self.preferences.chat_font_size != settings.chat_font_size
             || self.preferences.chat_emote_size != settings.chat_emote_size
             || self.preferences.chat_timestamps != settings.chat_timestamps
@@ -106,7 +448,10 @@ impl Chat {
             || self.preferences.chat_deleted_message_style != settings.chat_deleted_message_style
             || self.preferences.chat_on_left != settings.chat_on_left;
         self.preferences = settings;
-        if changed {
+        if newly_blocked {
+            self.drop_blocked();
+        }
+        if changed || newly_blocked {
             self.invalidate_messages();
             cx.notify();
         }
@@ -207,6 +552,9 @@ impl Chat {
             sending: false,
             replying: None,
             menu: None,
+            channel: login.to_ascii_lowercase(),
+            card: None,
+            _card: None,
             _poll: None,
             _metadata: None,
             _send: None,
@@ -252,8 +600,12 @@ impl Chat {
                         .as_ref()
                         .and_then(|offset| this.messages.get(offset.item_ix))
                         .map(|message| message.id.clone());
+                    let blocked = this.preferences.blocked_chat_users.clone();
                     let mut history: Vec<_> = history
                         .into_iter()
+                        .filter(|message| {
+                            !blocked.iter().any(|login| login.eq_ignore_ascii_case(&message.login))
+                        })
                         .filter(|message| {
                             message.id.is_empty() || this.ids.insert(message.id.clone())
                         })
@@ -321,6 +673,9 @@ impl Chat {
                     self.set_room(&room, cx);
                 }
                 Event::Message(message) => {
+                    if self.blocked(&message.login) {
+                        continue;
+                    }
                     if !message.id.is_empty() && !self.ids.insert(message.id.clone()) {
                         continue;
                     }
@@ -732,10 +1087,12 @@ impl Chat {
             }
         }
         if message.system.is_none() || !message.text.is_empty() {
-            flow.text(
-                &format!("{}{} ", message.name, if message.action { "" } else { ":" }),
+            flow.user(
+                &message.name,
+                if message.action { " " } else { ": " },
                 rgb(message.color),
-                true,
+                &message.login,
+                self.on_user(cx),
             );
         }
         if message.deleted && self.preferences.chat_deleted_message_style != "dimmed" {
@@ -1182,6 +1539,7 @@ impl Render for Chat {
         .flex_1()
         .min_h_0();
         let picker = self.picker.then(|| self.picker(cx));
+        let card = self.user_card(cx);
         let menu = self
             .menu
             .clone()
@@ -1215,7 +1573,13 @@ impl Render for Chat {
                 this.hovered = *hovered;
                 cx.notify();
             }))
+            .when_some(card, |v, card| v.child(card))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" && this.card.is_some() {
+                    this.close_card(cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if event.keystroke.key == "escape"
                     && (this.picker || this.menu.is_some() || this.replying.is_some())
                 {
@@ -1512,4 +1876,14 @@ impl Render for EmoteTooltip {
                     .child(self.provider),
             )
     }
+}
+
+#[derive(Clone)]
+struct Card {
+    login: String,
+    name: String,
+    color: u32,
+    badges: Vec<String>,
+    at: gpui::Point<gpui::Pixels>,
+    profile: Option<Result<super::profile::Profile, SharedString>>,
 }

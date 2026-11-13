@@ -520,6 +520,52 @@ fn chat_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElem
             ))
             .child(card("Sound volume", "Up to 200% for a louder alert.", mention_volume))
         })
+        .child(card(
+            "Blocked chatters",
+            if settings.blocked_chat_users.is_empty() {
+                "Block someone from their user card (click their name in chat). Their messages are hidden here only.".to_owned()
+            } else {
+                format!("{} hidden in VioletWire. Twitch is not told.", settings.blocked_chat_users.len())
+            },
+            div(),
+        ))
+        .when(!settings.blocked_chat_users.is_empty(), |list| {
+            list.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(6.))
+                    .children(settings.blocked_chat_users.iter().take(200).map(|login| {
+                        let unblock = login.clone();
+                        div()
+                            .id(gpui::SharedString::from(format!("blocked-{login}")))
+                            .h(px(28.))
+                            .pl(px(10.))
+                            .pr(px(4.))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .rounded(px(7.))
+                            .border_1()
+                            .border_color(theme::border())
+                            .bg(theme::surface())
+                            .text_size(px(12.))
+                            .child(format!("@{login}"))
+                            .child(
+                                ui::icon_button(
+                                    "unblock",
+                                    Icon::Close,
+                                    "Unblock",
+                                    false,
+                                )
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    let unblock = unblock.clone();
+                                    preferences::update(cx, |s| s.blocked_chat_users.retain(|blocked| *blocked != unblock))
+                                })),
+                            )
+                    })),
+            )
+        })
         .child(card("Text size", "Message text size in pixels.", font))
         .child(card("Chat width", "Width of the chat sidebar in pixels.", width))
         .child(card("Overlay opacity", "Background opacity of chat over the video.", opacity))

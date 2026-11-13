@@ -2,6 +2,7 @@ mod assets;
 mod connection;
 mod flow;
 mod history;
+mod profile;
 pub mod model;
 mod view;
 pub(crate) use assets::image_url as is_image_url;

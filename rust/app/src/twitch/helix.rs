@@ -323,6 +323,11 @@ impl<'a> Helix<'a> {
             .context("Twitch did not create the clip.")
     }
 
+    /// The signed-in account's profile picture, for the account chip.
+    pub fn profile_image(&self, id: &str) -> Result<Option<String>> {
+        Ok(self.profile_images(&[id])?.remove(id).filter(|url| is_twitch_image_url(url)))
+    }
+
     fn profile_images(&self, ids: &[&str]) -> Result<HashMap<String, String>> {
         let mut images = HashMap::new();
         for chunk in ids.chunks(100) {

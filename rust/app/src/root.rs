@@ -90,6 +90,9 @@ pub struct Root {
     shortcuts_open: bool,
     /// This window's handle, to own the twitch.tv sign-in window.
     hwnd: Option<isize>,
+    /// The signed-in account's profile picture (Electron's account chip).
+    account_image: Option<String>,
+    account_image_task: Option<Task<()>>,
     /// Saves the window's position and size as it changes.
     window_observer: Option<gpui::Subscription>,
     settings: Entity<crate::settings::Settings>,
@@ -132,7 +135,11 @@ impl Root {
         self.probe_fullscreen = phase == 3;
         // `--ui-probe-dialogs`: the shortcuts list, then a sidebar channel menu.
         if std::env::args().any(|arg| arg == "--ui-probe-dialogs") {
-            self.shortcuts_open = phase == 1;
+            self.shortcuts_open = phase == 1 && self.playing.is_none();
+            if let Some(playing) = &self.playing {
+                playing.chat.update(cx, |chat, cx| chat.probe_card(cx));
+                return;
+            }
             if phase >= 3 {
                 self.settings_open = true;
                 let section = if phase == 3 {
@@ -277,6 +284,8 @@ impl Root {
             settings_open: false,
             shortcuts_open: false,
             hwnd: None,
+            account_image: None,
+            account_image_task: None,
             window_observer: None,
             settings,
             _settings_close: settings_close,
@@ -459,6 +468,8 @@ impl Root {
         self.image_queue.borrow_mut().clear();
         self.followed_task = None;
         self.refresh_task = None;
+        self.account_image = None;
+        self.account_image_task = None;
         // Dropping the player stops Streamlink and FFmpeg.
         self.playing = None;
         self.clip_task = None;
@@ -658,12 +669,34 @@ impl Root {
         }));
     }
 
+    fn load_account_image(&mut self, cx: &mut Context<Self>) {
+        let Auth::SignedIn(session) = &self.auth else {
+            return;
+        };
+        if self.account_image.is_some() || self.account_image_task.is_some() {
+            return;
+        }
+        let id = session.identity.user_id.clone();
+        self.account_image_task = self.helix_task(
+            cx,
+            move |helix| helix.profile_image(&id),
+            |this, result, cx| {
+                this.account_image_task = None;
+                if let Ok(Some(url)) = result {
+                    this.account_image = Some(url);
+                    this.queue_images(cx);
+                }
+            },
+        );
+    }
+
     fn followed_loaded(
         &mut self,
         epoch: u64,
         result: Result<Followed, Failure>,
         cx: &mut Context<Self>,
     ) {
+        self.load_account_image(cx);
         let Auth::SignedIn(current) = &mut self.auth else {
             return;
         };
@@ -704,6 +737,7 @@ impl Root {
             .channels
             .iter()
             .filter_map(|channel| channel.profile_image_url.clone())
+            .chain(self.account_image.clone())
             .map(|url| (url, 0));
         let mut wanted: Vec<(String, u64)> = thumbnails.chain(avatars).collect();
         wanted.extend(self.browse_images(period));
@@ -956,7 +990,12 @@ impl Root {
                                         .justify_center()
                                         .text_size(px(13.))
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .child(initial)
+                                        .map(|chip| {
+                                            match self.account_image.as_deref().and_then(|url| self.image(url)) {
+                                                Some(_) => chip.child(self.avatar(self.account_image.as_deref(), 28.)),
+                                                None => chip.child(initial),
+                                            }
+                                        })
                                         .child(
                                             div()
                                                 .absolute()
@@ -1361,7 +1400,9 @@ impl Root {
                     cx.notify();
                 }),
             )
-            .tooltip(move |_, cx| cx.new(|_| ui::Tooltip(hint.clone().into())).into())
+            .when(self.channel_menu.is_none(), |row| {
+                row.tooltip(move |_, cx| cx.new(|_| ui::Tooltip(hint.clone().into())).into())
+            })
     }
 
     fn player_panel(
@@ -2102,6 +2143,14 @@ impl Render for Root {
             )
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
+                if key == "escape"
+                    && let Some(playing) = &this.playing
+                    && playing.chat.read(cx).has_card()
+                {
+                    playing.chat.update(cx, |chat, cx| chat.close_card(cx));
+                    cx.stop_propagation();
+                    return;
+                }
                 if key == "escape"
                     && (this.search.open || this.account_menu || this.channel_menu.is_some())
                 {

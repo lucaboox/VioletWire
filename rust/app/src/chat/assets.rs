@@ -62,6 +62,15 @@ pub fn image_url(url: &str) -> bool {
             )
         })
 }
+/// A signed-in Helix GET, for the user card.
+pub(super) fn helix_json(
+    agent: &ureq::Agent,
+    url: &str,
+    session: &Session,
+    params: &[(&str, &str)],
+) -> Option<Value> {
+    json_query(agent, url, Some(session), params)
+}
 fn json(agent: &ureq::Agent, url: &str, session: Option<&Session>) -> Option<Value> {
     json_query(agent, url, session, &[])
 }

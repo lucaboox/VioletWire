@@ -45,6 +45,10 @@ pub struct Preferences {
     /// `ultra-low` (start on the fragment being written) or `balanced`.
     pub playback_latency_mode: String,
     pub playback_settings_imported: bool,
+    /// Logins whose chat messages are hidden here (Electron's block list;
+    /// nothing is sent to Twitch).
+    pub blocked_chat_users: Vec<String>,
+    pub blocked_imported: bool,
 }
 
 /// Logical pixels, as GPUI reports them for the window's monitor.
@@ -90,6 +94,8 @@ impl Default for Preferences {
             chat_settings_imported: false,
             playback_latency_mode: "ultra-low".into(),
             playback_settings_imported: false,
+            blocked_chat_users: Vec::new(),
+            blocked_imported: false,
         }
     }
 }
@@ -113,6 +119,14 @@ impl Preferences {
             }
         }
         self.favorite_channels = favorites;
+        let mut blocked: Vec<String> = Vec::new();
+        for login in &self.blocked_chat_users {
+            let login = login.trim().to_ascii_lowercase();
+            if crate::format::is_login(&login) && !blocked.contains(&login) && blocked.len() < 1000 {
+                blocked.push(login);
+            }
+        }
+        self.blocked_chat_users = blocked;
         if !matches!(self.chat_deleted_message_style.as_str(), "placeholder" | "dimmed") {
             self.chat_deleted_message_style = "placeholder".into();
         }
@@ -176,6 +190,15 @@ pub fn initialize(cx: &mut App) {
             settings.mention_sound_id = electron.mention_sound_id;
         }
         settings.chat_settings_imported = true;
+    }
+    if !settings.blocked_imported {
+        if let Some(electron) = std::env::var_os("APPDATA").and_then(|path| {
+            read(PathBuf::from(path).join("twitch-windows-viewer/preferences.json"))
+        }) && settings.blocked_chat_users.is_empty()
+        {
+            settings.blocked_chat_users = electron.blocked_chat_users;
+        }
+        settings.blocked_imported = true;
     }
     if !settings.playback_settings_imported {
         if let Some(electron) = std::env::var_os("APPDATA").and_then(|path| {

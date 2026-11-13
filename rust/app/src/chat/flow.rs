@@ -28,7 +28,13 @@ struct Layout {
     height: Pixels,
     width: Pixels,
 }
+/// A clicked chatter name: their login and where the click landed.
+pub type OnUser = Rc<dyn Fn(&str, Point<Pixels>, &mut Window, &mut App)>;
+/// Marks a name token: never a web address, so `cx.open_url` never sees it.
+const USER_LINK: &str = "violetwire-user:";
+
 pub struct MessageFlow {
+    on_user: Option<OnUser>,
     font_size: Pixels,
     tokens: Vec<Token>,
     images: Vec<AnyElement>,
@@ -38,6 +44,7 @@ pub struct MessageFlow {
 impl MessageFlow {
     pub fn new(font_size: u8) -> Self {
         Self {
+            on_user: None,
             font_size: px(f32::from(font_size)),
             tokens: Vec::new(),
             images: Vec::new(),
@@ -75,6 +82,20 @@ impl MessageFlow {
                 ));
             }
         }
+    }
+    /// A chatter's name that opens their user card when clicked.
+    pub fn user(&mut self, name: &str, suffix: &str, color: impl Into<Hsla>, login: &str, on_user: OnUser) {
+        let color = color.into();
+        let mut font = gpui::font(crate::theme::UI_FONT);
+        font.weight = FontWeight::BOLD;
+        self.on_user = Some(on_user);
+        self.tokens.push(Token::Text(
+            name.to_owned().into(),
+            font,
+            color,
+            Some(format!("{USER_LINK}{login}")),
+        ));
+        self.text(suffix, color, true);
     }
     pub fn image(&mut self, element: AnyElement, width: f32, height: f32) {
         self.image_layer(element, width, height, false);
@@ -338,6 +359,7 @@ impl Element for MessageFlow {
             global_id.expect("Message flow has an ID"),
             |state, window| {
                 let state = state.unwrap_or_default();
+                let on_user = self.on_user.clone();
                 for (hitbox, link) in &self.links {
                     window.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
                     let down_state = state.clone();
@@ -354,6 +376,7 @@ impl Element for MessageFlow {
                     let state = state.clone();
                     let hitbox = hitbox.clone();
                     let link = link.clone();
+                    let on_user = on_user.clone();
                     window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, window, cx| {
                         if phase == gpui::DispatchPhase::Bubble
                             && event.button == gpui::MouseButton::Left
@@ -363,7 +386,13 @@ impl Element for MessageFlow {
                             && (at.x - event.position.x).abs() < px(5.)
                             && (at.y - event.position.y).abs() < px(5.)
                         {
-                            cx.open_url(&link);
+                            if let Some(login) = link.strip_prefix(USER_LINK) {
+                                if let Some(on_user) = &on_user {
+                                    on_user(login, event.position, window, cx);
+                                }
+                            } else {
+                                cx.open_url(&link);
+                            }
                             cx.stop_propagation();
                         }
                     });
