@@ -21,7 +21,7 @@ macro_rules! icons {
 icons! {
     Home=>"house", Search=>"search", Back=>"arrow-left", Forward=>"arrow-right",
     External=>"external-link", Chat=>"message-square", ChatClose=>"panel-right-close",
-    ChatOpen=>"panel-right-open", SidebarClose=>"panel-left-close", SidebarOpen=>"panel-left-open",
+SidebarClose=>"panel-left-close", SidebarOpen=>"panel-left-open",
     Overlay=>"picture-in-picture-2", Theater=>"rectangle-horizontal", Fullscreen=>"maximize",
     ExitFullscreen=>"minimize", Play=>"play", Pause=>"pause", Volume=>"volume-2", Muted=>"volume-x",
     Emotes=>"smile", Close=>"x", Users=>"users", Clock=>"clock-3", Refresh=>"refresh-cw",

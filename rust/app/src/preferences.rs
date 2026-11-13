@@ -49,6 +49,8 @@ pub struct Preferences {
     /// nothing is sent to Twitch).
     pub blocked_chat_users: Vec<String>,
     pub blocked_imported: bool,
+    /// Emote names starred in the picker (Alt+click).
+    pub emote_favorites: Vec<String>,
 }
 
 /// Logical pixels, as GPUI reports them for the window's monitor.
@@ -96,6 +98,7 @@ impl Default for Preferences {
             playback_settings_imported: false,
             blocked_chat_users: Vec::new(),
             blocked_imported: false,
+            emote_favorites: Vec::new(),
         }
     }
 }
@@ -127,6 +130,11 @@ impl Preferences {
             }
         }
         self.blocked_chat_users = blocked;
+        self.emote_favorites.retain(|name| {
+            !name.is_empty() && name.len() <= 100 && !name.chars().any(|c| c.is_whitespace() || c.is_control())
+        });
+        self.emote_favorites.dedup();
+        self.emote_favorites.truncate(1000);
         if !matches!(self.chat_deleted_message_style.as_str(), "placeholder" | "dimmed") {
             self.chat_deleted_message_style = "placeholder".into();
         }

@@ -22,10 +22,21 @@ use std::{
 };
 
 const MAX_MESSAGES: usize = 500;
-const MAX_IMAGES: usize = 160;
-const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
-type EmoteEntries = Arc<Vec<(String, String)>>;
-type PickerCache = (String, &'static str, EmoteEntries);
+const MAX_IMAGES: usize = 400;
+const MAX_IMAGE_BYTES: usize = 96 * 1024 * 1024;
+/// A titled group of emotes in the picker (Electron's picker sections).
+struct PickerSection {
+    label: String,
+    avatar: Option<String>,
+    emotes: Vec<(String, String)>,
+}
+type PickerCache = (String, &'static str, Arc<Vec<PickerSection>>);
+
+/// One uniform-height row of the picker: a section title or a line of emotes.
+enum PickerRow {
+    Header(usize),
+    Emotes(usize, std::ops::Range<usize>),
+}
 pub struct Chat {
     agent: ureq::Agent,
     overlay: bool,
@@ -45,6 +56,11 @@ pub struct Chat {
     next_image: u64,
     image_bytes: usize,
     order: VecDeque<String>,
+    /// When each cached image was last drawn: eviction takes the least
+    /// recently used, so badges and emotes on screen are never dropped and
+    /// fetched again (which looked like chat refreshing them).
+    last_used: HashMap<String, u64>,
+    use_tick: u64,
     image_queue: VecDeque<(String, u64)>,
     workers: usize,
     state: &'static str,
@@ -536,6 +552,8 @@ impl Chat {
             next_image: 0,
             image_bytes: 0,
             order: VecDeque::new(),
+            last_used: HashMap::new(),
+            use_tick: 0,
             image_queue: VecDeque::new(),
             workers: 0,
             state: "Connecting",
@@ -545,7 +563,7 @@ impl Chat {
             input,
             picker_input,
             picker: false,
-            picker_provider: "All",
+            picker_provider: "7TV",
             picker_cache: None,
             notice: None,
             last_send: None,
@@ -751,6 +769,18 @@ impl Chat {
                 .spawn(async move { assets::load(&room, session.as_ref()) })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                // A reload (token renewal, say) where one source failed keeps
+                // what that source gave before, rather than blanking it.
+                let mut result = result;
+                if result.badges.is_empty() {
+                    result.badges = std::mem::take(&mut this.assets.badges);
+                }
+                if result.providers.is_empty() {
+                    result.providers = std::mem::take(&mut this.assets.providers);
+                }
+                if result.emotes.len() < this.assets.emotes.len() / 2 {
+                    result.emotes = std::mem::take(&mut this.assets.emotes);
+                }
                 this.assets = result;
                 this.picker_cache = None;
                 this.invalidate_messages();
@@ -759,9 +789,19 @@ impl Chat {
         }));
     }
     fn evict_image(&mut self, cx: &mut Context<Self>) {
-        let Some(key) = self.order.pop_front() else {
+        let Some(oldest) = self
+            .order
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, key)| self.last_used.get(*key).copied().unwrap_or(0))
+            .map(|(index, _)| index)
+        else {
             return;
         };
+        let Some(key) = self.order.remove(oldest) else {
+            return;
+        };
+        self.last_used.remove(&key);
         self.failed_images.remove(&key);
         self.pending_images.remove(&key);
         if let Some(Some(image)) = self.images.remove(&key) {
@@ -821,6 +861,8 @@ impl Chat {
                 return Some(image);
             }
             let key = format!("{}#{}{}{}", emote.url, u8::from(flip_x), u8::from(flip_y), rotate);
+            self.use_tick += 1;
+            self.last_used.insert(key.clone(), self.use_tick);
             if let Some(Some(done)) = self.images.get(&key) {
                 return Some(done.clone());
             }
@@ -901,6 +943,8 @@ impl Chat {
             self.images.remove(&key);
             self.order.retain(|cached| cached != &key);
         }
+        self.use_tick += 1;
+        self.last_used.insert(key.clone(), self.use_tick);
         if let Some(image) = self.images.get(&key) {
             return image.clone();
         }
@@ -922,7 +966,8 @@ impl Chat {
         None
     }
     fn pump(&mut self, cx: &mut Context<Self>) {
-        while self.workers < 4 {
+        // Eight at a time: the picker asks for a screenful at once.
+        while self.workers < 8 {
             let Some((url, generation)) = self.image_queue.pop_front() else {
                 break;
             };
@@ -1346,84 +1391,238 @@ impl Chat {
         });
         cx.notify();
     }
+    /// The picker's sections for the current tab, as Electron groups them:
+    /// a provider's channel set, its global set and its effects; Twitch
+    /// emotes by the channel they belong to; or the starred favorites.
+    /// Emotes typed in the composer show as images there, as in Electron,
+    /// rather than only once the message is sent.
+    fn sync_composer_emotes(&mut self, cx: &mut Context<Self>) {
+        let content = self.input.read(cx).content.clone();
+        let mut emotes = crate::input::InlineEmotes::new();
+        for word in content.split_whitespace().take(100) {
+            if emotes.contains_key(word) {
+                continue;
+            }
+            let Some(url) = self.assets.emotes.get(word).cloned() else { continue };
+            if let Some(image) = self.image(&url, false, cx) {
+                let size = image.size(0);
+                let ratio = size.width.0 as f32 / size.height.0.max(1) as f32;
+                emotes.insert(word.to_owned(), (image, ratio.clamp(0.25, 4.)));
+            }
+        }
+        self.input.update(cx, |input, cx| input.set_emotes(emotes, cx));
+    }
+
+    fn toggle_favorite_emote(&mut self, name: &str, cx: &mut Context<Self>) {
+        let name = name.to_owned();
+        crate::preferences::update(cx, |preferences| {
+            if let Some(at) = preferences.emote_favorites.iter().position(|kept| *kept == name) {
+                preferences.emote_favorites.remove(at);
+            } else {
+                preferences.emote_favorites.push(name);
+            }
+        });
+        self.preferences = crate::preferences::get(cx);
+        self.picker_cache = None;
+        cx.notify();
+    }
+
+    fn picker_sections(&self, query: &str) -> Vec<PickerSection> {
+        let matches = |name: &str| query.is_empty() || name.to_ascii_lowercase().contains(query);
+        let sorted = |mut emotes: Vec<(String, String)>| {
+            emotes.sort_by_key(|(name, _)| name.to_ascii_lowercase());
+            emotes
+        };
+        let mut sections = Vec::new();
+        match self.picker_provider {
+            "Favorites" => {
+                let emotes: Vec<(String, String)> = self
+                    .preferences
+                    .emote_favorites
+                    .iter()
+                    .filter(|name| matches(name))
+                    .filter_map(|name| Some((name.clone(), self.assets.emotes.get(name)?.clone())))
+                    .collect();
+                sections.push(PickerSection { label: "Favorites".into(), avatar: None, emotes });
+            }
+            "Twitch" => {
+                let mut groups: HashMap<&str, Vec<(String, String)>> = HashMap::new();
+                for emote in &self.assets.twitch {
+                    if matches(&emote.name) {
+                        groups.entry(emote.owner.as_str()).or_default().push((emote.name.clone(), emote.url.clone()));
+                    }
+                }
+                let mut owners: Vec<&str> = groups.keys().copied().collect();
+                // This channel first, other channels by name, Twitch's own last.
+                owners.sort_by_key(|owner| {
+                    (
+                        owner.is_empty(),
+                        *owner != self.room,
+                        self.assets.owners.get(*owner).map(|(name, _)| name.to_ascii_lowercase()),
+                    )
+                });
+                for owner in owners {
+                    let (label, avatar) = if owner.is_empty() {
+                        ("Global emotes".to_owned(), None)
+                    } else {
+                        self.assets
+                            .owners
+                            .get(owner)
+                            .cloned()
+                            .unwrap_or_else(|| ("Channel emotes".to_owned(), None))
+                    };
+                    let emotes = sorted(groups.remove(owner).unwrap_or_default());
+                    sections.push(PickerSection { label, avatar, emotes });
+                }
+            }
+            provider => {
+                let wanted = match provider {
+                    "FFZ" => assets::Provider::Ffz,
+                    "BTTV" => assets::Provider::Bttv,
+                    _ => assets::Provider::SevenTv,
+                };
+                let (mut channel, mut global, mut effects) = (Vec::new(), Vec::new(), Vec::new());
+                for (name, emote) in &self.assets.providers {
+                    if emote.provider != wanted || !matches(name) {
+                        continue;
+                    }
+                    let entry = (name.clone(), emote.url.clone());
+                    if emote.modifier {
+                        effects.push(entry);
+                    } else if emote.channel {
+                        channel.push(entry);
+                    } else {
+                        global.push(entry);
+                    }
+                }
+                sections.push(PickerSection { label: self.channel.clone(), avatar: None, emotes: sorted(channel) });
+                sections.push(PickerSection { label: "Global emotes".into(), avatar: None, emotes: sorted(global) });
+                sections.push(PickerSection { label: "Effects".into(), avatar: None, emotes: sorted(effects) });
+            }
+        }
+        sections.retain(|section| !section.emotes.is_empty());
+        sections
+    }
+
     fn picker(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let query = self.picker_input.read(cx).content.to_ascii_lowercase();
-        let entries = if let Some((cached_query, provider, entries)) = &self.picker_cache
+        let sections = if let Some((cached_query, provider, sections)) = &self.picker_cache
             && cached_query == &query
             && *provider == self.picker_provider
         {
-            entries.clone()
+            sections.clone()
         } else {
-            let mut entries: Vec<_> = self
-                .assets
-                .emotes
-                .iter()
-                .filter(|(_, url)| match self.picker_provider {
-                    "Twitch" => url.contains("static-cdn.jtvnw.net/"),
-                    "7TV" => url.contains("cdn.7tv.app/"),
-                    "BTTV" => url.contains("cdn.betterttv.net/"),
-                    "FFZ" => url.contains("cdn.frankerfacez.com/"),
-                    _ => true,
-                })
-                .filter(|(name, _)| name.to_ascii_lowercase().contains(&query))
-                .map(|(name, url)| (name.clone(), url.clone()))
-                .collect();
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
-            let entries = Arc::new(entries);
-            self.picker_cache = Some((query.clone(), self.picker_provider, entries.clone()));
-            entries
+            let sections = Arc::new(self.picker_sections(&query));
+            self.picker_cache = Some((query.clone(), self.picker_provider, sections.clone()));
+            sections
         };
-        let count = entries.len();
+        let count: usize = sections.iter().map(|section| section.emotes.len()).sum();
         let columns = ((f32::from(self.list.viewport_bounds().size.width) - 40.) / 42.)
             .floor()
             .clamp(1., 12.) as usize;
+        let mut rows = Vec::new();
+        for (index, section) in sections.iter().enumerate() {
+            rows.push(PickerRow::Header(index));
+            let mut start = 0;
+            while start < section.emotes.len() {
+                let end = (start + columns).min(section.emotes.len());
+                rows.push(PickerRow::Emotes(index, start..end));
+                start = end;
+            }
+        }
+        let rows = Arc::new(rows);
+        let favorites: HashSet<String> = self.preferences.emote_favorites.iter().cloned().collect();
         let grid = gpui::uniform_list(
             SharedString::from(format!("emote-grid-{}-{}", self.picker_provider, query)),
-            count.div_ceil(columns),
+            rows.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range
-                    .map(|row| {
-                        let mut line = div()
-                            .id(row)
-                            .h(px(44.))
-                            .px_2()
-                            .flex()
-                            .items_center()
-                            .gap_1();
-                        for index in row * columns..((row + 1) * columns).min(entries.len()) {
-                            let (name, url) = &entries[index];
-                            let image = this.image(url, false, cx);
-                            let label = name.clone();
-                            let insert = name.clone();
-                            line = line.child(
-                                div()
-                                    .id(index)
-                                    .size(px(38.))
-                                    .p(px(3.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(theme::surface_hover()))
-                                    .when_some(image, |v, image| {
-                                        v.child(
-                                            img(ImageSource::Render(image))
-                                                .size_full()
-                                                .object_fit(ObjectFit::Contain),
-                                        )
-                                    })
-                                    .tooltip(move |_, cx| {
-                                        cx.new(|_| ui::Tooltip(label.clone().into())).into()
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.input.update(cx, |input, cx| {
-                                            input.append(&format!("{insert} "), cx);
-                                            window.focus(&gpui::Focusable::focus_handle(input, cx));
-                                        });
-                                        this.picker = false;
-                                        cx.notify();
-                                    })),
-                            );
+                    .filter_map(|row| Some((row, rows.get(row)?)))
+                    .map(|(row, kind)| match kind {
+                        PickerRow::Header(index) => {
+                            let section = &sections[*index];
+                            let avatar = section
+                                .avatar
+                                .as_deref()
+                                .and_then(|url| this.image(url, false, cx));
+                            div()
+                                .id(row)
+                                .h(px(44.))
+                                .px_3()
+                                .pt(px(14.))
+                                .flex()
+                                .items_center()
+                                .gap(px(7.))
+                                .when_some(avatar, |v, image| {
+                                    v.child(img(ImageSource::Render(image)).size(px(18.)).rounded_full())
+                                })
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_color(theme::text_dim())
+                                        .child(section.label.to_uppercase()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(10.))
+                                        .text_color(theme::text_dim())
+                                        .child(section.emotes.len().to_string()),
+                                )
+                                .into_any_element()
                         }
-                        line
+                        PickerRow::Emotes(index, span) => {
+                            let mut line = div().id(row).h(px(44.)).px_2().flex().items_center().gap_1();
+                            for (name, url) in &sections[*index].emotes[span.clone()] {
+                                let image = this.image(url, false, cx);
+                                let label = name.clone();
+                                let insert = name.clone();
+                                let starred = favorites.contains(name);
+                                line = line.child(
+                                    div()
+                                        .id(SharedString::from(format!("pick-{name}")))
+                                        .relative()
+                                        .size(px(38.))
+                                        .p(px(3.))
+                                        .rounded(px(6.))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme::surface_hover()))
+                                        .when_some(image, |v, image| {
+                                            v.child(
+                                                img(ImageSource::Render(image))
+                                                    .size_full()
+                                                    .object_fit(ObjectFit::Contain),
+                                            )
+                                        })
+                                        .when(starred, |v| {
+                                            v.child(
+                                                ui::icon(Icon::StarFilled, 10.)
+                                                    .absolute()
+                                                    .top(px(1.))
+                                                    .right(px(1.))
+                                                    .text_color(rgb(0xfacc15)),
+                                            )
+                                        })
+                                        .tooltip(move |_, cx| {
+                                            cx.new(|_| ui::Tooltip(format!("{label} · Alt+click to favorite").into()))
+                                                .into()
+                                        })
+                                        .on_click(cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                                            if event.modifiers().alt {
+                                                this.toggle_favorite_emote(&insert, cx);
+                                                return;
+                                            }
+                                            this.input.update(cx, |input, cx| {
+                                                input.append(&format!("{insert} "), cx);
+                                                window.focus(&gpui::Focusable::focus_handle(input, cx));
+                                            });
+                                            this.picker = false;
+                                            cx.notify();
+                                        })),
+                                );
+                            }
+                            line.into_any_element()
+                        }
                     })
                     .collect::<Vec<_>>()
             }),
@@ -1471,11 +1670,11 @@ impl Chat {
             .child(
                 div().flex_none().px_2().pb_2().flex().gap_1().children(
                     [
-                        ("all-emotes", "All"),
-                        ("twitch-emotes", "Twitch"),
+                        ("favorite-emotes", "Favorites"),
                         ("seven-emotes", "7TV"),
-                        ("bttv-emotes", "BTTV"),
+                        ("twitch-emotes", "Twitch"),
                         ("ffz-emotes", "FFZ"),
+                        ("bttv-emotes", "BTTV"),
                     ]
                     .into_iter()
                     .map(|(id, provider)| {
@@ -1523,7 +1722,7 @@ impl Chat {
                     .pb_2()
                     .text_size(px(10.))
                     .text_color(theme::text_dim())
-                    .child(format!("{count} emotes · Click to insert")),
+                    .child(format!("{count} emotes · Click to insert · Alt+click to favorite")),
             )
             .into_any_element()
     }
@@ -1538,6 +1737,7 @@ impl Render for Chat {
         })
         .flex_1()
         .min_h_0();
+        self.sync_composer_emotes(cx);
         let picker = self.picker.then(|| self.picker(cx));
         let card = self.user_card(cx);
         let menu = self
@@ -1643,15 +1843,8 @@ impl Render for Chat {
                                     move |_, cx| cx.new(|_| ui::Tooltip(state.into())).into()
                                 }),
                         )
-                        .child(
-                            ui::icon_button(
-                                "chat-overlay",
-                                Icon::Overlay,
-                                "Overlay chat · O",
-                                false,
-                            )
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(PlayerAction::Overlay))),
-                        ),
+                        // Balances the collapse button so the title stays centred.
+                        .child(div().w(px(34.)).flex_none()),
                 )
             })
             .child(div().flex_1().min_h_0().flex().flex_col().child(list))

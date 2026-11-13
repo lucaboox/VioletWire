@@ -10,6 +10,70 @@ use gpui::{
 };
 use unicode_segmentation::*;
 
+/// An emote drawn in place of its name, with its width over height.
+pub type InlineEmotes = std::collections::HashMap<String, (std::sync::Arc<gpui::RenderImage>, f32)>;
+
+/// Em spaces stand in for an emote in the shaped line: each is one font size
+/// wide, so the caret and selection still come from GPUI's text layout.
+const EM_SPACE: char = '\u{2003}';
+
+/// One stretch of the composer as drawn: text as typed, or an emote shown as
+/// an image over a run of em spaces.
+#[derive(Clone)]
+struct Segment {
+    content: Range<usize>,
+    display: Range<usize>,
+    emote: Option<std::sync::Arc<gpui::RenderImage>>,
+}
+
+/// The text to shape, and how it maps back to what was typed.
+fn display_segments(content: &str, emotes: &InlineEmotes, font_size: f32, height: f32) -> (String, Vec<Segment>) {
+    let mut display = String::with_capacity(content.len());
+    let mut segments = Vec::new();
+    for (start, word) in content.split_word_bound_indices() {
+        let range = start..start + word.len();
+        let from = display.len();
+        match emotes.get(word) {
+            Some((image, ratio)) if !word.trim().is_empty() => {
+                let spaces = ((height * ratio) / font_size.max(1.)).round().clamp(1., 8.) as usize;
+                display.extend(std::iter::repeat_n(EM_SPACE, spaces));
+                segments.push(Segment { content: range, display: from..display.len(), emote: Some(image.clone()) });
+            }
+            _ => {
+                display.push_str(word);
+                segments.push(Segment { content: range, display: from..display.len(), emote: None });
+            }
+        }
+    }
+    (display, segments)
+}
+
+fn to_display(segments: &[Segment], index: usize) -> usize {
+    for segment in segments {
+        if index >= segment.content.start && index <= segment.content.end {
+            return match segment.emote {
+                Some(_) if index == segment.content.start => segment.display.start,
+                Some(_) => segment.display.end,
+                None => segment.display.start + (index - segment.content.start),
+            };
+        }
+    }
+    segments.last().map_or(index, |segment| segment.display.end)
+}
+
+fn to_content(segments: &[Segment], index: usize) -> usize {
+    for segment in segments {
+        if index >= segment.display.start && index <= segment.display.end {
+            return match segment.emote {
+                Some(_) if index - segment.display.start <= (segment.display.end - index) => segment.content.start,
+                Some(_) => segment.content.end,
+                None => segment.content.start + (index - segment.display.start),
+            };
+        }
+    }
+    segments.last().map_or(index, |segment| segment.content.end)
+}
+
 fn utf16_to_utf8(text: &str, offset: usize) -> usize {
     let (mut bytes, mut units) = (0, 0);
     for ch in text.chars() {
@@ -83,7 +147,10 @@ pub struct TextInput {
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
+    last_segments: Vec<Segment>,
     last_bounds: Option<Bounds<Pixels>>,
+    /// Emotes shown inline (the chat composer); empty elsewhere.
+    emotes: InlineEmotes,
     scroll_x: Pixels,
     is_selecting: bool,
 }
@@ -99,7 +166,9 @@ impl TextInput {
             selection_reversed: false,
             marked_range: None,
             last_layout: None,
+            last_segments: Vec::new(),
             last_bounds: None,
+            emotes: InlineEmotes::new(),
             scroll_x: px(0.),
             is_selecting: false,
         }
@@ -109,6 +178,19 @@ impl TextInput {
         input.composer = true;
         input
     }
+    /// The emotes to draw inline, keyed by name. Only words of the current
+    /// text need to be present.
+    pub fn set_emotes(&mut self, emotes: InlineEmotes, cx: &mut Context<Self>) {
+        let same = emotes.len() == self.emotes.len()
+            && emotes.iter().all(|(name, (image, _))| {
+                self.emotes.get(name).is_some_and(|(kept, _)| std::sync::Arc::ptr_eq(kept, image))
+            });
+        if !same {
+            self.emotes = emotes;
+            cx.notify();
+        }
+    }
+
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.content = "".into();
         self.selected_range = 0..0;
@@ -266,7 +348,10 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left() + self.scroll_x)
+        to_content(
+            &self.last_segments,
+            line.closest_index_for_x(position.x - bounds.left() + self.scroll_x),
+        )
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -430,15 +515,13 @@ impl EntityInputHandler for TextInput {
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
+        let (start, end) = (
+            to_display(&self.last_segments, range.start),
+            to_display(&self.last_segments, range.end),
+        );
         Some(Bounds::from_corners(
-            point(
-                bounds.left() + last_layout.x_for_index(range.start) - self.scroll_x,
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + last_layout.x_for_index(range.end) - self.scroll_x,
-                bounds.bottom(),
-            ),
+            point(bounds.left() + last_layout.x_for_index(start) - self.scroll_x, bounds.top()),
+            point(bounds.left() + last_layout.x_for_index(end) - self.scroll_x, bounds.bottom()),
         ))
     }
 
@@ -451,11 +534,10 @@ impl EntityInputHandler for TextInput {
         self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
 
-        if last_layout.text != self.content {
-            return None;
-        }
-        let utf8_index =
-            last_layout.index_for_x(point.x - self.last_bounds?.left() + self.scroll_x)?;
+        let utf8_index = to_content(
+            &self.last_segments,
+            last_layout.index_for_x(point.x - self.last_bounds?.left() + self.scroll_x)?,
+        );
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -466,6 +548,7 @@ struct TextElement {
 
 struct PrepaintState {
     line: Option<ShapedLine>,
+    segments: Vec<Segment>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
     scroll_x: Pixels,
@@ -519,11 +602,23 @@ impl Element for TextElement {
         let cursor = input.cursor_offset();
         let style = window.text_style();
 
-        let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 0.65, 1.))
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let (display_text, text_color, segments) = if content.is_empty() {
+            (input.placeholder.clone(), hsla(0., 0., 0.65, 1.), Vec::new())
+        } else if input.marked_range.is_some() || input.emotes.is_empty() {
+            let segments = vec![Segment { content: 0..content.len(), display: 0..content.len(), emote: None }];
+            (content, style.color, segments)
         } else {
-            (content, style.color)
+            let (display, segments) = display_segments(
+                &content,
+                &input.emotes,
+                f32::from(font_size),
+                f32::from(bounds.size.height),
+            );
+            (display.into(), style.color, segments)
         };
+        let cursor = to_display(&segments, cursor);
+        let selected_range = to_display(&segments, selected_range.start)..to_display(&segments, selected_range.end);
 
         let run = TextRun {
             len: display_text.len(),
@@ -560,7 +655,6 @@ impl Element for TextElement {
             vec![run]
         };
 
-        let font_size = style.font_size.to_pixels(window.rem_size());
         let line = window
             .text_system()
             .shape_line(display_text, font_size, &runs, None);
@@ -605,6 +699,7 @@ impl Element for TextElement {
         };
         PrepaintState {
             line: Some(line),
+            segments,
             cursor,
             selection,
             scroll_x,
@@ -638,6 +733,23 @@ impl Element for TextElement {
             cx,
         )
         .unwrap();
+        // Emotes over the spaces reserved for them, kept inside the field.
+        let segments = std::mem::take(&mut prepaint.segments);
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+            for segment in &segments {
+                let Some(image) = segment.emote.clone() else { continue };
+                let left = bounds.left() + line.x_for_index(segment.display.start) - prepaint.scroll_x;
+                let right = bounds.left() + line.x_for_index(segment.display.end) - prepaint.scroll_x;
+                let height = bounds.size.height;
+                let _ = window.paint_image(
+                    Bounds::new(point(left, bounds.top()), size(right - left, height)),
+                    gpui::Corners::default(),
+                    image,
+                    0,
+                    false,
+                );
+            }
+        });
 
         if focus_handle.is_focused(window)
             && let Some(cursor) = prepaint.cursor.take()
@@ -648,6 +760,7 @@ impl Element for TextElement {
         self.input.update(cx, |input, _cx| {
             input.scroll_x = prepaint.scroll_x;
             input.last_layout = Some(line);
+            input.last_segments = segments;
             input.last_bounds = Some(bounds);
         });
     }
@@ -741,4 +854,28 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("end", End, Some("TextInput")),
         KeyBinding::new("enter", Submit, Some("TextInput")),
     ]);
+}
+
+#[cfg(test)]
+mod emote_tests {
+    use super::*;
+
+    #[test]
+    fn emotes_map_between_typed_and_drawn_text() {
+        let image = std::sync::Arc::new(gpui::RenderImage::new(vec![image::Frame::new(
+            image::RgbaImage::new(2, 2),
+        )]));
+        let emotes = InlineEmotes::from([("Kappa".to_owned(), (image, 1.0))]);
+        let (display, segments) = display_segments("hi Kappa x", &emotes, 14., 28.);
+        // Kappa becomes two em spaces (28 px wide at a 14 px font).
+        assert_eq!(display, format!("hi {0}{0} x", EM_SPACE));
+        // A caret after "Kappa" sits after its spaces, and maps back.
+        let after = to_display(&segments, 8);
+        assert_eq!(after, 3 + EM_SPACE.len_utf8() * 2);
+        assert_eq!(to_content(&segments, after), 8);
+        // Inside the emote snaps to an edge; text maps one to one.
+        assert_eq!(to_content(&segments, 3 + EM_SPACE.len_utf8()), 3);
+        assert_eq!(to_content(&segments, 1), 1);
+        assert_eq!(to_display(&segments, 10), display.len());
+    }
 }

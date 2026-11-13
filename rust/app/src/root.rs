@@ -1576,35 +1576,6 @@ impl Root {
                 )
             })
             .child(
-                ui::icon_button(
-                    "toolbar-chat",
-                    if self.chat_visible {
-                        Icon::ChatClose
-                    } else {
-                        Icon::ChatOpen
-                    },
-                    "Toggle chat · C",
-                    self.chat_visible,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.chat_visible = !this.chat_visible;
-                    cx.notify();
-                })),
-            )
-            .child(
-                ui::icon_button(
-                    "toolbar-overlay",
-                    Icon::Overlay,
-                    "Overlay chat · O",
-                    self.overlay_chat,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.overlay_chat = !this.overlay_chat;
-                    this.chat_visible = true;
-                    cx.notify();
-                })),
-            )
-            .child(
                 ui::icon_button("toolbar-external", Icon::External, "Open on Twitch", false)
                     .on_click(cx.listener(move |_, _, _, cx| open_channel(&login, cx))),
             );
@@ -1614,6 +1585,50 @@ impl Root {
             .min_h_0()
             .min_w_0()
             .child(playing.view.clone());
+        if !self.chat_visible {
+            // Electron's edge restore: with chat hidden, an arrow appears when
+            // the pointer nears the edge chat lives on.
+            let left = crate::preferences::get(cx).chat_on_left;
+            area = area.child(
+                div()
+                    .id("chat-edge")
+                    .group("chat-edge")
+                    .absolute()
+                    .top_0()
+                    .bottom(px(80.))
+                    .w(px(72.))
+                    .when(left, |edge| edge.left_0())
+                    .when(!left, |edge| edge.right_0())
+                    .child(
+                        div()
+                            .id("chat-edge-restore")
+                            .absolute()
+                            .top(px(12.))
+                            .when(left, |button| button.left_0().rounded_r(px(8.)).border_r_1())
+                            .when(!left, |button| button.right_0().rounded_l(px(8.)).border_l_1())
+                            .w(px(34.))
+                            .h(px(36.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .border_t_1()
+                            .border_b_1()
+                            .border_color(rgb(0x3a3a42))
+                            .bg(rgba(0x18181bf2))
+                            .shadow_lg()
+                            .cursor_pointer()
+                            .opacity(0.)
+                            .group_hover("chat-edge", |style| style.opacity(1.))
+                            .hover(|style| style.bg(rgb(0x28282f)))
+                            .child(ui::icon(if left { Icon::Forward } else { Icon::Back }, 18.))
+                            .tooltip(|_, cx| cx.new(|_| ui::Tooltip("Show stream chat · C".into())).into())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.chat_visible = true;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
         if self.chat_visible && self.overlay_chat {
             area = area.child(
                 div()

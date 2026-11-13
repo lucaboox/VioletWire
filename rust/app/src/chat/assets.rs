@@ -11,6 +11,9 @@ pub struct Assets {
     /// to draw them as Electron does.
     pub providers: HashMap<String, ProviderEmote>,
     pub badges: HashMap<String, String>,
+    /// Twitch emotes with their owners, and the owners' names and pictures.
+    pub twitch: Vec<TwitchEmote>,
+    pub owners: HashMap<String, (String, Option<String>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +50,17 @@ pub struct ProviderEmote {
     pub modifier: bool,
     /// FFZ's modifier effect bits.
     pub modifier_flags: u32,
+    /// From the channel's set rather than the provider's global one.
+    pub channel: bool,
+}
+
+/// A Twitch emote this account can use, for the picker's per-channel groups.
+#[derive(Clone, Debug)]
+pub struct TwitchEmote {
+    pub name: String,
+    pub url: String,
+    /// The broadcaster it belongs to; empty for Twitch's global emotes.
+    pub owner: String,
 }
 
 pub fn image_url(url: &str) -> bool {
@@ -149,10 +163,13 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
     std::thread::scope(|scope| {
         let bttv = scope.spawn(|| {
             let mut emotes = Vec::new();
-            for endpoint in [
+            for (scope, endpoint) in [
                 "https://api.betterttv.net/3/cached/emotes/global".into(),
                 format!("https://api.betterttv.net/3/cached/users/twitch/{room}"),
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 if let Some(v) = json(&agent, &endpoint, None) {
                     let list: Vec<&Value> = if let Some(a) = v.as_array() {
                         a.iter().collect()
@@ -177,6 +194,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
                                     zero_width: false,
                                     modifier: e["modifier"].as_bool().unwrap_or(false),
                                     modifier_flags: 0,
+                                    channel: scope == 1,
                                 },
                             ));
                         }
@@ -187,10 +205,13 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
         });
         let ffz = scope.spawn(|| {
             let mut emotes = Vec::new();
-            for endpoint in [
+            for (scope, endpoint) in [
                 "https://api.frankerfacez.com/v1/set/global".into(),
                 format!("https://api.frankerfacez.com/v1/room/id/{room}"),
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 if let Some(v) = json(&agent, &endpoint, None)
                     && let Some(sets) = v["sets"].as_object()
                 {
@@ -225,6 +246,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
                                         .as_u64()
                                         .and_then(|flags| u32::try_from(flags).ok())
                                         .unwrap_or(0),
+                                    channel: scope == 1,
                                 },
                             ));
                         }
@@ -235,10 +257,13 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
         });
         let seven = scope.spawn(|| {
             let mut emotes = Vec::new();
-            for endpoint in [
+            for (scope, endpoint) in [
                 "https://7tv.io/v3/emote-sets/global".into(),
                 format!("https://7tv.io/v3/users/twitch/{room}"),
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 if let Some(v) = json(&agent, &endpoint, None) {
                     let data = if v.get("emote_set").is_some() {
                         &v["emote_set"]
@@ -271,6 +296,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
                                     zero_width: seven_zero_width(e),
                                     modifier: false,
                                     modifier_flags: 0,
+                                    channel: scope == 1,
                                 },
                             ));
                         }
@@ -355,7 +381,7 @@ fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>) -> 
         ) else {
             break;
         };
-        add_twitch_emotes(&mut result.emotes, &value);
+        add_twitch_emotes(&mut result.emotes, &mut result.twitch, &value);
         let Some(next) = value["pagination"]["cursor"]
             .as_str()
             .filter(|next| !next.is_empty() && next.len() <= 2048 && *next != cursor)
@@ -371,21 +397,51 @@ fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>) -> 
             Some(session),
         )
     {
-        add_twitch_emotes(&mut result.emotes, &value);
+        add_twitch_emotes(&mut result.emotes, &mut result.twitch, &value);
     }
+    // The owners' names and pictures, for the picker's group headers.
+    let mut owners: Vec<&str> = result
+        .twitch
+        .iter()
+        .map(|emote| emote.owner.as_str())
+        .filter(|owner| !owner.is_empty() && owner.bytes().all(|b| b.is_ascii_digit()))
+        .collect();
+    owners.sort_unstable();
+    owners.dedup();
+    let mut found = HashMap::new();
+    for chunk in owners.chunks(100) {
+        let params: Vec<(&str, &str)> = chunk.iter().map(|id| ("id", *id)).collect();
+        if let Some(value) = json_query(agent, "https://api.twitch.tv/helix/users", Some(session), &params) {
+            for user in value["data"].as_array().into_iter().flatten() {
+                if let (Some(id), Some(name)) = (user["id"].as_str(), user["display_name"].as_str()) {
+                    let image = user["profile_image_url"]
+                        .as_str()
+                        .filter(|url| crate::twitch::helix::is_twitch_image_url(url))
+                        .map(|url| url.replace("300x300", "70x70"));
+                    found.insert(id.to_owned(), (name.chars().take(40).collect(), image));
+                }
+            }
+        }
+    }
+    result.owners = found;
     result
 }
 
-fn add_twitch_emotes(map: &mut HashMap<String, String>, value: &Value) {
+fn add_twitch_emotes(map: &mut HashMap<String, String>, list: &mut Vec<TwitchEmote>, value: &Value) {
     for emote in value["data"].as_array().into_iter().flatten() {
         if let (Some(name), Some(id)) = (emote["name"].as_str(), emote["id"].as_str())
             && asset_id(id)
         {
-            insert(
-                map,
-                name,
-                format!("https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/2.0"),
-            );
+            let url = format!("https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/2.0");
+            insert(map, name, url.clone());
+            if map.contains_key(name) && list.len() < 8000 {
+                let owner = emote["owner_id"].as_str().unwrap_or_default();
+                list.push(TwitchEmote {
+                    name: name.to_owned(),
+                    url,
+                    owner: if owner == "0" || owner == "twitch" { String::new() } else { owner.chars().take(20).collect() },
+                });
+            }
         }
     }
 }

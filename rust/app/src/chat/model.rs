@@ -567,6 +567,7 @@ mod tests {
             zero_width,
             modifier,
             modifier_flags: flags,
+            channel: false,
         }
     }
     fn message(text: &str) -> Message {
