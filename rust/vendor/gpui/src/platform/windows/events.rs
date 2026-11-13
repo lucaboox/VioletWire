@@ -717,10 +717,14 @@ impl WindowsWindowInner {
         requested_client_rect[0].right -= insets.right;
         requested_client_rect[0].bottom -= insets.bottom;
 
-        // Fix auto hide taskbar not showing. This solution is based on the approach
-        // used by Chrome. However, it may result in one row of pixels being obscured
-        // in our client area. But as Chrome says, "there seems to be no better solution."
-        if is_maximized
+        // VioletWire patch: a maximized window fills the whole monitor. Upstream
+        // left a 1 px strip on the auto-hide taskbar's edge so the taskbar could
+        // still slide up; nothing paints that strip, so it showed whatever was
+        // behind the window, and it came and went because the taskbar position
+        // is only read for the monitor the window opened on. The trade-off is
+        // that an auto-hidden taskbar no longer pops up over a maximized window.
+        if false
+            && is_maximized
             && let Some(ref taskbar_position) =
                 self.system_settings.borrow().auto_hide_taskbar_position
         {

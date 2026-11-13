@@ -25,6 +25,11 @@ Local changes are restricted to:
   start-up) pump messages on the UI thread, so a frame can be requested from
   inside a click handler. Upstream lost the callbacks silently, which ended the
   player's per-frame poll: the picture froze while the sound kept playing.
+- `src/platform/windows/events.rs` (`handle_calc_client_size`): no 1 px gap on
+  the auto-hide taskbar's edge for maximized windows. Upstream's gap showed the
+  desktop through a sliver at the bottom, and only on the monitor the window
+  opened on. As a result, an auto-hidden taskbar no longer slides up over a
+  maximized VioletWire window (the Windows key still opens it).
 
 No new shaders or dependency versions are needed. The video engine and renderer
 share a multithread-protected device. Texture ownership is checked, and the app
