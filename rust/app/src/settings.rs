@@ -9,6 +9,9 @@ pub enum Event {
     Closed,
     /// Open the keyboard shortcuts list (and close settings).
     Shortcuts,
+    /// Sign in on twitch.tv for ad-free playback.
+    LinkPlayback,
+    UnlinkPlayback,
 }
 pub struct Settings;
 impl gpui::EventEmitter<Event> for Settings {}
@@ -19,7 +22,11 @@ pub fn subscribe<T: 'static>(
 ) -> Subscription {
     cx.subscribe(view, move |this, _, event: &Event, cx| handle(this, event, cx))
 }
-fn card(title: &str, description: &str, control: impl IntoElement) -> impl IntoElement {
+fn card(
+    title: &'static str,
+    description: impl Into<gpui::SharedString>,
+    control: impl IntoElement,
+) -> impl IntoElement {
     div()
         .flex_none()
         .p_3()
@@ -47,7 +54,7 @@ fn card(title: &str, description: &str, control: impl IntoElement) -> impl IntoE
                     div()
                         .text_size(px(11.))
                         .text_color(theme::text_dim())
-                        .child(description.to_owned()),
+                        .child(description.into()),
                 ),
         )
         .child(control)
@@ -239,6 +246,44 @@ impl Render for Settings {
                             }),
                         ),
                     ))
+                    .child({
+                        use crate::twitch::playback_session::Status;
+                        let (description, label, linked) = match crate::twitch::playback_session::status() {
+                            Status::Unlinked => (
+                                "Sign in on twitch.tv so Twitch sends your Turbo or subscriber streams without ads. Used only to find streams.".to_owned(),
+                                "Link",
+                                false,
+                            ),
+                            Status::Linked(login) => (
+                                match login {
+                                    Some(login) => format!("Linked as {login}. Turbo and your subscriptions play without ads."),
+                                    None => "Linked. Turbo and your subscriptions play without ads.".to_owned(),
+                                },
+                                "Unlink",
+                                true,
+                            ),
+                            Status::Expired(_) => (
+                                "Twitch signed this session out, so streams play with ads again. Link it again.".to_owned(),
+                                "Link again",
+                                false,
+                            ),
+                        };
+                        card(
+                            "Ad-free playback",
+                            description,
+                            ui::button(
+                                "playback-session",
+                                label,
+                                None,
+                                if linked { ButtonStyle::Secondary } else { ButtonStyle::Primary },
+                            )
+                            .px_3()
+                            .h(px(30.))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(if linked { Event::UnlinkPlayback } else { Event::LinkPlayback })
+                            })),
+                        )
+                    })
                     .child(card(
                         "Keyboard shortcuts",
                         "Every key and mouse shortcut. Press ? to open it any time.",

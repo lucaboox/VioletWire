@@ -7,6 +7,7 @@ mod http;
 mod images;
 mod input;
 mod playback;
+mod playback_link;
 mod player;
 mod preferences;
 mod root;
@@ -293,6 +294,32 @@ fn main() {
                         }
                         cx.quit();
                     });
+                })
+                .detach();
+                return;
+            }
+            // `--link-probe-seconds N`: open the twitch.tv sign-in window on
+            // its own, log what it shows, and quit. Nothing is linked unless
+            // someone signs in.
+            if let Some(seconds) = arguments
+                .windows(2)
+                .find(|pair| pair[0] == "--link-probe-seconds")
+                .and_then(|pair| pair[1].parse::<u64>().ok())
+            {
+                playback_link::open(None, cx, |result, cx| {
+                    match result {
+                        Ok(playback_link::Outcome::Linked(_)) => println!("link_probe=linked"),
+                        Ok(playback_link::Outcome::Cancelled) => println!("link_probe=closed"),
+                        Err(error) => println!("link_probe=error {error}"),
+                    }
+                    cx.quit();
+                });
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(seconds))
+                        .await;
+                    println!("link_probe=timeout");
+                    let _ = cx.update(|cx| cx.quit());
                 })
                 .detach();
                 return;

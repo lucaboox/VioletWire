@@ -62,6 +62,12 @@ fn cached(login: &str, quality: &str, take: bool) -> Option<Resolved> {
     }
 }
 
+/// Drops every cached lookup: the playback session changed, so the same
+/// channel may now come without ads (or with them).
+pub fn forget_cached() {
+    CACHE.lock().unwrap_or_else(PoisonError::into_inner).take();
+}
+
 fn remember(login: &str, quality: &str, resolved: &Resolved) {
     CACHE
         .lock()
@@ -142,7 +148,16 @@ pub fn warm_up() {
                     let received = Instant::now();
                     let result = (|| {
                         if std::env::var_os("VIOLETWIRE_STREAMLINK_ONLY").is_none() {
-                            match super::twitch::resolve(&native, &request.login) {
+                            let auth = crate::twitch::playback_session::token();
+                            let mut answer =
+                                super::twitch::resolve(&native, &request.login, auth.as_deref());
+                            if let (Some(token), Err(error)) = (&auth, &answer)
+                                && error.is::<super::twitch::Unauthorized>()
+                            {
+                                crate::twitch::playback_session::mark_expired(token);
+                                answer = super::twitch::resolve(&native, &request.login, None);
+                            }
+                            match answer {
                                 Ok(super::twitch::Lookup::Live(variants)) => {
                                     if let Some(variant) =
                                         super::twitch::choose(&variants, &request.quality)
@@ -347,7 +362,12 @@ impl Worker {
         writeln!(
             stdin,
             "{}",
-            serde_json::json!({"login": request.login, "quality": request.quality})
+            // The session goes over this private pipe, never argv.
+            serde_json::json!({
+                "login": request.login,
+                "quality": request.quality,
+                "token": crate::twitch::playback_session::token(),
+            })
         )?;
         stdin.flush()?;
         self.next_url(&request.cancelled, stop, &request.quality)

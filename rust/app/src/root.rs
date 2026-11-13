@@ -88,6 +88,8 @@ pub struct Root {
     settings_open: bool,
     /// The keyboard shortcuts list ("?").
     shortcuts_open: bool,
+    /// This window's handle, to own the twitch.tv sign-in window.
+    hwnd: Option<isize>,
     settings: Entity<crate::settings::Settings>,
     _settings_close: gpui::Subscription,
     focus: gpui::FocusHandle,
@@ -227,9 +229,20 @@ impl Root {
         });
         let settings = cx.new(|_| crate::settings::Settings);
         let settings_close = crate::settings::subscribe(&settings, cx, |this, event, cx| {
-            this.settings_open = false;
-            if matches!(event, crate::settings::Event::Shortcuts) {
-                this.shortcuts_open = true;
+            match event {
+                crate::settings::Event::Closed => this.settings_open = false,
+                crate::settings::Event::Shortcuts => {
+                    this.settings_open = false;
+                    this.shortcuts_open = true;
+                }
+                crate::settings::Event::LinkPlayback => this.link_playback(cx),
+                crate::settings::Event::UnlinkPlayback => {
+                    match crate::twitch::playback_session::unlink() {
+                        Ok(()) => this.show_notice("Playback session unlinked.", cx),
+                        Err(error) => this.show_notice(error.to_string(), cx),
+                    }
+                    this.settings.update(cx, |_, cx| cx.notify());
+                }
             }
             cx.notify();
         });
@@ -252,6 +265,7 @@ impl Root {
             sidebar_force_expanded: false,
             settings_open: false,
             shortcuts_open: false,
+            hwnd: None,
             settings,
             _settings_close: settings_close,
             focus: cx.focus_handle(),
@@ -505,6 +519,31 @@ impl Root {
     }
 
     /// Shows `text` at the bottom of the window for a few seconds.
+    /// Opens twitch.tv's sign-in in its own window (Electron's "link playback
+    /// session").
+    fn link_playback(&mut self, cx: &mut Context<Self>) {
+        let root = cx.entity().downgrade();
+        crate::playback_link::open(self.hwnd, cx, move |result, cx| {
+            let _ = root.update(cx, |this, cx| {
+                match result {
+                    Ok(crate::playback_link::Outcome::Linked(login)) => this.show_notice(
+                        match login {
+                            Some(login) => format!(
+                                "Linked as {login}. Streams you open now come without ads if you have Turbo or a subscription."
+                            ),
+                            None => "Linked. Streams you open now come without ads if you have Turbo or a subscription.".to_owned(),
+                        },
+                        cx,
+                    ),
+                    Ok(crate::playback_link::Outcome::Cancelled) => {}
+                    Err(error) => this.show_notice(error.to_string(), cx),
+                }
+                this.settings.update(cx, |_, cx| cx.notify());
+                cx.notify();
+            });
+        });
+    }
+
     fn show_notice(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.notice = Some(text.into());
         self.notice_task = Some(cx.spawn(async move |this, cx| {
@@ -1898,6 +1937,12 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.hwnd.is_none()
+            && let Ok(handle) = wry::raw_window_handle::HasWindowHandle::window_handle(window)
+            && let wry::raw_window_handle::RawWindowHandle::Win32(handle) = handle.as_raw()
+        {
+            self.hwnd = Some(handle.hwnd.get());
+        }
         let fullscreen = window.is_fullscreen() || self.probe_fullscreen;
         if self.channel_subscription.is_none() {
             self.channel_subscription = Some(cx.subscribe_in(

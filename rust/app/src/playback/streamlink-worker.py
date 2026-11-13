@@ -1,4 +1,7 @@
-"""Private, anonymous Streamlink JSON-lines resolver. No exception text on pipes."""
+"""Private Streamlink JSON-lines resolver. No exception text on pipes.
+
+The linked playback session, when there is one, arrives on stdin with each
+request and is used only as Twitch's API header for that lookup."""
 import contextlib
 import json
 from pathlib import Path
@@ -13,6 +16,7 @@ with contextlib.redirect_stdout(sys.stderr):
     session.set_option("http-timeout", 8)
 
 NAME = set("abcdefghijklmnopqrstuvwxyz0123456789_")
+TOKEN = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 
 def valid(text, limit):
@@ -30,10 +34,12 @@ while True:
         quality = request.get("quality") or "best"
         if not valid(login, 25) or not valid(quality, 16):
             raise ValueError()
+        token = request.get("token")
+        options = {"low-latency": True, "supported-codecs": ["h264"]}
+        if isinstance(token, str) and 20 <= len(token) <= 64 and all(c in TOKEN for c in token):
+            options["api-header"] = [("Authorization", f"OAuth {token}")]
         with contextlib.redirect_stdout(sys.stderr):
-            streams = Twitch(session, f"https://www.twitch.tv/{login}", options={
-                "low-latency": True, "supported-codecs": ["h264"],
-            }).streams()
+            streams = Twitch(session, f"https://www.twitch.tv/{login}", options=options).streams()
             qualities = [name for name in streams if name not in ("best", "worst")]
             url = None
             chosen = None

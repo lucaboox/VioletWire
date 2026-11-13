@@ -88,7 +88,22 @@ struct Token {
 }
 
 /// The channel's qualities, best first, or `Offline`.
-pub fn resolve(agent: &ureq::Agent, login: &str) -> Result<Lookup> {
+/// Twitch refused the linked playback session (it expired or was signed out
+/// elsewhere).
+#[derive(Debug)]
+pub struct Unauthorized;
+
+impl std::fmt::Display for Unauthorized {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Twitch no longer accepts the linked playback session.")
+    }
+}
+
+impl std::error::Error for Unauthorized {}
+
+/// `auth` is the linked website session, if any: with it Twitch serves Turbo
+/// users and subscribers their ad-free stream.
+pub fn resolve(agent: &ureq::Agent, login: &str, auth: Option<&str>) -> Result<Lookup> {
     if !crate::format::is_login(login) {
         bail!("Invalid Twitch channel.");
     }
@@ -100,11 +115,14 @@ pub fn resolve(agent: &ureq::Agent, login: &str) -> Result<Lookup> {
             "playerType": "embed", "platform": "site",
         },
     });
-    let mut response = agent
-        .post("https://gql.twitch.tv/gql")
-        .header("Client-ID", WEB_CLIENT_ID)
-        .send_json(&body)
-        .context("Could not reach Twitch.")?;
+    let mut request = agent.post("https://gql.twitch.tv/gql").header("Client-ID", WEB_CLIENT_ID);
+    if let Some(auth) = auth.filter(|auth| crate::twitch::playback_session::is_token(auth)) {
+        request = request.header("Authorization", &format!("OAuth {auth}"));
+    }
+    let mut response = request.send_json(&body).context("Could not reach Twitch.")?;
+    if auth.is_some() && response.status().as_u16() == 401 {
+        return Err(Unauthorized.into());
+    }
     if !response.status().is_success() {
         bail!("Twitch refused the playback token ({}).", response.status().as_u16());
     }

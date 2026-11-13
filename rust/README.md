@@ -41,7 +41,14 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
   then Windows Media Engine handles decoding, audio and playback timing in the
   app. Its GPU-processed BGRA texture is sampled directly by GPUI; frames never
   travel through CPU memory or GPUI's image atlas. FFmpeg is not used on this path.
-  Playback remains anonymous; subscriber/Turbo benefits are not implemented.
+  Settings > Ad-free playback links Twitch's website session, as Electron's
+  "playback session" does: Turbo users and a channel's subscribers then get the
+  stream without ads. The user signs in on twitch.tv in an InPrivate WebView2
+  window (`playback_link.rs`), which only allows Twitch's sign-in hosts. The
+  session token is kept in Windows Credential Manager and sent only as the
+  lookup's `Authorization` header, or over the Streamlink worker's stdin pipe,
+  never in argv. If Twitch refuses it, lookups fall back to anonymous and
+  Settings asks you to link it again.
 - A loopback playlist relay (`playback/relay.rs`), modelled on Electron's. Each
   session keeps its own forward-only playlist: Twitch segments keep a stable local
   media sequence number (keyed by PROGRAM-DATE-TIME), so Media Engine never sees
@@ -70,6 +77,9 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
   blocks until the next key frame.
 - Clip: Twitch's official Create Clip API (`clips:edit`), then Twitch's editor in
   the browser.
+- Keyboard and mouse shortcuts as in Electron: Space, M or middle-click, F or
+  double-click, T, C, O, G, the arrow keys and Esc. Press `?` (or open
+  Settings > Keyboard shortcuts) for the full list.
 - Favourites as in Electron: right-click a followed channel (or use the star in
   the stream header) to add or remove one. Favourites sort first within Live and
   Offline and carry a star badge. Electron's list is imported once.
@@ -196,8 +206,7 @@ never waits on the network.
 ## Roadmap
 
 1. **Channel extras.** Channel pages and picture-in-picture.
-2. **Playback parity.** Authenticated resolution (subscriber/Turbo) and LL-HLS
-   parts in the relay; see the next section.
+2. **Playback parity.** LL-HLS parts in the relay; see the next section.
 3. **Advanced chat.** User cards, moderation commands, room modes, editable emote
    chips in the composer, rich selection and pop-out windows. The live reader,
    history, regular/layered emotes, picker, replies, mentions, timestamps, sending
@@ -214,9 +223,6 @@ This workspace now patches GPUI 0.2.2 locally to draw
 Windows GPU textures; see [the patch notes](vendor/GPUI-PATCH.md).
 Remaining pieces to port from Electron:
 
-- **Authenticated resolution.** The current warm Rust lookup is anonymous;
-  playback authentication still needs to be ported. Process
-  arguments contain no credentials, and processes are spawned without a shell.
 - **The rest of the relay logic**: LL-HLS parts and keyframe-safe cuts. The
   Rust relay has Electron's stable numbering, ad filtering and key-frame start. Media Engine
   ignores `EXT-X-START`; it always begins at the first listed segment, which is
