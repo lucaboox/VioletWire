@@ -4,7 +4,7 @@ use crate::{
     theme,
     ui::{self, ButtonStyle, Icon},
 };
-use gpui::{Context, Entity, Render, Subscription, Window, div, prelude::*, px};
+use gpui::{Context, Entity, Render, Subscription, Window, div, prelude::*, px, rgb, rgba};
 pub enum Event {
     Closed,
     /// Open the keyboard shortcuts list (and close settings).
@@ -13,7 +13,46 @@ pub enum Event {
     LinkPlayback,
     UnlinkPlayback,
 }
-pub struct Settings;
+/// Electron's settings sections, in its order.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Section {
+    #[default]
+    Account,
+    Playback,
+    Chat,
+    Emotes,
+    Appearance,
+    About,
+}
+
+const SECTIONS: [(Section, &str, Icon); 5] = [
+    (Section::Account, "Account", Icon::Users),
+    (Section::Playback, "Playback", Icon::Monitor),
+    (Section::Chat, "Chat", Icon::Chat),
+    (Section::Emotes, "Emotes", Icon::Emotes),
+    (Section::Appearance, "Appearance", Icon::Star),
+];
+
+#[derive(Default)]
+pub struct Settings {
+    section: Section,
+    /// The signed-in Twitch login, shown under Account.
+    account: Option<String>,
+}
+
+impl Settings {
+    pub fn probe_section(&mut self, section: Section, cx: &mut Context<Self>) {
+        self.section = section;
+        cx.notify();
+    }
+
+    pub fn set_account(&mut self, account: Option<String>, cx: &mut Context<Self>) {
+        if self.account != account {
+            self.account = account;
+            cx.notify();
+        }
+    }
+}
 impl gpui::EventEmitter<Event> for Settings {}
 pub fn subscribe<T: 'static>(
     view: &Entity<Settings>,
@@ -81,63 +120,47 @@ fn toggle(id: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = preferences::get(cx);
-        let font = stepper(
-            "font-down",
-            "font-up",
-            settings.chat_font_size.to_string(),
-            |s| s.chat_font_size = s.chat_font_size.saturating_sub(1),
-            |s| s.chat_font_size = s.chat_font_size.saturating_add(1),
-            cx,
-        );
-        let emotes = stepper(
-            "emotes-down",
-            "emotes-up",
-            settings.chat_emote_size.to_string(),
-            |s| s.chat_emote_size = s.chat_emote_size.saturating_sub(1),
-            |s| s.chat_emote_size = s.chat_emote_size.saturating_add(1),
-            cx,
-        );
-        let width = stepper(
-            "width-down",
-            "width-up",
-            settings.chat_sidebar_width.to_string(),
-            |s| s.chat_sidebar_width = s.chat_sidebar_width.saturating_sub(10),
-            |s| s.chat_sidebar_width = s.chat_sidebar_width.saturating_add(10),
-            cx,
-        );
-        let opacity = stepper(
-            "opacity-down",
-            "opacity-up",
-            format!("{}%", settings.chat_overlay_opacity),
-            |s| s.chat_overlay_opacity = s.chat_overlay_opacity.saturating_sub(5),
-            |s| s.chat_overlay_opacity = s.chat_overlay_opacity.saturating_add(5),
-            cx,
-        );
-        let mention_volume = stepper(
-            "mention-volume-down",
-            "mention-volume-up",
-            format!("{}%", settings.mention_sound_volume),
-            |s| s.mention_sound_volume = s.mention_sound_volume.saturating_sub(10),
-            |s| s.mention_sound_volume = s.mention_sound_volume.saturating_add(10).min(200),
-            cx,
-        );
-        let history = stepper(
-            "history-down",
-            "history-up",
-            settings.chat_history_limit.to_string(),
-            |s| s.chat_history_limit = s.chat_history_limit.saturating_sub(10),
-            |s| s.chat_history_limit = s.chat_history_limit.saturating_add(10),
-            cx,
-        );
+        let viewport = window.viewport_size();
+        let content = match self.section {
+            Section::Account => self.account_section(cx).into_any_element(),
+            Section::Playback => playback_section(&settings, cx).into_any_element(),
+            Section::Chat => chat_section(&settings, cx).into_any_element(),
+            Section::Emotes => emotes_section(&settings, cx).into_any_element(),
+            Section::Appearance => appearance_section(&settings, cx).into_any_element(),
+            Section::About => about_section().into_any_element(),
+        };
+        let nav_button = |section: Section, label: &'static str, icon: Icon, id: &'static str, cx: &mut Context<Self>| {
+            let active = self.section == section;
+            div()
+                .id(id)
+                .h(px(40.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(11.))
+                .rounded(px(9.))
+                .border_1()
+                .border_color(if active { rgba(0x6d4b913d) } else { rgba(0x00000000) })
+                .when(active, |v| v.bg(rgb(0x2a1d35)))
+                .text_size(px(12.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(if active { rgb(0xf4eefe) } else { rgb(0x9b9ba6) })
+                .cursor_pointer()
+                .hover(|style| style.bg(rgba(0xffffff0b)).text_color(rgb(0xededf0)))
+                .child(ui::icon(icon, 17.).when(active, |icon| icon.text_color(rgb(0xb794f6))))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.section = section;
+                    cx.notify();
+                }))
+        };
         div()
             .occlude()
-            .w(px(560.))
-            .max_w(gpui::relative(0.94))
-            .h(px(660.))
-            .max_h((window.viewport_size().height - px(80.)).max(px(200.)))
-            .rounded(px(14.))
+            .w((viewport.width - px(48.)).min(px(980.)).max(px(320.)))
+            .h((viewport.height - px(48.)).min(px(780.)).max(px(240.)))
+            .rounded(px(16.))
             .border_1()
-            .border_color(theme::button_border())
+            .border_color(rgb(0x44364f))
             .bg(theme::background())
             .shadow_xl()
             .flex()
@@ -146,267 +169,396 @@ impl Render for Settings {
             .child(
                 div()
                     .flex_none()
-                    .p_5()
+                    .px(px(24.))
+                    .pt(px(22.))
+                    .pb(px(18.))
                     .flex()
                     .items_center()
                     .justify_between()
+                    .border_b_1()
+                    .border_color(rgb(0x2e2a33))
+                    .bg(gpui::linear_gradient(
+                        100.,
+                        gpui::linear_color_stop(rgb(0x23152e), 0.),
+                        gpui::linear_color_stop(rgb(0x131217), 0.65),
+                    ))
                     .child(
                         div()
                             .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(ui::icon(Icon::Settings, 20.).text_color(theme::violet_hover()))
+                            .flex_col()
                             .child(
                                 div()
-                                    .text_size(px(22.))
+                                    .text_size(px(9.))
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .text_color(rgb(0xa78bfa))
+                                    .child("VIOLETWIRE"),
+                            )
+                            .child(
+                                div()
+                                    .mt(px(3.))
+                                    .text_size(px(26.))
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .child("Settings"),
                             ),
                     )
                     .child(
-                        ui::icon_button(
-                            "close-settings",
-                            Icon::Close,
-                            "Close settings · Escape",
-                            false,
-                        )
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Closed))),
+                        ui::icon_button("close-settings", Icon::Close, "Close settings · Escape", false)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Closed))),
                     ),
             )
             .child(
                 div()
-                    .id("preferences-scroll")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .px_5()
-                    .pb_5()
                     .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(heading("APPEARANCE"))
-                    .child(card(
-                        "OLED mode",
-                        "Use pure black backgrounds.",
-                        toggle("oled", settings.oled_mode).on_click(cx.listener(|_, _, _, cx| {
-                            preferences::update(cx, |s| s.oled_mode = !s.oled_mode)
-                        })),
-                    ))
-                    .child(heading("CHAT"))
-                    .child(card(
-                        "Recent messages",
-                        "Load recent chat when opening a channel. Set to 0 to disable.",
-                        history,
-                    ))
-                    .child(card(
-                        "Message timestamps",
-                        "Show the local time beside each message.",
-                        toggle("timestamps", settings.chat_timestamps).on_click(cx.listener(
-                            |_, _, _, cx| {
-                                preferences::update(cx, |s| s.chat_timestamps = !s.chat_timestamps)
-                            },
-                        )),
-                    ))
-                    .child(card(
-                        "Chat on the left",
-                        "Put the chat sidebar on the left of the stream.",
-                        toggle("chat-left", settings.chat_on_left).on_click(cx.listener(
-                            |_, _, _, cx| {
-                                preferences::update(cx, |s| s.chat_on_left = !s.chat_on_left)
-                            },
-                        )),
-                    ))
-                    .child(card(
-                        "Deleted messages",
-                        "Replace a removed message, or keep its text faded.",
-                        div().flex().gap_1().children(
-                            [("deleted-placeholder", "placeholder", "Replace"), ("deleted-dimmed", "dimmed", "Fade")]
-                                .into_iter()
-                                .map(|(id, style, label)| {
-                                    ui::button(
-                                        id,
-                                        label,
-                                        None,
-                                        if settings.chat_deleted_message_style == style {
-                                            ButtonStyle::Selected
-                                        } else {
-                                            ButtonStyle::Secondary
-                                        },
-                                    )
-                                    .px_2()
-                                    .h(px(30.))
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        preferences::update(cx, |s| {
-                                            s.chat_deleted_message_style = style.into()
-                                        })
-                                    }))
-                                }),
-                        ),
-                    ))
-                    .child(card(
-                        "Mention sound",
-                        "Play a sound when someone mentions or replies to you.",
-                        toggle("mention-sound", settings.mention_sound_enabled).on_click(
-                            cx.listener(|_, _, _, cx| {
-                                preferences::update(cx, |s| {
-                                    s.mention_sound_enabled = !s.mention_sound_enabled
-                                });
-                                let s = preferences::get(cx);
-                                if s.mention_sound_enabled {
-                                    crate::sound::play_mention(&s.mention_sound_id, s.mention_sound_volume);
-                                }
-                            }),
-                        ),
-                    ))
-                    .when(settings.mention_sound_enabled, |list| {
-                        list.child(card(
-                            "Sound",
-                            "Click one to hear it.",
-                            div().flex().gap_1().children(
-                                crate::preferences::MENTION_SOUNDS.into_iter().map(|(id, label)| {
-                                    ui::button(
-                                        match id {
-                                            "chime" => "sound-chime",
-                                            "pop" => "sound-pop",
-                                            "knock" => "sound-knock",
-                                            _ => "sound-ping",
-                                        },
-                                        label,
-                                        None,
-                                        if settings.mention_sound_id == id {
-                                            ButtonStyle::Selected
-                                        } else {
-                                            ButtonStyle::Secondary
-                                        },
-                                    )
-                                    .px_2()
-                                    .h(px(30.))
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        preferences::update(cx, |s| s.mention_sound_id = id.into());
-                                        let s = preferences::get(cx);
-                                        crate::sound::play_mention(&s.mention_sound_id, s.mention_sound_volume);
-                                    }))
-                                }),
-                            ),
-                        ))
-                        .child(card(
-                            "Sound volume",
-                            "Up to 200% for a louder alert.",
-                            mention_volume,
-                        ))
-                    })
-                    .child(card("Text size", "Message text size in pixels.", font))
-                    .child(card(
-                        "Emote size",
-                        "Keep emotes comfortable to read.",
-                        emotes,
-                    ))
-                    .child(card(
-                        "Chat width",
-                        "Width of the chat sidebar in pixels.",
-                        width,
-                    ))
-                    .child(card(
-                        "Overlay opacity",
-                        "Background opacity over the video.",
-                        opacity,
-                    ))
-                    .child(heading("PLAYER"))
-                    .child(card(
-                        "Hide controls after",
-                        "Controls stay visible while hovered or paused.",
-                        div().flex().gap_1().children(
-                            [1000u16, 3000, 5000, 10000].into_iter().map(|delay| {
-                                ui::button(
-                                    match delay {
-                                        1000 => "delay-1",
-                                        3000 => "delay-3",
-                                        5000 => "delay-5",
-                                        _ => "delay-10",
-                                    },
-                                    format!("{}s", delay / 1000),
-                                    None,
-                                    if settings.controls_hide_delay == delay {
-                                        ButtonStyle::Selected
-                                    } else {
-                                        ButtonStyle::Secondary
-                                    },
-                                )
-                                .px_2()
-                                .h(px(30.))
-                                .on_click(cx.listener(
-                                    move |_, _, _, cx| {
-                                        preferences::update(cx, |s| s.controls_hide_delay = delay)
-                                    },
-                                ))
-                            }),
-                        ),
-                    ))
-                    .child({
-                        use crate::twitch::playback_session::Status;
-                        let (description, label, linked) = match crate::twitch::playback_session::status() {
-                            Status::Unlinked => (
-                                "Sign in on twitch.tv so Twitch sends your Turbo or subscriber streams without ads. Used only to find streams.".to_owned(),
-                                "Link",
-                                false,
-                            ),
-                            Status::Linked(login) => (
-                                match login {
-                                    Some(login) => format!("Linked as {login}. Turbo and your subscriptions play without ads."),
-                                    None => "Linked. Turbo and your subscriptions play without ads.".to_owned(),
-                                },
-                                "Unlink",
-                                true,
-                            ),
-                            Status::Expired(_) => (
-                                "Twitch signed this session out, so streams play with ads again. Link it again.".to_owned(),
-                                "Link again",
-                                false,
-                            ),
-                        };
-                        card(
-                            "Ad-free playback",
-                            description,
-                            ui::button(
-                                "playback-session",
-                                label,
-                                None,
-                                if linked { ButtonStyle::Secondary } else { ButtonStyle::Primary },
-                            )
-                            .px_3()
-                            .h(px(30.))
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.emit(if linked { Event::UnlinkPlayback } else { Event::LinkPlayback })
-                            })),
-                        )
-                    })
-                    .child(card(
-                        "Keyboard shortcuts",
-                        "Every key and mouse shortcut. Press ? to open it any time.",
-                        ui::button("show-shortcuts", "View", None, ButtonStyle::Secondary)
-                            .px_3()
-                            .h(px(30.))
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Shortcuts))),
-                    ))
                     .child(
                         div()
-                            .pt_2()
-                            .text_size(px(11.))
-                            .text_color(theme::text_dim())
-                            .child("Changes save automatically."),
+                            .w(px(190.))
+                            .flex_none()
+                            .h_full()
+                            .px(px(11.))
+                            .py(px(16.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .border_r_1()
+                            .border_color(rgb(0x29272e))
+                            .bg(rgba(0x0d0d10c7))
+                            .children(SECTIONS.iter().map(|(section, label, icon)| {
+                                let id = match section {
+                                    Section::Account => "nav-account",
+                                    Section::Playback => "nav-playback",
+                                    Section::Chat => "nav-chat",
+                                    Section::Emotes => "nav-emotes",
+                                    _ => "nav-appearance",
+                                };
+                                nav_button(*section, label, *icon, id, cx)
+                            }))
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .pt(px(12.))
+                                    .border_t_1()
+                                    .border_color(rgb(0x29272e))
+                                    .child(nav_button(Section::About, "About", Icon::Info, "nav-about", cx)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("settings-content")
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_y_scroll()
+                            .px(px(28.))
+                            .pt(px(24.))
+                            .pb(px(30.))
+                            .child(content),
                     ),
             )
     }
 }
-fn heading(title: &str) -> impl IntoElement {
+
+/// Electron's `settings-section-heading`: a small label, a title and a line.
+fn section(label: &'static str, title: &'static str, description: &'static str) -> gpui::Div {
     div()
-        .flex_none()
-        .pt_2()
-        .text_size(px(10.))
-        .font_weight(gpui::FontWeight::BOLD)
-        .text_color(theme::text_dim())
-        .child(title.to_owned())
+        .flex()
+        .flex_col()
+        .gap(px(10.))
+        .child(
+            div()
+                .mb(px(8.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                        .text_color(rgb(0xa78bfa))
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .mt(px(4.))
+                        .text_size(px(22.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(0xf4f4f5))
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .mt(px(5.))
+                        .text_size(px(11.))
+                        .text_color(rgb(0x8f8f99))
+                        .child(description),
+                ),
+        )
 }
+
+fn choice<T: PartialEq + Copy + 'static>(
+    options: &[(&'static str, T, &'static str)],
+    current: T,
+    set: fn(&mut Preferences, T),
+    cx: &Context<Settings>,
+) -> impl IntoElement {
+    div().flex().gap_1().children(options.iter().map(|(id, value, label)| {
+        let value = *value;
+        ui::button(
+            id,
+            *label,
+            None,
+            if current == value { ButtonStyle::Selected } else { ButtonStyle::Secondary },
+        )
+        .px_2()
+        .h(px(30.))
+        .on_click(cx.listener(move |_, _, _, cx| preferences::update(cx, |s| set(s, value))))
+    }))
+}
+
+impl Settings {
+    fn account_section(&self, cx: &Context<Self>) -> impl IntoElement {
+        use crate::twitch::playback_session::Status;
+        let (description, label, linked) = match crate::twitch::playback_session::status() {
+            Status::Unlinked => (
+                "Sign in on twitch.tv so Twitch sends your Turbo or subscriber streams without ads. Used only to find streams.".to_owned(),
+                "Link",
+                false,
+            ),
+            Status::Linked(login) => (
+                match login {
+                    Some(login) => format!("Linked as {login}. Turbo and your subscriptions play without ads."),
+                    None => "Linked. Turbo and your subscriptions play without ads.".to_owned(),
+                },
+                "Unlink",
+                true,
+            ),
+            Status::Expired(_) => (
+                "Twitch signed this session out, so streams play with ads again. Link it again.".to_owned(),
+                "Link again",
+                false,
+            ),
+        };
+        section("ACCOUNT", "Connections", "Manage the accounts and website session VioletWire uses.")
+            .child(card(
+                "Twitch API account",
+                match &self.account {
+                    Some(login) => format!("Signed in as {login} with Twitch's official sign-in. Sign out from the account menu."),
+                    None => "Not signed in. Use Sign in at the top right.".to_owned(),
+                },
+                div(),
+            ))
+            .child(card(
+                "Twitch website session",
+                description,
+                ui::button(
+                    "playback-session",
+                    label,
+                    None,
+                    if linked { ButtonStyle::Secondary } else { ButtonStyle::Primary },
+                )
+                .px_3()
+                .h(px(30.))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    cx.emit(if linked { Event::UnlinkPlayback } else { Event::LinkPlayback })
+                })),
+            ))
+    }
+}
+
+fn playback_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElement {
+    section("PLAYBACK", "Video and controls", "Choose how streams play and how the player behaves.")
+        .child(card(
+            "Controls auto-hide delay",
+            "Controls stay visible while hovered or paused.",
+            choice(
+                &[("delay-1", 1000u16, "1s"), ("delay-3", 3000, "3s"), ("delay-5", 5000, "5s"), ("delay-10", 10000, "10s")],
+                settings.controls_hide_delay,
+                |s, delay| s.controls_hide_delay = delay,
+                cx,
+            ),
+        ))
+        .child(card(
+            "Volume normalizer",
+            "Evens out loud and quiet moments, like the player's audio button.",
+            toggle("audio-compression", settings.audio_compression).on_click(cx.listener(|_, _, _, cx| {
+                preferences::update(cx, |s| s.audio_compression = !s.audio_compression)
+            })),
+        ))
+        .child(card(
+            "FPS in the corner",
+            "Show the video's frame rate over the player.",
+            toggle("fps-overlay", settings.show_fps_overlay).on_click(cx.listener(|_, _, _, cx| {
+                preferences::update(cx, |s| s.show_fps_overlay = !s.show_fps_overlay)
+            })),
+        ))
+        .child(card(
+            "Keyboard shortcuts",
+            "Every key and mouse shortcut. Press ? to open it any time.",
+            ui::button("show-shortcuts", "View", None, ButtonStyle::Secondary)
+                .px_3()
+                .h(px(30.))
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Shortcuts))),
+        ))
+}
+
+fn chat_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElement {
+    let history = stepper(
+        "history-down",
+        "history-up",
+        settings.chat_history_limit.to_string(),
+        |s| s.chat_history_limit = s.chat_history_limit.saturating_sub(10),
+        |s| s.chat_history_limit = s.chat_history_limit.saturating_add(10),
+        cx,
+    );
+    let font = stepper(
+        "font-down",
+        "font-up",
+        settings.chat_font_size.to_string(),
+        |s| s.chat_font_size = s.chat_font_size.saturating_sub(1),
+        |s| s.chat_font_size = s.chat_font_size.saturating_add(1),
+        cx,
+    );
+    let width = stepper(
+        "width-down",
+        "width-up",
+        settings.chat_sidebar_width.to_string(),
+        |s| s.chat_sidebar_width = s.chat_sidebar_width.saturating_sub(10),
+        |s| s.chat_sidebar_width = s.chat_sidebar_width.saturating_add(10),
+        cx,
+    );
+    let opacity = stepper(
+        "opacity-down",
+        "opacity-up",
+        format!("{}%", settings.chat_overlay_opacity),
+        |s| s.chat_overlay_opacity = s.chat_overlay_opacity.saturating_sub(5),
+        |s| s.chat_overlay_opacity = s.chat_overlay_opacity.saturating_add(5),
+        cx,
+    );
+    let mention_volume = stepper(
+        "mention-volume-down",
+        "mention-volume-up",
+        format!("{}%", settings.mention_sound_volume),
+        |s| s.mention_sound_volume = s.mention_sound_volume.saturating_sub(10),
+        |s| s.mention_sound_volume = s.mention_sound_volume.saturating_add(10).min(200),
+        cx,
+    );
+    section("CHAT", "Chat behavior", "These settings also apply to the chat overlay.")
+        .child(card(
+            "Show timestamps",
+            "Display the sent time before every chat message.",
+            toggle("timestamps", settings.chat_timestamps).on_click(cx.listener(|_, _, _, cx| {
+                preferences::update(cx, |s| s.chat_timestamps = !s.chat_timestamps)
+            })),
+        ))
+        .child(card(
+            "Recent messages",
+            "Load recent chat when opening a channel. Set to 0 to disable.",
+            history,
+        ))
+        .child(card(
+            "Chat on the left",
+            "Put the chat sidebar on the left of the stream.",
+            toggle("chat-left", settings.chat_on_left).on_click(cx.listener(|_, _, _, cx| {
+                preferences::update(cx, |s| s.chat_on_left = !s.chat_on_left)
+            })),
+        ))
+        .child(card(
+            "Deleted messages",
+            "Replace a removed message, or keep its text faded.",
+            choice(
+                &[("deleted-placeholder", "placeholder", "Replace"), ("deleted-dimmed", "dimmed", "Fade")],
+                if settings.chat_deleted_message_style == "dimmed" { "dimmed" } else { "placeholder" },
+                |s, style| s.chat_deleted_message_style = style.into(),
+                cx,
+            ),
+        ))
+        .child(card(
+            "Mention sound",
+            "Play a sound when someone mentions or replies to you.",
+            toggle("mention-sound", settings.mention_sound_enabled).on_click(cx.listener(|_, _, _, cx| {
+                preferences::update(cx, |s| s.mention_sound_enabled = !s.mention_sound_enabled);
+                let s = preferences::get(cx);
+                if s.mention_sound_enabled {
+                    crate::sound::play_mention(&s.mention_sound_id, s.mention_sound_volume);
+                }
+            })),
+        ))
+        .when(settings.mention_sound_enabled, |list| {
+            list.child(card(
+                "Sound",
+                "Click one to hear it.",
+                div().flex().gap_1().children(crate::preferences::MENTION_SOUNDS.into_iter().map(|(id, label)| {
+                    ui::button(
+                        match id {
+                            "chime" => "sound-chime",
+                            "pop" => "sound-pop",
+                            "knock" => "sound-knock",
+                            _ => "sound-ping",
+                        },
+                        label,
+                        None,
+                        if settings.mention_sound_id == id { ButtonStyle::Selected } else { ButtonStyle::Secondary },
+                    )
+                    .px_2()
+                    .h(px(30.))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        preferences::update(cx, |s| s.mention_sound_id = id.into());
+                        let s = preferences::get(cx);
+                        crate::sound::play_mention(&s.mention_sound_id, s.mention_sound_volume);
+                    }))
+                })),
+            ))
+            .child(card("Sound volume", "Up to 200% for a louder alert.", mention_volume))
+        })
+        .child(card("Text size", "Message text size in pixels.", font))
+        .child(card("Chat width", "Width of the chat sidebar in pixels.", width))
+        .child(card("Overlay opacity", "Background opacity of chat over the video.", opacity))
+}
+
+fn emotes_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElement {
+    let size = stepper(
+        "emotes-down",
+        "emotes-up",
+        settings.chat_emote_size.to_string(),
+        |s| s.chat_emote_size = s.chat_emote_size.saturating_sub(1),
+        |s| s.chat_emote_size = s.chat_emote_size.saturating_add(1),
+        cx,
+    );
+    section("EMOTES", "Emote providers", "Provider sets load with each channel.")
+        .child(card("Emote size", "Height of emotes in chat, in pixels.", size))
+        .children([
+            ("7TV", "Global and channel emotes, zero-width overlays."),
+            ("FrankerFaceZ", "Global and channel emotes, modifier effects."),
+            ("BetterTTV", "Global and channel emotes, modifier effects."),
+        ]
+        .into_iter()
+        .map(|(provider, description)| card(provider, description, ui::icon(Icon::Check, 16.).text_color(rgb(0xa78bfa)))))
+}
+
+fn appearance_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElement {
+    section("APPEARANCE", "Interface", "How VioletWire looks.").child(card(
+        "OLED mode",
+        "Use pure black backgrounds.",
+        toggle("oled", settings.oled_mode).on_click(cx.listener(|_, _, _, cx| {
+            preferences::update(cx, |s| s.oled_mode = !s.oled_mode)
+        })),
+    ))
+}
+
+fn about_section() -> impl IntoElement {
+    section("ABOUT", "VioletWire", "A Windows Twitch viewer.")
+        .child(card(
+            "Version",
+            concat!("Rust preview ", env!("CARGO_PKG_VERSION"), ", built with GPUI."),
+            div(),
+        ))
+        .child(card(
+            "Changes save automatically",
+            "Settings are kept in %APPDATA%\\VioletWireRust.",
+            div(),
+        ))
+}
+
 fn stepper(
     down: &'static str,
     up: &'static str,

@@ -30,7 +30,7 @@ icons! {
     Gauge=>"gauge", Quality=>"sliders-horizontal", AudioLines=>"audio-lines",
     AudioLinesOff=>"audio-lines-off", Compass=>"compass", Check=>"check",
     ChevronDown=>"chevron-down", Scissors=>"scissors", Star=>"star", StarFilled=>"star-filled",
-    Keyboard=>"keyboard",
+    Keyboard=>"keyboard", Monitor=>"monitor", Info=>"info",
 }
 pub struct Assets;
 impl AssetSource for Assets {

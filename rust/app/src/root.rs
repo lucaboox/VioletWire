@@ -133,6 +133,15 @@ impl Root {
         // `--ui-probe-dialogs`: the shortcuts list, then a sidebar channel menu.
         if std::env::args().any(|arg| arg == "--ui-probe-dialogs") {
             self.shortcuts_open = phase == 1;
+            if phase >= 3 {
+                self.settings_open = true;
+                let section = if phase == 3 {
+                    crate::settings::Section::Account
+                } else {
+                    crate::settings::Section::Chat
+                };
+                self.settings.update(cx, |settings, cx| settings.probe_section(section, cx));
+            }
             self.channel_menu = (phase == 2)
                 .then(|| self.channels.first())
                 .flatten()
@@ -229,7 +238,7 @@ impl Root {
                 _chat_controls: chat_controls,
             }
         });
-        let settings = cx.new(|_| crate::settings::Settings);
+        let settings = cx.new(|_| crate::settings::Settings::default());
         let settings_close = crate::settings::subscribe(&settings, cx, |this, event, cx| {
             match event {
                 crate::settings::Event::Closed => this.settings_open = false,
@@ -2010,6 +2019,11 @@ impl Render for Root {
                 .view
                 .update(cx, |player, _| player.set_controls_delay(controls_delay));
         }
+        let account = match &self.auth {
+            Auth::SignedIn(session) => Some(session.identity.login.clone()),
+            _ => None,
+        };
+        self.settings.update(cx, |settings, cx| settings.set_account(account, cx));
         let signed_in = matches!(self.auth, Auth::SignedIn(_));
         let sidebar_collapsed = self.sidebar_collapsed
             || (!self.sidebar_force_expanded && window.viewport_size().width < px(1150.));
