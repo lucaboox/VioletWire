@@ -17,6 +17,10 @@ use windows::core::PCWSTR;
 
 pub struct Job(HANDLE);
 
+// SAFETY: a job object handle is a kernel handle, usable from any thread; the
+// struct only ever closes it once, in `drop`.
+unsafe impl Send for Job {}
+
 impl Job {
     pub fn new() -> Result<Self> {
         // SAFETY: plain Win32 calls on a handle this struct owns; the limit

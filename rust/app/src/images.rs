@@ -58,7 +58,48 @@ fn sniff(bytes: &[u8]) -> Option<ImageFormat> {
     }
 }
 
+/// Kick's built-in chat badges, drawn from Kick's own artwork (Electron's
+/// `KickBadgeGlyph`); its API never exposes them as images.
+const KICK_GLYPHS: [(&str, &str); 4] = [
+    ("verified", include_str!("../assets/kick-badges/verified.svg")),
+    ("sub_gifter", include_str!("../assets/kick-badges/sub_gifter.svg")),
+    ("moderator", include_str!("../assets/kick-badges/moderator.svg")),
+    ("vip", include_str!("../assets/kick-badges/vip.svg")),
+];
+
+pub fn kick_glyph(kind: &str) -> Option<&'static str> {
+    KICK_GLYPHS.iter().find(|(name, _)| *name == kind).map(|(_, svg)| *svg)
+}
+
+/// An SVG badge, rasterised at twice its 18 px size.
+fn svg_image(bytes: &[u8]) -> Result<Arc<RenderImage>> {
+    use resvg::{tiny_skia, usvg};
+    let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).context("Unreadable badge.")?;
+    let side = 36u32;
+    let size = tree.size();
+    let scale = side as f32 / size.width().max(size.height()).max(1.);
+    let mut pixmap = tiny_skia::Pixmap::new(side, side).context("Badge too large.")?;
+    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    let mut buffer = Vec::with_capacity((side * side * 4) as usize);
+    for pixel in pixmap.pixels() {
+        let color = pixel.demultiply();
+        // GPUI's images are BGRA.
+        buffer.extend_from_slice(&[color.blue(), color.green(), color.red(), color.alpha()]);
+    }
+    let image = image::RgbaImage::from_raw(side, side, buffer).context("Badge too large.")?;
+    Ok(Arc::new(RenderImage::new(vec![Frame::new(image)])))
+}
+
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let start = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]);
+    let start = start.trim_start_matches('\u{feff}').trim_start();
+    start.starts_with("<svg") || (start.starts_with("<?xml") && start.contains("<svg"))
+}
+
 pub fn fetch_chat(agent: &ureq::Agent, url: &str, animated: bool) -> Result<Arc<RenderImage>> {
+    if let Some(kind) = url.strip_prefix("kick-badge:") {
+        return svg_image(kick_glyph(kind).context("Unknown Kick badge.")?.as_bytes());
+    }
     if !crate::chat::is_image_url(url) {
         bail!("Invalid emote image host.");
     }
@@ -90,6 +131,9 @@ pub fn fetch_chat(agent: &ureq::Agent, url: &str, animated: bool) -> Result<Arc<
 }
 
 fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
+    if looks_like_svg(bytes) {
+        return svg_image(bytes);
+    }
     let format = sniff(bytes).context("Unsupported emote image.")?;
     let (width, height) = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()?
@@ -314,6 +358,17 @@ mod tests {
         assert_eq!(pixel(&image, 1, 0, 0), &[0, 0, 0, 0]);
         assert_opaque_color(pixel(&image, 1, 2, 0), [0, 255, 0]);
     }
+    #[test]
+    fn draws_kick_badge_glyphs() {
+        for (name, svg) in KICK_GLYPHS {
+            let image = svg_image(svg.as_bytes()).unwrap_or_else(|error| panic!("{name}: {error}"));
+            let pixels = image.as_bytes(0).unwrap();
+            assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] > 200), "{name} drew nothing");
+        }
+        assert!(looks_like_svg(b"<?xml version=\"1.0\"?><svg></svg>"));
+        assert!(!looks_like_svg(b"GIF89a"));
+    }
+
     #[test]
     #[ignore = "decodes files named in VIOLETWIRE_TEST_IMAGES"]
     fn decodes_listed_files() {

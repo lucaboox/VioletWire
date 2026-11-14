@@ -12,6 +12,8 @@ pub enum Event {
     /// Sign in on twitch.tv for ad-free playback.
     LinkPlayback,
     UnlinkPlayback,
+    KickSignIn,
+    KickSignOut,
 }
 /// Electron's settings sections, in its order.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -347,6 +349,31 @@ impl Settings {
                 },
                 div(),
             ))
+            .child({
+                let kick = preferences::get(cx).kick_account;
+                let signed_in = kick.is_some();
+                card(
+                    "Kick account",
+                    match &kick {
+                        Some(account) => format!(
+                            "Signed in as {} on Kick's own page. Your followed Kick channels show in the sidebar, and you can chat on Kick.",
+                            account.username
+                        ),
+                        None => "Sign in on kick.com to see the Kick channels you follow and chat on Kick. VioletWire never sees your password.".to_owned(),
+                    },
+                    ui::button(
+                        "kick-account",
+                        if signed_in { "Sign out" } else { "Sign in" },
+                        None,
+                        if signed_in { ButtonStyle::Secondary } else { ButtonStyle::Primary },
+                    )
+                    .px_3()
+                    .h(px(30.))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(if signed_in { Event::KickSignOut } else { Event::KickSignIn })
+                    })),
+                )
+            })
             .child(card(
                 "Twitch website session",
                 description,

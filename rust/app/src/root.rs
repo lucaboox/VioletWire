@@ -95,6 +95,11 @@ pub struct Root {
     multi: Option<multi::Multi>,
     /// Kick channels opened this session, for the player header.
     kick_channels: Vec<FollowedChannel>,
+    /// The signed-in Kick account's followed channels.
+    kick_followed: Vec<FollowedChannel>,
+    kick_task: Option<Task<()>>,
+    /// Refusals in a row of the stored Kick account; three sign it out.
+    kick_refusals: u8,
     _kick_info: Option<Task<()>>,
     /// The signed-in account's profile picture (Electron's account chip).
     account_image: Option<String>,
@@ -111,6 +116,8 @@ pub struct Root {
     search: browse::SearchState,
     category_input: Entity<crate::input::TextInput>,
     account_menu: bool,
+    /// The saved line-ups menu under the top bar's Multistream button.
+    top_presets: bool,
     input_observers: Vec<gpui::Subscription>,
     /// A short message at the bottom of the window (Electron's notice).
     notice: Option<SharedString>,
@@ -267,6 +274,8 @@ impl Root {
                     }
                     this.settings.update(cx, |_, cx| cx.notify());
                 }
+                crate::settings::Event::KickSignIn => this.kick_sign_in(cx),
+                crate::settings::Event::KickSignOut => this.kick_sign_out(cx),
             }
             cx.notify();
         });
@@ -292,6 +301,9 @@ impl Root {
             hwnd: None,
             multi: None,
             kick_channels: Vec::new(),
+            kick_followed: Vec::new(),
+            kick_task: None,
+            kick_refusals: 0,
             _kick_info: None,
             account_image: None,
             account_image_task: None,
@@ -308,6 +320,7 @@ impl Root {
             search: Default::default(),
             category_input: cx.new(|cx| crate::input::TextInput::new("Search categories", cx)),
             account_menu: false,
+            top_presets: false,
             input_observers: Vec::new(),
             notice: None,
             notice_task: None,
@@ -319,6 +332,7 @@ impl Root {
             refresh_task: None,
         };
         root.restore(cx);
+        root.start_kick(cx);
         root
     }
 
@@ -543,6 +557,94 @@ impl Root {
             _controls: controls,
             _chat_controls: chat_controls,
         }
+    }
+
+    // ----- Kick account ---------------------------------------------------
+
+    fn kick_sign_in(&mut self, cx: &mut Context<Self>) {
+        let root = cx.entity().downgrade();
+        crate::kick_web::sign_in(self.hwnd, cx, move |result, cx| {
+            let _ = root.update(cx, |this, cx| {
+                match result {
+                    Ok(Some(account)) => {
+                        this.show_notice(format!("Signed in to Kick as {}.", account.username), cx);
+                        crate::preferences::update(cx, |prefs| prefs.kick_account = Some(account));
+                        this.start_kick(cx);
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.show_notice(error.to_string(), cx),
+                }
+                this.settings.update(cx, |_, cx| cx.notify());
+                cx.notify();
+            });
+        });
+    }
+
+    fn kick_sign_out(&mut self, cx: &mut Context<Self>) {
+        self.kick_task = None;
+        self.kick_followed.clear();
+        crate::preferences::update(cx, |prefs| prefs.kick_account = None);
+        self.settings.update(cx, |_, cx| cx.notify());
+        cx.spawn(async move |this, cx| {
+            let result = crate::kick_web::sign_out(cx).await;
+            this.update(cx, |this, cx| {
+                this.show_notice(
+                    match result {
+                        Ok(()) => "Signed out of Kick.".to_owned(),
+                        Err(error) => format!("Kick sign-out did not finish: {error}"),
+                    },
+                    cx,
+                );
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Keeps the followed Kick channels current while signed in to Kick.
+    fn start_kick(&mut self, cx: &mut Context<Self>) {
+        if crate::preferences::get(cx).kick_account.is_none() {
+            return;
+        }
+        self.kick_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let result = load_kick_followed(cx).await;
+                let keep = this.update(cx, |this, cx| this.kick_followed_loaded(result, cx)).unwrap_or(false);
+                if !keep {
+                    break;
+                }
+                cx.background_executor().timer(REFRESH_EVERY).await;
+            }
+        }));
+    }
+
+    /// `None` means Kick refused the account. Returns whether to keep polling.
+    fn kick_followed_loaded(&mut self, result: anyhow::Result<Option<Vec<FollowedChannel>>>, cx: &mut Context<Self>) -> bool {
+        match result {
+            Ok(Some(channels)) => {
+                self.kick_refusals = 0;
+                self.kick_followed = channels;
+            }
+            Ok(None) => {
+                // One refusal can be Kick's edge; several in a row mean the
+                // session really ended (Electron's EXPIRY_CONFIRMATIONS).
+                self.kick_refusals += 1;
+                if self.kick_refusals >= 3 {
+                    self.kick_refusals = 0;
+                    self.kick_followed.clear();
+                    crate::preferences::update(cx, |prefs| prefs.kick_account = None);
+                    self.show_notice("Kick signed you out. Sign in again in Settings.", cx);
+                    self.settings.update(cx, |_, cx| cx.notify());
+                    cx.notify();
+                    return false;
+                }
+            }
+            // Offline or Kick down: keep what we have.
+            Err(_) => {}
+        }
+        cx.notify();
+        true
     }
 
     /// A Kick channel's title, viewers and picture for the header.
@@ -785,11 +887,14 @@ impl Root {
         let thumbnails = self
             .channels
             .iter()
+            .chain(&self.kick_followed)
             .filter_map(|channel| channel.stream.as_ref()?.thumbnail_url.clone())
             .map(|url| (url, period));
         let avatars = self
             .channels
             .iter()
+            .chain(&self.kick_followed)
+            .chain(&self.kick_channels)
             .filter_map(|channel| channel.profile_image_url.clone())
             .chain(self.account_image.clone())
             .map(|url| (url, 0));
@@ -934,6 +1039,121 @@ impl Root {
             ))
     }
 
+    /// Electron's `top-multistream-group`: the Multistream toggle, and a
+    /// chevron for saved line-ups when there are any.
+    fn multistream_group(&self, cx: &Context<Self>) -> AnyElement {
+        let active = self.multi.is_some();
+        let presets = crate::preferences::get(cx).multi_stream_presets;
+        let has_presets = !presets.is_empty();
+        let names: std::collections::HashMap<String, String> = self
+            .channels
+            .iter()
+            .map(|channel| (channel.login.clone(), channel.display_name.clone()))
+            .collect();
+        div()
+            .relative()
+            .flex_none()
+            .flex()
+            .items_center()
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                ui::button(
+                    "multi-top",
+                    "Multistream",
+                    Some(Icon::Grid),
+                    if active { ButtonStyle::Selected } else { ButtonStyle::Secondary },
+                )
+                .h(px(40.))
+                .when(has_presets, |button| button.rounded_r(px(0.)))
+                .tooltip(|_, cx| cx.new(|_| ui::Tooltip("Watch up to 4 streams at once".into())).into())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.top_presets = false;
+                    if this.multi.is_some() {
+                        this.exit_multi(window, cx);
+                    } else {
+                        this.enter_multi(cx);
+                    }
+                    cx.notify();
+                })),
+            )
+            .when(has_presets, |group| {
+                group.child(
+                    ui::icon_button("multi-top-presets", Icon::ChevronDown, "Open a saved line-up", self.top_presets || active)
+                        .h(px(40.))
+                        .w(px(30.))
+                        .rounded_l(px(0.))
+                        .border_l_1()
+                        .border_color(theme::border())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.top_presets = !this.top_presets;
+                            this.account_menu = false;
+                            this.search.open = false;
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(self.top_presets && has_presets, |group| {
+                group.child(
+                    gpui::deferred(
+                        div()
+                            .id("top-presets-menu")
+                            .occlude()
+                            .absolute()
+                            .top(px(46.))
+                            .right_0()
+                            .w(px(280.))
+                            .max_h(px(380.))
+                            .overflow_y_scroll()
+                            .p(px(6.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .rounded(px(10.))
+                            .border_1()
+                            .border_color(theme::button_border())
+                            .bg(theme::popup())
+                            .shadow_lg()
+                            .children(presets.into_iter().enumerate().map(|(index, preset)| {
+                                let lineup = preset
+                                    .channels
+                                    .iter()
+                                    .map(|login| match crate::kick::slug(login) {
+                                        Some(slug) => format!("{slug} (Kick)"),
+                                        None => names.get(login).cloned().unwrap_or_else(|| login.clone()),
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(" · ");
+                                let channels = preset.channels.clone();
+                                div()
+                                    .id(SharedString::from(format!("top-preset-{index}")))
+                                    .px(px(10.))
+                                    .py(px(7.))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(2.))
+                                    .rounded(px(7.))
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(theme::surface_hover()))
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .text_size(px(13.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(preset.name.clone()),
+                                    )
+                                    .child(div().truncate().text_size(px(11.)).text_color(theme::text_dim()).child(lineup))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_preset(channels.clone(), window, cx);
+                                        cx.notify();
+                                    }))
+                            })),
+                    )
+                    .with_priority(1),
+                )
+            })
+            .into_any_element()
+    }
+
     fn navigation(&self, cx: &Context<Self>) -> impl IntoElement {
         let signed_in = matches!(self.auth, Auth::SignedIn(_));
         let login = match &self.auth {
@@ -965,36 +1185,19 @@ impl Root {
                         this.show_section(Section::Home, window, cx)
                     })),
             )
-            .when(signed_in, |bar| {
-                bar.child(
-                    ui::button(
-                        "browse-nav",
-                        "Browse",
-                        Some(Icon::Compass),
-                        nav_style(on_page(Section::Browse)),
-                    )
-                    .h(px(38.))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_section(Section::Browse, window, cx)
-                    })),
+            // Kick's directory needs no sign-in, so Browse is always there.
+            .child(
+                ui::button(
+                    "browse-nav",
+                    "Browse",
+                    Some(Icon::Compass),
+                    nav_style(on_page(Section::Browse)),
                 )
-                .child(
-                    ui::button(
-                        "multi-nav",
-                        "Multistream",
-                        Some(Icon::Grid),
-                        nav_style(self.multi.is_some()),
-                    )
-                    .h(px(38.))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if this.multi.is_some() {
-                            this.exit_multi(window, cx);
-                        } else {
-                            this.enter_multi(cx);
-                        }
-                    })),
-                )
-            })
+                .h(px(38.))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.show_section(Section::Browse, window, cx)
+                })),
+            )
             .child(div().flex_1().min_w(px(12.)))
             .child(
                 div()
@@ -1021,6 +1224,7 @@ impl Root {
                     }),
             )
             .child(div().flex_1().min_w(px(12.)))
+            .when(signed_in, |bar| bar.child(self.multistream_group(cx)))
             .when(signed_in, |bar| {
                 let initial = login
                     .chars()
@@ -1170,7 +1374,7 @@ impl Root {
                 !favorites.contains(&channel.login),
             )
         };
-        let mut ordered: Vec<&FollowedChannel> = self.channels.iter().collect();
+        let mut ordered: Vec<&FollowedChannel> = self.channels.iter().chain(&self.kick_followed).collect();
         // Stable: within a rank the original order stays.
         ordered.sort_by_key(|channel| rank(channel));
         ordered
@@ -1192,11 +1396,8 @@ impl Root {
     fn sidebar(&self, collapsed: bool, cx: &Context<Self>) -> impl IntoElement {
         let favorites = crate::preferences::get(cx).favorite_channels;
         let ordered = self.sidebar_order(&favorites);
-        let live = self
-            .channels
-            .iter()
-            .filter(|channel| channel.stream.is_some())
-            .count();
+        let live = ordered.iter().filter(|channel| channel.stream.is_some()).count();
+        let total = ordered.len();
         div()
             .w(px(if collapsed { 68. } else { 244. }))
             .flex_none()
@@ -1318,7 +1519,7 @@ impl Root {
                                             .flex()
                                             .justify_between()
                                             .child("OFFLINE")
-                                            .child(format!("{}", self.channels.len() - live))
+                                            .child(format!("{}", total - live))
                                             .into_any_element(),
                                     );
                                 }
@@ -1393,6 +1594,25 @@ impl Root {
                             .when(channel.stream.is_none(), |v| v.opacity(0.45))
                             .child(self.avatar(channel.profile_image_url.as_deref(), 36.)),
                     )
+                    .when(channel.login.starts_with(crate::kick::PREFIX), |v| {
+                        // Kick's mark, like Electron's provider logo.
+                        v.child(
+                            div()
+                                .absolute()
+                                .left(px(-3.))
+                                .bottom(px(-3.))
+                                .size(px(14.))
+                                .rounded(px(3.))
+                                .bg(rgb(0x53fc18))
+                                .text_color(rgb(0x000000))
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::BOLD)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child("K"),
+                        )
+                    })
                     .when(favorite, |v| {
                         v.child(
                             ui::icon(Icon::StarFilled, 11.)
@@ -1627,6 +1847,34 @@ impl Root {
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_favorite(&star_login, cx))),
                 )
             })
+            .when_some(
+                crate::kick::slug(&login)
+                    .filter(|_| crate::preferences::get(cx).kick_account.is_some())
+                    .map(str::to_owned),
+                |bar, slug| {
+                    let following = self.kick_followed.iter().any(|followed| followed.login == login);
+                    bar.child(
+                        ui::button(
+                            "toolbar-kick-follow",
+                            if compact { "" } else if following { "Following" } else { "Follow" },
+                            Some(if following { Icon::StarFilled } else { Icon::Star }),
+                            if following { ButtonStyle::Secondary } else { ButtonStyle::Primary },
+                        )
+                        .when(compact, |button| button.w(px(34.)).px_0())
+                        .tooltip(|_, cx| {
+                            cx.new(|_| ui::Tooltip("Opens the channel on Kick, signed in, to follow or unfollow there".into()))
+                                .into()
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            // The followed list catches up once the page closes.
+                            let root = cx.entity().downgrade();
+                            crate::kick_web::open_page(this.hwnd, &slug, cx, move |cx| {
+                                let _ = root.update(cx, |this, cx| this.start_kick(cx));
+                            });
+                        })),
+                    )
+                },
+            )
             .when(matches!(self.auth, Auth::SignedIn(_)) && crate::kick::slug(&login).is_none(), |bar| {
                 let login = login.clone();
                 let creating = self.clip_task.is_some();
@@ -1762,6 +2010,7 @@ impl Root {
         let live: Vec<&FollowedChannel> = self
             .channels
             .iter()
+            .chain(&self.kick_followed)
             .filter(|channel| channel.stream.is_some())
             .collect();
         let now = auth::now();
@@ -1974,6 +2223,7 @@ impl Root {
             .chain(&self.search.kick_quick)
             .chain(&self.search.kick_full)
             .chain(&self.kick_channels)
+            .chain(&self.kick_followed)
             .find(|channel| channel.login == login)
     }
 
@@ -2174,6 +2424,34 @@ impl Render for Root {
                 self.activate_tile(0, cx);
             });
         }
+        // Debug aid: `VIOLETWIRE_PROBE_KICK_BROWSE=1` opens Kick's Browse, then
+        // its first category, and logs what loads.
+        if std::env::var_os("VIOLETWIRE_PROBE_KICK_BROWSE").is_some() {
+            static OPENED: std::sync::Once = std::sync::Once::new();
+            static PICKED: std::sync::Once = std::sync::Once::new();
+            static LOGGED: std::sync::Once = std::sync::Once::new();
+            OPENED.call_once(|| {
+                self.show_section(Section::Browse, window, cx);
+                self.set_browse_kick(true, cx);
+            });
+            if self.browse.kick && self.browse.selected.is_none() && !self.browse.categories.is_empty() {
+                let first = self.browse.categories[0].clone();
+                PICKED.call_once(|| {
+                    eprintln!("[probe] kick categories={} first={}", self.browse.categories.len(), first.name);
+                    self.open_category(first, window, cx);
+                });
+            }
+            if self.browse.selected.is_some() && !self.browse.streams_loading && (self.browse.error.is_some() || !self.browse.streams.is_empty()) {
+                LOGGED.call_once(|| {
+                    eprintln!(
+                        "[probe] kick streams={} more={} error={:?}",
+                        self.browse.streams.len(),
+                        self.browse.streams_cursor.is_some(),
+                        self.browse.error
+                    );
+                });
+            }
+        }
         self.sync_tiles(cx);
         let account = match &self.auth {
             Auth::SignedIn(session) => Some(session.identity.login.clone()),
@@ -2201,7 +2479,8 @@ impl Render for Root {
             Some(playing) => self
                 .player_panel(playing, fullscreen, compact, cx)
                 .into_any_element(),
-            None if signed_in => {
+            // Signed out, Browse (Kick's directory) and Search still work.
+            None if signed_in || self.section != Section::Home => {
                 let width = f32::from(window.viewport_size().width) - sidebar_width;
                 match self.section {
                     Section::Home => self.home(width, cx).into_any_element(),
@@ -2242,9 +2521,10 @@ impl Render for Root {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.search.open || this.account_menu || this.channel_menu.is_some() {
+                    if this.search.open || this.account_menu || this.top_presets || this.channel_menu.is_some() {
                         this.search.open = false;
                         this.account_menu = false;
+                        this.top_presets = false;
                         this.channel_menu = None;
                         cx.notify();
                     }
@@ -2261,10 +2541,11 @@ impl Render for Root {
                     return;
                 }
                 if key == "escape"
-                    && (this.search.open || this.account_menu || this.channel_menu.is_some())
+                    && (this.search.open || this.account_menu || this.top_presets || this.channel_menu.is_some())
                 {
                     this.search.open = false;
                     this.account_menu = false;
+                    this.top_presets = false;
                     this.channel_menu = None;
                     cx.notify();
                     cx.stop_propagation();
@@ -2755,4 +3036,48 @@ fn open_activation(url: &str, cx: &mut App) {
     if auth::is_twitch_activation_url(url) {
         cx.open_url(url);
     }
+}
+
+/// The signed-in Kick account's followed channels, live ones with their
+/// thumbnail. `None` when Kick no longer accepts the account.
+async fn load_kick_followed(cx: &mut gpui::AsyncApp) -> anyhow::Result<Option<Vec<FollowedChannel>>> {
+    let mut channels: Vec<FollowedChannel> = Vec::new();
+    let mut cursor: Option<String> = None;
+    // Bounded, so a runaway cursor cannot loop forever.
+    for _ in 0..10 {
+        let path = match &cursor {
+            None => "/api/v2/channels/followed".to_owned(),
+            Some(cursor) => format!("/api/v2/channels/followed?cursor={}", crate::playback::kick::encode(cursor)),
+        };
+        let (status, page) = crate::kick_web::request(cx, "GET", &path, None).await?;
+        match status {
+            200 => {}
+            401 => return Ok(None),
+            status => anyhow::bail!("Kick answered {status}."),
+        }
+        let entries = if page.is_array() { &page } else { &page["channels"] };
+        channels.extend(entries.as_array().into_iter().flatten().filter_map(crate::kick::followed_entry));
+        cursor = match &page["next_cursor"] {
+            serde_json::Value::String(next) if !next.is_empty() && next.len() < 200 => Some(next.clone()),
+            serde_json::Value::Number(next) if next.as_u64().is_some_and(|n| n > 0) => Some(next.to_string()),
+            _ => None,
+        };
+        if cursor.is_none() {
+            break;
+        }
+    }
+    // The followed list has no thumbnails; the livestream route does.
+    for channel in &mut channels {
+        let Some(slug) = crate::kick::slug(&channel.login).map(str::to_owned) else { continue };
+        let Some(stream) = channel.stream.as_mut() else { continue };
+        if let Ok((200, live)) =
+            crate::kick_web::request(cx, "GET", &format!("/api/v2/channels/{slug}/livestream"), None).await
+        {
+            stream.thumbnail_url = live["data"]["thumbnail"]["src"]
+                .as_str()
+                .filter(|url| crate::kick::is_image_url(url))
+                .map(str::to_owned);
+        }
+    }
+    Ok(Some(channels))
 }

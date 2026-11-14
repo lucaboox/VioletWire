@@ -54,6 +54,11 @@ pub struct Preferences {
     /// Saved multistream line-ups (Electron's `multiStreamPresets`).
     pub multi_stream_presets: Vec<MultiPreset>,
     pub presets_imported: bool,
+    /// The Kick account signed in on Kick's own page (name and picture
+    /// only; the session lives in Kick's WebView2 profile).
+    pub kick_account: Option<crate::kick_web::Account>,
+    /// Browse shows Kick's directory rather than Twitch's.
+    pub browse_kick: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -110,6 +115,8 @@ impl Default for Preferences {
             emote_favorites: Vec::new(),
             multi_stream_presets: Vec::new(),
             presets_imported: false,
+            kick_account: None,
+            browse_kick: false,
         }
     }
 }
@@ -128,7 +135,7 @@ impl Preferences {
         let mut favorites: Vec<String> = Vec::new();
         for login in &self.favorite_channels {
             let login = login.trim().to_ascii_lowercase();
-            if crate::format::is_login(&login) && !favorites.contains(&login) && favorites.len() < 500 {
+            if crate::format::is_channel(&login) && !favorites.contains(&login) && favorites.len() < 500 {
                 favorites.push(login);
             }
         }
@@ -146,15 +153,15 @@ impl Preferences {
         });
         self.emote_favorites.dedup();
         self.emote_favorites.truncate(1000);
-        // Twitch logins only (Electron also stored `kick:` keys), at most four
-        // per line-up and twenty line-ups.
+        // Twitch logins and `kick:` keys, as Electron stored them, at most
+        // four per line-up and twenty line-ups.
         for preset in &mut self.multi_stream_presets {
             preset.name = preset.name.chars().filter(|c| !c.is_control()).take(40).collect();
             preset.channels = preset
                 .channels
                 .iter()
                 .map(|channel| channel.strip_prefix("twitch:").unwrap_or(channel).to_ascii_lowercase())
-                .filter(|login| crate::format::is_login(login))
+                .filter(|login| crate::format::is_channel(login))
                 .take(4)
                 .collect();
         }

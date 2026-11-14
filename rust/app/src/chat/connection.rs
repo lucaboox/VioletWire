@@ -16,12 +16,14 @@ pub struct Connection {
     stop: Arc<AtomicBool>,
 }
 impl Connection {
-    pub fn new(login: &str) -> Self {
+    /// `history` is how many recent Kick messages to show first; Twitch's
+    /// history loads separately (`history.rs`).
+    pub fn new(login: &str, history: usize) -> Self {
         let (stop, channel) = (Arc::new(AtomicBool::new(false)), login.to_owned());
         let (tx, events) = mpsc::sync_channel(1000);
         let cancelled = stop.clone();
         if let Some(slug) = crate::kick::slug(login) {
-            super::kick::spawn(slug.to_owned(), cancelled, tx);
+            super::kick::spawn(slug.to_owned(), history, cancelled, tx);
             return Self { events, stop };
         }
         thread::spawn(move || {

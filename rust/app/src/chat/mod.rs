@@ -11,7 +11,7 @@ pub use view::Chat;
 
 pub fn probe(login: &str) -> anyhow::Result<()> {
     anyhow::ensure!(crate::format::is_channel(login), "Invalid channel");
-    let connection = connection::Connection::new(login);
+    let connection = connection::Connection::new(login, 50);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
     let (mut connected, mut count, mut emotes, mut room) = (false, 0, 0, String::new());
     while std::time::Instant::now() < deadline {

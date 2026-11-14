@@ -106,16 +106,20 @@ impl Channel {
                 .map(|category| text(&category["name"], 60))
                 .unwrap_or_default(),
             thumbnail: image(&livestream["thumbnail"]["url"]).or_else(|| image(&livestream["thumbnail"]["src"])),
-            started: Some(text(&livestream["start_time"], 19))
-                .filter(|time| time.len() == 19 && time.as_bytes()[10] == b' ')
-                .map(|time| format!("{}T{}Z", &time[..10], &time[11..]))
-                .unwrap_or_default(),
+            started: rfc3339(&livestream["start_time"]),
         });
         let mut subscriber_badges: Vec<(u64, String)> = value["subscriber_badges"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|badge| Some((badge["months"].as_u64()?, image(&badge["badge_image"]["src"])?)))
+            .filter_map(|badge| {
+                let image = image(&badge["badge_image"]["src"]).or_else(|| {
+                    badge["id"]
+                        .as_u64()
+                        .map(|id| format!("https://files.kick.com/channel_subscriber_badges/{id}/original"))
+                })?;
+                Some((badge["months"].as_u64()?, image))
+            })
             .collect();
         subscriber_badges.sort_by_key(|badge| std::cmp::Reverse(badge.0));
         Some(Self {
@@ -154,6 +158,146 @@ impl Channel {
     }
 }
 
+/// RFC 3339 from Kick's `2026-11-13 22:03:56` (UTC) or an ISO time.
+fn rfc3339(value: &Value) -> String {
+    let time = text(value, 40);
+    if time.len() == 19 && time.as_bytes()[10] == b' ' {
+        return format!("{}T{}Z", &time[..10], &time[11..]);
+    }
+    if time.len() >= 19 && time.as_bytes()[10] == b'T' { time } else { String::new() }
+}
+
+/// One entry of Kick's followed list (`/api/v2/channels/followed`), whose
+/// field names vary; see Electron's `kickFollowedEntrySchema`.
+pub fn followed_entry(value: &Value) -> Option<crate::twitch::helix::FollowedChannel> {
+    let slug = text(&value["channel_slug"], 40);
+    let slug = if slug.is_empty() { text(&value["slug"], 40) } else { slug }.to_ascii_lowercase();
+    if !is_slug(&slug) {
+        return None;
+    }
+    let first = |keys: &[&str]| keys.iter().map(|key| text(&value[*key], 200)).find(|v| !v.is_empty());
+    let live = value["is_live"].as_bool().or_else(|| value["isLive"].as_bool()).unwrap_or(false);
+    let category = first(&["category_name"])
+        .or_else(|| first(&["category"]))
+        .or_else(|| Some(text(&value["category"]["name"], 60)).filter(|v| !v.is_empty()))
+        .unwrap_or_default();
+    Some(crate::twitch::helix::FollowedChannel {
+        id: format!("kick-{slug}"),
+        login: format!("{PREFIX}{slug}"),
+        display_name: first(&["user_username", "username"]).unwrap_or_else(|| slug.clone()),
+        profile_image_url: ["profile_picture", "profile_pic", "profilePic"].iter().find_map(|key| image(&value[*key])),
+        stream: live.then(|| crate::twitch::helix::LiveStream {
+            title: text(&value["session_title"], 200),
+            game_name: category,
+            viewer_count: value["viewer_count"].as_u64().or_else(|| value["viewers"].as_u64()).unwrap_or(0),
+            started_at: {
+                let started = rfc3339(&value["start_time"]);
+                if started.is_empty() { rfc3339(&value["created_at"]) } else { started }
+            },
+            thumbnail_url: None,
+            language: String::new(),
+            tags: Vec::new(),
+        }),
+    })
+}
+
+/// Kick's images come as a `srcset` string or a plain address.
+fn first_image(value: &Value) -> Option<String> {
+    ["responsive", "srcset", "url", "src"].iter().find_map(|key| {
+        let text = text(&value[*key], 4000);
+        let first = text.split(',').next()?.split_whitespace().next()?.to_owned();
+        is_image_url(&first).then_some(first)
+    })
+}
+
+fn category(entry: &Value) -> Option<crate::twitch::helix::Category> {
+    let id = entry["id"].as_u64()?;
+    let name = text(&entry["name"], 80);
+    if name.is_empty() {
+        return None;
+    }
+    Some(crate::twitch::helix::Category {
+        // Marked, so Browse knows to page Kick's directory for it.
+        id: format!("{PREFIX}{id}"),
+        name,
+        box_art_url: first_image(&entry["banner"]),
+        viewers: entry["viewers"].as_u64(),
+    })
+}
+
+/// Kick's categories by viewers (pages are numbered), or those matching
+/// `query` (Electron's `getCategories`).
+pub fn categories(query: &str, page: Option<&str>) -> Result<(Vec<crate::twitch::helix::Category>, Option<String>)> {
+    let query: String = query.trim().chars().filter(|c| !c.is_control()).take(60).collect();
+    if !query.is_empty() {
+        let value = crate::playback::kick::get(&format!(
+            "https://kick.com/api/search?searched_word={}",
+            crate::playback::kick::encode(&query)
+        ))?;
+        let found = value["categories"].as_array().into_iter().flatten().filter_map(category).collect();
+        return Ok((found, None));
+    }
+    let page: u32 = page.and_then(|page| page.parse().ok()).filter(|page| (1..=500).contains(page)).unwrap_or(1);
+    let value = crate::playback::kick::get(&format!("https://kick.com/api/v1/subcategories?page={page}"))?;
+    let found: Vec<_> = value["data"].as_array().into_iter().flatten().filter_map(category).collect();
+    let next = (value["next_page_url"].is_string() && !found.is_empty()).then(|| (page + 1).to_string());
+    Ok((found, next))
+}
+
+/// The address of a Kick category's live channels, most viewers first, in
+/// the directory Kick's site pages through (Electron's `getCategoryStreams`).
+pub fn category_streams_url(id: &str, after: Option<&str>) -> Result<String> {
+    let id = id.strip_prefix(PREFIX).filter(|id| !id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()));
+    let Some(id) = id else { bail!("Invalid Kick category.") };
+    let mut url =
+        format!("https://web.kick.com/api/v1/livestreams?language=en&limit=24&sort=viewer_count_desc&category_id={id}");
+    if let Some(after) = after {
+        url.push_str("&after=");
+        url.push_str(&crate::playback::kick::encode(after));
+    }
+    Ok(url)
+}
+
+/// That directory page's channels and the cursor for the next.
+pub fn category_streams(value: &Value) -> (Vec<crate::twitch::helix::FollowedChannel>, Option<String>) {
+    let streams = value["data"]["livestreams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|stream| {
+            let channel = &stream["channel"];
+            let slug = text(&channel["slug"], 40).to_ascii_lowercase();
+            if !is_slug(&slug) {
+                return None;
+            }
+            Some(crate::twitch::helix::FollowedChannel {
+                id: format!("kick-{slug}"),
+                login: format!("{PREFIX}{slug}"),
+                display_name: Some(text(&channel["username"], 40)).filter(|name| !name.is_empty()).unwrap_or_else(|| slug.clone()),
+                profile_image_url: image(&channel["profile_pic"]),
+                stream: Some(crate::twitch::helix::LiveStream {
+                    title: text(&stream["title"], 200),
+                    game_name: text(&stream["category"]["name"], 60),
+                    viewer_count: stream["viewer_count"].as_u64().unwrap_or(0),
+                    started_at: rfc3339(&stream["start_time"]),
+                    thumbnail_url: image(&stream["thumbnail"]["src"]),
+                    language: text(&stream["language"], 8),
+                    tags: stream["tags"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|tag| tag.as_str())
+                        .take(6)
+                        .map(|tag| tag.chars().filter(|c| !c.is_control()).take(25).collect())
+                        .collect(),
+                }),
+            })
+        })
+        .collect();
+    let next = text(&value["data"]["pagination"]["next_cursor"], 200);
+    (streams, (!next.is_empty()).then_some(next))
+}
+
 /// `kick:<slug>` from `kick:slug`, `kick.com/slug` or a full Kick address.
 pub fn key_from_text(text: &str) -> Option<String> {
     let text = text.trim();
@@ -189,7 +333,7 @@ pub fn channel(slug: &str) -> Result<Channel> {
             return Ok(channel.clone());
         }
     }
-    let value = crate::playback::kick::query(&serde_json::json!({"kind": "channel", "slug": slug}))?;
+    let value = crate::playback::kick::get(&format!("https://kick.com/api/v2/channels/{slug}"))?;
     let channel = Channel::from_json(&value).context("Kick sent an unexpected channel.")?;
     let mut cache = CHANNELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     cache.retain(|(at, cached)| cached.slug != slug && at.elapsed() < Duration::from_secs(60));
@@ -199,7 +343,10 @@ pub fn channel(slug: &str) -> Result<Channel> {
 
 pub fn search(term: &str) -> Result<Vec<Channel>> {
     let term: String = term.chars().filter(|c| !c.is_control()).take(60).collect();
-    let value = crate::playback::kick::query(&serde_json::json!({"kind": "search", "slug": "search", "term": term}))?;
+    let value = crate::playback::kick::get(&format!(
+        "https://kick.com/api/search?searched_word={}",
+        crate::playback::kick::encode(&term)
+    ))?;
     Ok(value["channels"]
         .as_array()
         .into_iter()
@@ -262,6 +409,23 @@ mod tests {
         assert_eq!(key_from_text("www.kick.com/a_b").as_deref(), Some("kick:a_b"));
         assert_eq!(key_from_text("xqc"), None);
         assert_eq!(key_from_text("https://evil.example/kick.com/x"), None);
+    }
+
+    #[test]
+    fn reads_a_followed_entry() {
+        let channel = followed_entry(&serde_json::json!({
+            "channel_slug": "xqc", "user_username": "xQc", "is_live": true, "viewer_count": 9,
+            "session_title": "hi", "category_name": "Just Chatting", "start_time": "2026-11-13 22:03:56",
+            "profile_picture": "https://files.kick.com/images/p.webp"
+        }))
+        .unwrap();
+        assert_eq!(channel.login, "kick:xqc");
+        assert_eq!(channel.display_name, "xQc");
+        let stream = channel.stream.unwrap();
+        assert_eq!((stream.viewer_count, stream.game_name.as_str()), (9, "Just Chatting"));
+        assert_eq!(stream.started_at, "2026-11-13T22:03:56Z");
+        assert!(followed_entry(&serde_json::json!({"slug": "Bad Slug"})).is_none());
+        assert!(followed_entry(&serde_json::json!({"slug": "quiet"})).unwrap().stream.is_none());
     }
 
     #[test]

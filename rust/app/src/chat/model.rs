@@ -9,6 +9,8 @@ pub struct Message {
     pub system: Option<String>,
     pub id: String,
     pub login: String,
+    /// The sender's numeric ID (Kick needs it to reply); may be empty.
+    pub user_id: String,
     pub name: String,
     pub color: u32,
     pub text: String,
@@ -22,6 +24,7 @@ pub struct Reply {
     pub id: String,
     pub name: String,
     pub login: String,
+    pub user_id: String,
     pub text: String,
 }
 #[derive(Clone, Debug)]
@@ -38,6 +41,14 @@ pub enum Event {
     ClearUser(String),
     Clear,
     State(&'static str),
+}
+
+/// A numeric ID, or empty.
+pub fn digits(value: Option<&str>) -> String {
+    value
+        .filter(|id| (1..=20).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit()))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 pub fn tag_text(raw: &str) -> String {
@@ -162,6 +173,7 @@ pub fn parse(line: &str, channel: &str) -> Option<Event> {
                     .map(|id| {
                         Box::new(Reply {
                             id: (*id).into(),
+                            user_id: digits(tags.get("reply-parent-user-id").copied()),
                             login: tags
                                 .get("reply-parent-user-login")
                                 .filter(|login| crate::format::is_login(login))
@@ -190,6 +202,7 @@ pub fn parse(line: &str, channel: &str) -> Option<Event> {
                 }),
                 id: tags.get("id").copied().unwrap_or("").into(),
                 login: login.clone(),
+                user_id: digits(tags.get("user-id").copied()),
                 name: tags
                     .get("display-name")
                     .map(|s| tag_text(s))

@@ -76,6 +76,18 @@ pub fn image_url(url: &str) -> bool {
             )
         })
         || crate::kick::is_image_url(url)
+        || kick_badge(url)
+}
+
+/// Kick badges VioletWire builds itself: a built-in glyph, or the artwork
+/// Electron fetched (and kept) from KickTalk's badge host.
+fn kick_badge(url: &str) -> bool {
+    if let Some(kind) = url.strip_prefix("kick-badge:") {
+        return crate::images::kick_glyph(kind).is_some();
+    }
+    url.strip_prefix("https://cdn.kicktalk.app/Badges/")
+        .and_then(|name| name.strip_suffix(".svg"))
+        .is_some_and(|name| !name.is_empty() && name.len() <= 40 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
 }
 /// A signed-in Helix GET, for the user card.
 pub(super) fn helix_json(
@@ -169,12 +181,17 @@ fn logical(width: &Value, height: &Value, fallback: f32) -> (f32, f32) {
     }
 }
 
-/// `room` is a Twitch room ID, or `kick:` and a Kick user ID; a Kick room
-/// gets 7TV's global and Kick channel sets, as Electron's Kick chat did.
+/// `room` is a Twitch room ID, or `kick:<user id>:<slug>`; a Kick room gets
+/// Kick's own emote sets and 7TV's global and Kick channel sets, as
+/// Electron's Kick chat did.
 pub fn load(room: &str, session: Option<&Session>, offline: bool) -> Assets {
-    let (kick, room) = match room.strip_prefix("kick:") {
-        Some(id) => (true, id),
-        None => (false, room),
+    let full_room = room;
+    let (kick, room, kick_slug) = match room.strip_prefix("kick:") {
+        Some(rest) => {
+            let (id, slug) = rest.split_once(':').unwrap_or((rest, ""));
+            (true, id, slug)
+        }
+        None => (false, room, ""),
     };
     if !room.bytes().all(|b| b.is_ascii_digit()) || room.is_empty() {
         return Assets::default();
@@ -331,7 +348,13 @@ pub fn load(room: &str, session: Option<&Session>, offline: bool) -> Assets {
             }
             emotes
         });
-        let twitch = scope.spawn(|| if kick { Assets::default() } else { twitch_assets(&agent, room, session, offline) });
+        let twitch = scope.spawn(|| {
+            if kick {
+                kick_assets(kick_slug, full_room, offline)
+            } else {
+                twitch_assets(&agent, room, session, offline)
+            }
+        });
         let mut result = twitch.join().unwrap_or_default();
         // Electron's precedence: 7TV, then FFZ, then BTTV; within each, the
         // channel's set over the global one (listed later, so it replaces).
@@ -453,6 +476,51 @@ fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>, off
     }
     result.owners = found;
     result
+}
+
+/// Kick's emote sets for a channel (its own, Global, Emoji), through
+/// Streamlink. They fill the picker's native tab, keyed like Twitch owners:
+/// the room for the channel's set, empty for Global.
+fn kick_assets(slug: &str, room: &str, offline: bool) -> Assets {
+    let mut result = Assets::default();
+    if offline || !crate::kick::is_slug(slug) {
+        return result;
+    }
+    let Ok(sets) = crate::playback::kick::get(&format!("https://kick.com/emotes/{slug}")) else {
+        return result;
+    };
+    for set in sets.as_array().into_iter().flatten() {
+        let name: String = set["name"].as_str().unwrap_or_default().chars().filter(|c| !c.is_control()).take(40).collect();
+        let owner = match name.to_ascii_lowercase().as_str() {
+            "global" => String::new(),
+            "emojis" | "emoji" => "kick-emoji".to_owned(),
+            _ => room.to_owned(),
+        };
+        if !owner.is_empty() {
+            let label = if owner == "kick-emoji" { "Emoji".to_owned() } else if name.is_empty() { slug.to_owned() } else { name.clone() };
+            let avatar = set["user"]["profile_pic"].as_str().filter(|url| crate::kick::is_image_url(url)).map(str::to_owned);
+            result.owners.entry(owner.clone()).or_insert((label, avatar));
+        }
+        for emote in set["emotes"].as_array().into_iter().flatten() {
+            let (Some(id), Some(name)) = (emote["id"].as_u64(), emote["name"].as_str()) else { continue };
+            if name.is_empty() || name.len() > 64 || name.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                continue;
+            }
+            let url = format!("https://files.kick.com/emotes/{id}/fullsize");
+            insert(&mut result.emotes, name, url.clone());
+            if result.twitch.len() < 8000 {
+                result.twitch.push(TwitchEmote { name: name.to_owned(), url, owner: owner.clone() });
+            }
+        }
+    }
+    result
+}
+
+/// The Kick emote ID behind a picker or composer emote, if it is one.
+pub fn kick_emote_id(url: &str) -> Option<&str> {
+    url.strip_prefix("https://files.kick.com/emotes/")?
+        .strip_suffix("/fullsize")
+        .filter(|id| !id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn add_twitch_emotes(map: &mut HashMap<String, String>, list: &mut Vec<TwitchEmote>, value: &Value) {

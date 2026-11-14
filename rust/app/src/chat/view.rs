@@ -191,7 +191,24 @@ impl Chat {
             .badges
             .get(badge)
             .cloned()
-            .or_else(|| (self.kick && crate::kick::is_image_url(badge)).then(|| badge.to_owned()))
+            .or_else(|| (self.kick && assets::image_url(badge)).then(|| badge.to_owned()))
+    }
+
+    /// A Kick badge's tooltip, from its glyph name or image address.
+    fn badge_title(badge: &str) -> String {
+        let name = if let Some(kind) = badge.strip_prefix("kick-badge:") {
+            kind
+        } else if badge.contains("/channel_subscriber_badges/") || badge.starts_with("https://files.kick.com/") {
+            "subscriber"
+        } else {
+            let file = badge.rsplit('/').next().unwrap_or(badge);
+            let file = file.split(['.', '?']).next().unwrap_or(file);
+            // Kick's own badge files end in `_<uuid>`.
+            file.split_once('_').filter(|(_, rest)| rest.len() >= 32).map_or(file, |(name, _)| name)
+        };
+        let words = name.replace('_', " ");
+        let mut chars = words.chars();
+        chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default()
     }
 
     pub fn has_card(&self) -> bool {
@@ -547,6 +564,7 @@ impl Chat {
                 id: message.id.clone(),
                 name: message.name.clone(),
                 login: message.login.clone(),
+                user_id: message.user_id.clone(),
                 text: message.text.clone(),
             });
             self.menu = Some((message.clone(), gpui::point(px(40.), px(160.))));
@@ -605,7 +623,7 @@ impl Chat {
             overlay: false,
             hovered: false,
             preferences: crate::preferences::get(cx),
-            connection: Connection::new(login),
+            connection: Connection::new(login, usize::from(crate::preferences::get(cx).chat_history_limit)),
             messages: VecDeque::new(),
             ids: HashSet::new(),
             room: String::new(),
@@ -1099,8 +1117,7 @@ impl Chat {
             return;
         }
         if self.kick {
-            self.notice = Some("Kick chat is read-only in VioletWire for now.".into());
-            cx.notify();
+            self.send_kick(cx);
             return;
         }
         let Some(session) = self.session.clone() else {
@@ -1153,6 +1170,114 @@ impl Chat {
         }));
         cx.notify();
     }
+    /// Kick's composer text: its emotes go as `[emote:ID:NAME]` codes.
+    fn kick_content(&self, text: &str) -> String {
+        let ids: HashMap<&str, &str> = self
+            .assets
+            .twitch
+            .iter()
+            .filter_map(|emote| Some((emote.name.as_str(), assets::kick_emote_id(&emote.url)?)))
+            .collect();
+        text.split(' ')
+            .map(|word| match ids.get(word) {
+                Some(id) => format!("[emote:{id}:{word}]"),
+                None => word.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Sends as the signed-in Kick account, from Kick's own page (see
+    /// `kick_web`), as Electron's `KickService.sendMessage` does.
+    fn send_kick(&mut self, cx: &mut Context<Self>) {
+        if crate::preferences::get(cx).kick_account.is_none() {
+            self.notice = Some("Sign in to Kick in Settings to chat here.".into());
+            cx.notify();
+            return;
+        }
+        if self.last_send.is_some_and(|time| time.elapsed() < Duration::from_secs(1)) {
+            self.notice = Some("Please wait a moment before sending again.".into());
+            cx.notify();
+            return;
+        }
+        let text = self.input.read(cx).content.to_string();
+        if text.trim().is_empty() {
+            return;
+        }
+        if text.chars().count() > 500 {
+            self.notice = Some("Kick messages can be up to 500 characters.".into());
+            cx.notify();
+            return;
+        }
+        let content = self.kick_content(text.trim());
+        let reply = self.replying.clone();
+        let reply_id = reply.as_ref().map(|reply| reply.id.clone());
+        let slug = self.channel.clone();
+        self.sending = true;
+        self.last_send = Some(Instant::now());
+        self.notice = None;
+        self._send = Some(cx.spawn(async move |this, cx| {
+            let channel = cx.background_executor().spawn(async move { crate::kick::channel(&slug) }).await;
+            let result = match channel {
+                Err(error) => Err(error),
+                Ok(channel) => {
+                    let sent_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |elapsed| elapsed.as_millis());
+                    let mut body = serde_json::json!({
+                        "content": content,
+                        "type": "message",
+                        "message_ref": sent_at.to_string(),
+                    });
+                    if let Some(reply) = &reply {
+                        body["type"] = "reply".into();
+                        body["metadata"] = serde_json::json!({
+                            "original_message": {"id": reply.id, "content": reply.text},
+                            "original_sender": {
+                                "id": reply.user_id.parse::<u64>().ok(),
+                                "username": reply.name,
+                            },
+                        });
+                    }
+                    let path = format!("/api/v2/messages/send/{}", channel.chatroom_id);
+                    match crate::kick_web::request(cx, "POST", &path, Some(&body)).await {
+                        Ok((200..=299, _)) => Ok(()),
+                        Ok((401 | 403, _)) => Err(anyhow::anyhow!("Kick refused the message. Sign in to Kick again in Settings.")),
+                        Ok((419, _)) => Err(anyhow::anyhow!("Kick rejected the session. Sign in again.")),
+                        Ok((status, answer)) => {
+                            let detail = [&answer["message"], &answer["error"], &answer["data"]["message"], &answer["status"]["message"]]
+                                .into_iter()
+                                .find_map(|value| value.as_str().filter(|text| !text.is_empty()))
+                                .map(crate::http::short_message);
+                            Err(anyhow::anyhow!(detail.unwrap_or_else(|| if status == 429 {
+                                "You are sending messages too quickly.".to_owned()
+                            } else {
+                                "Kick would not accept the message.".to_owned()
+                            })))
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.sending = false;
+                match result {
+                    Ok(()) => {
+                        if this.input.read(cx).content.as_ref() == text
+                            && this.replying.as_ref().map(|reply| reply.id.as_str()) == reply_id.as_deref()
+                        {
+                            this.input.update(cx, |input, cx| input.clear(cx));
+                            this.replying = None;
+                        }
+                    }
+                    Err(error) => this.notice = Some(crate::http::short_message(&error.to_string()).into()),
+                }
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
     fn invalidate_messages(&mut self) {
         let offset = self.paused.then(|| self.list.logical_scroll_top());
         // Keep the list's scroll state; reset also discards the anchor and
@@ -1198,7 +1323,7 @@ impl Chat {
         for badge in &message.badges {
             if let Some(url) = self.badge_url(badge) {
                 let image = self.image(&url, false, cx);
-                let label = badge.clone();
+                let label = if self.kick { Self::badge_title(badge) } else { badge.clone() };
                 flow.image(
                     div()
                         .id(SharedString::from(format!("badge-{badge}")))
@@ -1370,6 +1495,7 @@ impl Chat {
             id: message.id.clone(),
             name: message.name.clone(),
             login: message.login.clone(),
+            user_id: message.user_id.clone(),
             text: message.text.clone(),
         });
         self.menu = None;
@@ -1909,7 +2035,7 @@ impl Chat {
                     .map(|(id, provider)| {
                         ui::button(
                             id,
-                            provider,
+                            if self.kick && provider == "Twitch" { "Kick" } else { provider },
                             None,
                             if self.picker_provider == provider {
                                 ButtonStyle::Selected
@@ -1979,8 +2105,11 @@ impl Render for Chat {
             || self.picker
             || self.replying.is_some()
             || self.is_editing(window, cx);
-        let can_send = self.session.is_some()
-            && !self.kick
+        let can_send = (if self.kick {
+            crate::preferences::get(cx).kick_account.is_some()
+        } else {
+            self.session.is_some()
+        })
             && !self.sending
             && !self.input.read(cx).content.trim().is_empty();
         div()
@@ -2211,15 +2340,16 @@ impl Render for Chat {
                                         .text_size(px(10.))
                                         .text_color(theme::text_dim())
                                         .child(
-                                            self.session
-                                                .as_ref()
-                                                .filter(|_| !self.kick)
-                                                .map(|s| {
-                                                    format!("Chatting as {}", s.identity.login)
-                                                })
+                                            (if self.kick {
+                                                crate::preferences::get(cx)
+                                                    .kick_account
+                                                    .map(|account| format!("Chatting on Kick as {}", account.username))
+                                            } else {
+                                                self.session.as_ref().map(|s| format!("Chatting as {}", s.identity.login))
+                                            })
                                                 .unwrap_or_else(|| {
                                                     if self.kick {
-                                                        "Kick chat is read-only here".into()
+                                                        "Sign in to Kick in Settings to chat".into()
                                                     } else {
                                                         "Sign in with Twitch to chat".into()
                                                     }

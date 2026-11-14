@@ -8,6 +8,7 @@ mod http;
 mod images;
 mod input;
 mod kick;
+mod kick_web;
 mod playback;
 mod playback_link;
 mod player;
@@ -72,6 +73,7 @@ fn main() {
             }
         }
         playback::resolver::shutdown();
+        playback::kick::shutdown();
         return;
     }
     if arguments.iter().any(|arg| arg == "--resolver-probe") {
@@ -99,10 +101,12 @@ fn main() {
             );
             if result.is_err() {
                 playback::resolver::shutdown();
+                playback::kick::shutdown();
                 std::process::exit(1);
             }
         }
         playback::resolver::shutdown();
+        playback::kick::shutdown();
         return;
     }
     playback::resolver::warm_up();
@@ -448,6 +452,7 @@ fn main() {
             }
         });
     playback::resolver::shutdown();
+    playback::kick::shutdown();
     if (probe_seconds.is_some() || ui_probe.is_some() || app_probe.is_some())
         && !probe_passed.load(std::sync::atomic::Ordering::Acquire)
     {

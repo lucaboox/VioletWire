@@ -26,6 +26,8 @@ pub(super) enum Section {
 
 #[derive(Default)]
 pub(super) struct BrowseState {
+    /// Kick's directory instead of Twitch's (Electron's `browsePlatform`).
+    pub kick: bool,
     pub categories: Vec<Category>,
     pub cursor: Option<String>,
     /// The category search the grid shows; empty for the top categories.
@@ -127,6 +129,14 @@ impl Root {
                 self.browse.streams.clear();
                 self.browse.streams_cursor = None;
             }
+            // Twitch's directory needs its sign-in; Kick's does not.
+            let kick = crate::preferences::get(cx).browse_kick || !matches!(self.auth, Auth::SignedIn(_));
+            if kick != self.browse.kick {
+                self.browse.kick = kick;
+                self.browse.loaded = false;
+                self.browse.categories.clear();
+                self.browse.cursor = None;
+            }
             if !self.browse.loaded && !self.browse.loading {
                 self.load_categories(false, cx);
             }
@@ -137,6 +147,26 @@ impl Root {
 
     // ----- Browse --------------------------------------------------------
 
+    /// Switches Browse between Twitch's and Kick's directories.
+    pub(super) fn set_browse_kick(&mut self, kick: bool, cx: &mut Context<Self>) {
+        if kick == self.browse.kick {
+            return;
+        }
+        crate::preferences::update(cx, |prefs| prefs.browse_kick = kick);
+        self.browse.kick = kick;
+        self.browse.selected = None;
+        self.browse.streams.clear();
+        self.browse.streams_cursor = None;
+        self.browse.categories.clear();
+        self.browse.cursor = None;
+        self.browse.loaded = false;
+        self.browse.error = None;
+        if kick || matches!(self.auth, Auth::SignedIn(_)) {
+            self.load_categories(false, cx);
+        }
+        cx.notify();
+    }
+
     pub(super) fn load_categories(&mut self, append: bool, cx: &mut Context<Self>) {
         let query = self.browse.query.clone();
         let after = append.then(|| self.browse.cursor.clone()).flatten();
@@ -145,6 +175,37 @@ impl Root {
         }
         self.browse.loading = true;
         self.browse.error = None;
+        if self.browse.kick {
+            self.browse.task = Some(cx.spawn(async move |this, cx| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { crate::kick::categories(&query, after.as_deref()) })
+                    .await;
+                this.update(cx, |this, cx| {
+                    if !this.browse.kick {
+                        return;
+                    }
+                    this.browse.loading = false;
+                    this.browse.loaded = true;
+                    match result {
+                        Ok((categories, cursor)) => {
+                            if append {
+                                this.browse.categories.extend(categories);
+                            } else {
+                                this.browse.categories = categories;
+                            }
+                            this.browse.cursor = cursor;
+                        }
+                        Err(error) => this.browse.error = Some(error.to_string().into()),
+                    }
+                    this.queue_images(cx);
+                    cx.notify();
+                })
+                .ok();
+            }));
+            cx.notify();
+            return;
+        }
         let task = self.helix_task(
             cx,
             move |helix| {
@@ -216,6 +277,43 @@ impl Root {
         }
         self.browse.streams_loading = true;
         self.browse.error = None;
+        if id.starts_with(crate::kick::PREFIX) {
+            // Kick's directory answers its own site, so the hidden Kick page
+            // asks for it, as Electron's Kick session did.
+            self.browse.streams_task = Some(cx.spawn(async move |this, cx| {
+                let result = match crate::kick::category_streams_url(&id, after.as_deref()) {
+                    Ok(url) => match crate::kick_web::request(cx, "GET", &url, None).await {
+                        Ok((200, value)) => Ok(crate::kick::category_streams(&value)),
+                        Ok((status, _)) => Err(anyhow::anyhow!("Kick answered {status}.")),
+                        Err(error) => Err(error),
+                    },
+                    Err(error) => Err(error),
+                };
+                this.update(cx, |this, cx| {
+                    this.browse.streams_loading = false;
+                    match result {
+                        Ok((streams, cursor)) => {
+                            if append {
+                                for stream in streams {
+                                    if !this.browse.streams.iter().any(|s| s.id == stream.id) {
+                                        this.browse.streams.push(stream);
+                                    }
+                                }
+                            } else {
+                                this.browse.streams = streams;
+                            }
+                            this.browse.streams_cursor = cursor;
+                        }
+                        Err(error) => this.browse.error = Some(error.to_string().into()),
+                    }
+                    this.queue_images(cx);
+                    cx.notify();
+                })
+                .ok();
+            }));
+            cx.notify();
+            return;
+        }
         let task = self.helix_task(
             cx,
             move |helix| helix.category_streams(&id, after.as_deref()),
@@ -521,6 +619,26 @@ impl Root {
         .px_5()
     }
 
+    /// Electron's `browse-platforms`: Twitch or Kick.
+    fn platform_switch(&self, cx: &Context<Self>) -> impl IntoElement {
+        let kick = self.browse.kick;
+        div()
+            .flex()
+            .gap_1()
+            .child(
+                ui::button("browse-twitch", "Twitch", None, if kick { ButtonStyle::Ghost } else { ButtonStyle::Selected })
+                    .h(px(32.))
+                    .px_3()
+                    .on_click(cx.listener(|this, _, _, cx| this.set_browse_kick(false, cx))),
+            )
+            .child(
+                ui::button("browse-kick", "Kick", None, if kick { ButtonStyle::Selected } else { ButtonStyle::Ghost })
+                    .h(px(32.))
+                    .px_3()
+                    .on_click(cx.listener(|this, _, _, cx| this.set_browse_kick(true, cx))),
+            )
+    }
+
     pub(super) fn browse_page(&self, width: f32, cx: &Context<Self>) -> AnyElement {
         if let Some(category) = &self.browse.selected {
             return self.category_page(category, width, cx);
@@ -531,7 +649,10 @@ impl Root {
         let content: AnyElement = if self.browse.categories.is_empty() {
             match (&self.browse.error, self.browse.loading) {
                 (Some(error), _) => banner(error.clone()).into_any_element(),
-                (None, true) => note("Loading Twitch categories…").into_any_element(),
+                (None, true) => note(if self.browse.kick { "Loading Kick categories…" } else { "Loading Twitch categories…" }).into_any_element(),
+                (None, false) if !self.browse.kick && !matches!(self.auth, Auth::SignedIn(_)) => {
+                    note("Sign in with Twitch to browse its categories, or switch to Kick above.").into_any_element()
+                }
                 (None, false) => note("No categories found.").into_any_element(),
             }
         } else {
@@ -571,6 +692,7 @@ impl Root {
                     ))
                     .child(div().w(px(340.)).flex_none().child(self.category_input.clone())),
             )
+            .child(self.platform_switch(cx))
             .when(!self.browse.categories.is_empty(), |page| {
                 page.when_some(self.browse.error.clone(), |page, error| page.child(banner(error)))
             })

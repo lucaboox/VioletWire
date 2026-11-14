@@ -19,7 +19,7 @@ use tungstenite::Message as Frame;
 /// Kick's published Pusher key, used when its connection lookup is down.
 const FALLBACK: (&str, &str) = ("34bf7a0ff419a2a775b9", "us2");
 
-pub fn spawn(slug: String, cancelled: Arc<AtomicBool>, tx: SyncSender<Event>) {
+pub fn spawn(slug: String, history: usize, cancelled: Arc<AtomicBool>, tx: SyncSender<Event>) {
     thread::spawn(move || {
         let agent = crate::kick::agent();
         let mut attempt = 0;
@@ -29,7 +29,25 @@ pub fn spawn(slug: String, cancelled: Arc<AtomicBool>, tx: SyncSender<Event>) {
             if channel.is_none() {
                 channel = crate::kick::channel(&slug).ok();
                 if let Some(channel) = &channel {
-                    let _ = tx.try_send(Event::Room(format!("kick:{}", channel.user_id)));
+                    let _ = tx.try_send(Event::Room(format!("kick:{}:{}", channel.user_id, channel.slug)));
+                    // Kick's own recent messages, oldest first (Electron's
+                    // `getChatHistory`).
+                    if history > 0
+                        && let Ok(recent) =
+                            crate::playback::kick::get(&format!("https://kick.com/api/v2/channels/{}/messages", channel.id))
+                    {
+                        let mut messages: Vec<Message> = recent["data"]["messages"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|data| message(data, channel))
+                            .collect();
+                        messages.sort_by_key(|message| message.sent_at);
+                        let skip = messages.len().saturating_sub(history);
+                        for message in messages.into_iter().skip(skip) {
+                            let _ = tx.try_send(Event::Message(message));
+                        }
+                    }
                 }
             }
             if let Some(channel) = &channel {
@@ -186,6 +204,15 @@ fn text_and_emotes(content: &str) -> (String, Vec<EmoteRange>) {
     (text, emotes)
 }
 
+/// Kick's numeric IDs, sent as numbers or strings.
+fn id_text(value: &Value) -> String {
+    match value {
+        Value::Number(number) => number.as_u64().map(|id| id.to_string()).unwrap_or_default(),
+        Value::String(text) => super::model::digits(Some(text)),
+        _ => String::new(),
+    }
+}
+
 fn color(value: &Value) -> u32 {
     value
         .as_str()
@@ -226,6 +253,21 @@ fn message(data: &Value, channel: &crate::kick::Channel) -> Option<Message> {
     let name = Some(clean(&sender["username"], 40)).filter(|name| !name.is_empty()).unwrap_or_else(|| login.clone());
     let identity = &sender["identity"];
     let mut badges = Vec::new();
+    // Kick's role badges: its own glyphs, or KickTalk's artwork for the rest.
+    for kind in identity["badges"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|badge| badge["type"].as_str())
+        .filter(|kind| *kind != "subscriber")
+        .take(6)
+    {
+        if crate::images::kick_glyph(kind).is_some() {
+            badges.push(format!("kick-badge:{kind}"));
+        } else if !kind.is_empty() && kind.len() <= 40 && kind.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            badges.push(format!("https://cdn.kicktalk.app/Badges/{kind}.svg"));
+        }
+    }
     // The channel's subscriber badge for the viewer's months.
     if let Some(months) = identity["badges"]
         .as_array()
@@ -255,6 +297,7 @@ fn message(data: &Value, channel: &crate::kick::Channel) -> Option<Message> {
         let (parent, _) = text_and_emotes(&clean(&metadata["original_message"]["content"], 500));
         Box::new(Reply {
             id: clean(&metadata["original_message"]["id"], 64),
+            user_id: id_text(&metadata["original_sender"]["id"]),
             name: if name.is_empty() { login.clone() } else { name },
             login,
             text: parent,
@@ -267,6 +310,7 @@ fn message(data: &Value, channel: &crate::kick::Channel) -> Option<Message> {
         system: None,
         id,
         login,
+        user_id: id_text(&sender["id"]),
         name,
         color: color(&identity["color"]),
         text,
@@ -319,5 +363,9 @@ mod tests {
         assert_eq!(message.text, "Nod hey");
         assert_eq!(message.sent_at, Some(86_401_000));
         assert_eq!(message.badges, ["https://files.kick.com/b/1", "https://ext.cdn.kick.com/chat/badges/a.png"]);
+        let moderator = serde_json::json!({
+            "id": "a", "content": "hi", "sender": {"slug": "m", "identity": {"badges": [{"type": "moderator"}, {"type": "og"}, {"type": "../x"}]}}
+        });
+        assert_eq!(super::message(&moderator, &channel()).unwrap().badges, ["kick-badge:moderator", "https://cdn.kicktalk.app/Badges/og.svg"]);
     }
 }

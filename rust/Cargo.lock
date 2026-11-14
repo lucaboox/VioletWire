@@ -6747,6 +6747,7 @@ dependencies = [
  "image",
  "keyring",
  "native-tls",
+ "resvg",
  "serde",
  "serde_json",
  "tungstenite",

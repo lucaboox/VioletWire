@@ -125,7 +125,9 @@ impl Root {
     }
 
     /// Replaces the tiles with a saved line-up.
-    fn open_preset(&mut self, channels: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_preset(&mut self, channels: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.top_presets = false;
+        self.enter_multi(cx);
         if let Some(multi) = &mut self.multi {
             for tile in multi.tiles.drain(..) {
                 tile.view.update(cx, |player, cx| player.close(window, cx));
