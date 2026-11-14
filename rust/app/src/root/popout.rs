@@ -3,8 +3,9 @@
 //! window, so messages, the composer and scroll position all come along.
 
 use gpui::{
-    AnyView, App, AppContext as _, Bounds, Context, Entity, IntoElement, ParentElement as _, Render,
-    Styled as _, TitlebarOptions, Window, WindowBounds, WindowOptions, div, px, size,
+    AnyView, App, AppContext as _, Bounds, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled as _, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, div,
+    px, size,
 };
 
 use super::Root;
@@ -18,12 +19,48 @@ pub struct ChatWindow {
 /// controls and fullscreen (now of that window) carry on uninterrupted.
 pub struct PlayerWindow {
     player: Entity<crate::player::Player>,
+    root: WeakEntity<Root>,
+    focus: FocusHandle,
 }
 
 impl Render for PlayerWindow {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::ui::set_scale(window.scale_factor());
+        // Keys go to this window's player, as they do in the main window.
+        if window.focused(cx).is_none() {
+            window.focus(&self.focus);
+        }
         div()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                let keystroke = &event.keystroke;
+                let modifiers = keystroke.modifiers;
+                if modifiers.control || modifiers.alt || modifiers.platform {
+                    return;
+                }
+                let player = this.player.clone();
+                match keystroke.key.as_str() {
+                    "space" => player.update(cx, |p, cx| p.toggle_pause(cx)),
+                    "m" => player.update(cx, |p, cx| p.toggle_mute(cx)),
+                    "g" => player.update(cx, |p, cx| p.go_live(cx)),
+                    "up" => player.update(cx, |p, cx| p.change_volume(0.05, cx)),
+                    "down" => player.update(cx, |p, cx| p.change_volume(-0.05, cx)),
+                    "f" | "f11" => window.toggle_fullscreen(),
+                    "escape" if window.is_fullscreen() => window.toggle_fullscreen(),
+                    // P puts the video back in the main window.
+                    "p" => {
+                        let root = this.root.clone();
+                        cx.defer(move |cx| {
+                            let _ = root.update(cx, |root, cx| {
+                                root.close_player_window(cx);
+                                cx.notify();
+                            });
+                        });
+                    }
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
             .size_full()
             .flex()
             .bg(gpui::black())
@@ -115,6 +152,7 @@ impl Root {
         let player = playing.view.clone();
         let title = format!("VioletWire · {}", playing.name);
         let root = cx.entity().downgrade();
+        let root_for_keys = root.clone();
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions { title: Some(title.into()), ..Default::default() }),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(720.)), cx))),
@@ -129,7 +167,8 @@ impl Root {
                 });
                 true
             });
-            cx.new(|_| PlayerWindow { player })
+            let root = root_for_keys;
+            cx.new(|cx| PlayerWindow { player, root, focus: cx.focus_handle() })
         });
         match opened {
             Ok(handle) => {
