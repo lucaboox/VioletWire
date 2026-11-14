@@ -108,6 +108,39 @@ pub fn load(agent: &ureq::Agent, session: Option<&Session>, channel: &str, login
     Ok(profile)
 }
 
+/// A Kick chatter's card (Electron's Kick `getChatUserProfile`), from Kick's
+/// public user route and the channel's view of them, through Streamlink.
+pub fn load_kick(channel: &str, login: &str) -> Result<Profile> {
+    anyhow::ensure!(crate::kick::is_slug(channel) && crate::kick::is_slug(login), "Invalid Kick user.");
+    let relation = crate::playback::kick::get(&format!("https://kick.com/api/v2/channels/{channel}/users/{login}"))
+        .context("Kick did not find this user.")?;
+    let public = crate::playback::kick::get(&format!("https://kick.com/api/v1/users/{login}")).unwrap_or_default();
+    let image = [&relation["profile_pic"], &public["profilepic"], &public["profile_pic"]]
+        .into_iter()
+        .map(|value| text(value, 400))
+        .find(|url| crate::kick::is_image_url(url));
+    let months = relation["subscribed_for"].as_u64().unwrap_or(0);
+    Ok(Profile {
+        display_name: Some(text(&relation["username"], 40))
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| login.to_owned()),
+        image,
+        description: text(&public["bio"], 300),
+        created: relation["created_at"].as_str().and_then(short_date),
+        following: Some(
+            relation["following_since"]
+                .as_str()
+                .and_then(short_date)
+                .unwrap_or_else(|| "Not following".to_owned()),
+        ),
+        subscription: Some(if months > 0 {
+            format!("Subscribed · {months} month{}", if months == 1 { "" } else { "s" })
+        } else {
+            "Not subscribed".to_owned()
+        }),
+    })
+}
+
 fn ivr_subage(agent: &ureq::Agent, channel: &str, login: &str) -> Option<Value> {
     if !crate::format::is_login(channel) || !crate::format::is_login(login) {
         return None;

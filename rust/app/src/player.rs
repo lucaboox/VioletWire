@@ -204,7 +204,9 @@ impl Player {
                     player.configure(preferences);
                     return player;
                 }
-                Err(error) if probe => {
+                // The CPU path is Twitch-only (Streamlink's CLI): a Kick
+                // channel shows why the GPU path stopped (offline, say).
+                Err(error) if probe || crate::kick::slug(login).is_some() => {
                     player.failure = Some(error.to_string().into());
                     return player;
                 }
@@ -273,7 +275,7 @@ impl Player {
                 eprintln!("GPU video stopped: {error}.");
                 self.gpu = None;
                 self.gpu_frame = None;
-                if probe || ended {
+                if probe || ended || crate::kick::slug(&self.login).is_some() {
                     self.failure = Some(error.to_string().into());
                 } else {
                     eprintln!("Using CPU compatibility playback.");

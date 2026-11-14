@@ -387,7 +387,7 @@ impl Chat {
     /// Debug aid: opens the user list or a reply thread once chat has some
     /// messages; true once done.
     pub fn probe_panel(&mut self, which: &str, cx: &mut Context<Self>) -> bool {
-        if self.messages.len() < 30 {
+        if self.messages.len() < 10 {
             return false;
         }
         if let Some(text) = which.strip_prefix("type:") {
@@ -406,6 +406,7 @@ impl Chat {
                 };
                 self.thread = Some(id);
             }
+            "card" => self.probe_card(cx),
             _ => self.user_list = true,
         }
         cx.notify();
@@ -463,7 +464,8 @@ impl Chat {
     }
 
     fn open_card(&mut self, login: &str, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
-        if self.kick || !crate::format::is_login(login) {
+        let valid = if self.kick { crate::kick::is_slug(login) } else { crate::format::is_login(login) };
+        if !valid {
             return;
         }
         let login = login.to_ascii_lowercase();
@@ -480,11 +482,18 @@ impl Chat {
         let agent = self.agent.clone();
         let session = self.session.clone();
         let channel = self.channel.clone();
+        let kick = self.kick;
         self._card = Some(cx.spawn(async move |this, cx| {
             let wanted = login.clone();
             let result = cx
                 .background_executor()
-                .spawn(async move { super::profile::load(&agent, session.as_ref(), &channel, &login) })
+                .spawn(async move {
+                    if kick {
+                        super::profile::load_kick(&channel, &login)
+                    } else {
+                        super::profile::load(&agent, session.as_ref(), &channel, &login)
+                    }
+                })
                 .await
                 .map_err(|error| SharedString::from(error.to_string()));
             let _ = this.update(cx, |this, cx| {
@@ -633,8 +642,22 @@ impl Chat {
                             ),
                     )
                     .child(
-                        ui::icon_button("card-profile", Icon::External, "Open Twitch profile", false)
-                            .on_click(move |_, _, cx| cx.open_url(&format!("https://www.twitch.tv/{login}"))),
+                        ui::icon_button(
+                            "card-profile",
+                            Icon::External,
+                            if self.kick { "Open Kick profile" } else { "Open Twitch profile" },
+                            false,
+                        )
+                        .on_click({
+                            let kick = self.kick;
+                            move |_, _, cx| {
+                                cx.open_url(&if kick {
+                                    format!("https://kick.com/{login}")
+                                } else {
+                                    format!("https://www.twitch.tv/{login}")
+                                })
+                            }
+                        }),
                     )
                     .child(
                         ui::icon_button("card-close", Icon::Close, "Close", false)
@@ -1703,7 +1726,11 @@ impl Chat {
             );
         }
         for badge in &message.badges {
-            if let Some(url) = self.badge_url(badge) {
+            if let Some(url) = self.badge_url(badge)
+                // A badge whose artwork failed (a type the badge host lacks)
+                // leaves no empty gap before the name.
+                && !self.failed_images.contains_key(&format!("still:{url}"))
+            {
                 let image = self.image(&url, false, cx);
                 let label = if self.kick { Self::badge_title(badge) } else { badge.clone() };
                 flow.image(
