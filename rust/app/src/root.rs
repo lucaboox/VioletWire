@@ -3270,7 +3270,10 @@ fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<Div>
 fn pill(text: impl Into<SharedString>) -> Div {
     div()
         .px(px(6.))
-        .py(px(4.))
+        .py(px(5.))
+        // Electron's `line-height: 1`: with GPUI's taller default line, the
+        // capitals sat a pixel off centre.
+        .line_height(gpui::relative(1.))
         .rounded(px(4.))
         .bg(rgba(0x000000bb))
         .text_size(px(11.))
