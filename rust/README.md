@@ -110,6 +110,13 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
 - 1440p: Twitch offers it only to a signed-in viewer (the linked website
   session) whose player accepts HEVC, so lookups ask for `h265,h264`. Windows'
   HEVC Video Extensions decode it (summit1g at 2560x1440, 59.8 fps).
+- Multistream as in Electron (`MultiStreamView`): the Multistream button opens
+  up to four streams in a grid (one fills the area, two sit side by side,
+  three or four share a 2x2 grid). The active tile, outlined, has the audio
+  and its chat shows, with a tab per stream. While multistream is open,
+  choosing a channel anywhere adds a tile; hovering a tile shows its remove
+  button. Presets save and reopen line-ups (Electron's are imported once).
+  Every tile is a full player with its own controls and relay session.
 - Chat user cards as in Electron (`ChatUserCard.tsx`): click a name for the
   chatter's picture, bio, badges, account age, follow and subscription
   details (IVR's public subage API, as Chatterino uses), their recent
@@ -259,8 +266,6 @@ never waits on the network.
    chips in the composer, rich selection and pop-out windows. The live reader,
    history, regular/layered emotes, picker, replies, mentions, timestamps, sending
    and basic moderation events work now.
-4. **Multistream.** Up to four tiles with the same resource clean-up rules as
-   `MultiStreamManager`.
 5. **Kick, link previews, the remaining settings, updates and packaging.**
 
 ## Playback design

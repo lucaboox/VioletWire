@@ -14,6 +14,7 @@ use gpui::{
 };
 
 mod browse;
+mod multi;
 use browse::Section;
 
 use crate::format::{compact_count, is_login, uptime};
@@ -90,6 +91,8 @@ pub struct Root {
     shortcuts_open: bool,
     /// This window's handle, to own the twitch.tv sign-in window.
     hwnd: Option<isize>,
+    /// Multistream's tiles, while it is open; `playing` is then empty.
+    multi: Option<multi::Multi>,
     /// The signed-in account's profile picture (Electron's account chip).
     account_image: Option<String>,
     account_image_task: Option<Task<()>>,
@@ -284,6 +287,7 @@ impl Root {
             settings_open: false,
             shortcuts_open: false,
             hwnd: None,
+            multi: None,
             account_image: None,
             account_image_task: None,
             window_observer: None,
@@ -497,7 +501,17 @@ impl Root {
         if !is_login(login) {
             return;
         }
+        if self.multi.is_some() {
+            self.add_tile(login, name, cx);
+            return;
+        }
         self.close_player(window, cx);
+        self.playing = Some(self.open_playing(login, name, cx));
+        cx.notify();
+    }
+
+    /// A player and chat for one channel, wired to the window's controls.
+    fn open_playing(&mut self, login: &str, name: SharedString, cx: &mut Context<Self>) -> Playing {
         let view = cx.new(|cx| Player::new(login, &crate::preferences::get(cx)));
         let controls = cx.subscribe(
             &view,
@@ -513,15 +527,14 @@ impl Root {
             &chat,
             |this, _, action: &crate::player::PlayerAction, cx| this.player_action(action, cx),
         );
-        self.playing = Some(Playing {
+        Playing {
             login: login.to_string(),
             name,
             view,
             chat,
             _controls: controls,
             _chat_controls: chat_controls,
-        });
-        cx.notify();
+        }
     }
 
     /// Hovering a live channel starts looking it up, so a click plays sooner
@@ -621,6 +634,16 @@ impl Root {
     }
 
     fn player_action(&mut self, action: &crate::player::PlayerAction, cx: &mut Context<Self>) {
+        if let Some(multi) = &mut self.multi {
+            match action {
+                crate::player::PlayerAction::Settings => self.settings_open = true,
+                crate::player::PlayerAction::Chat => multi.chat_visible = !multi.chat_visible,
+                crate::player::PlayerAction::Overlay => {}
+                crate::player::PlayerAction::Theater => self.theater = !self.theater,
+            }
+            cx.notify();
+            return;
+        }
         match action {
             crate::player::PlayerAction::Settings => self.settings_open = true,
             crate::player::PlayerAction::Chat => self.chat_visible = !self.chat_visible,
@@ -634,6 +657,11 @@ impl Root {
     }
     fn close_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.theater = false;
+        if let Some(multi) = self.multi.take() {
+            for tile in multi.tiles {
+                tile.view.update(cx, |player, cx| player.close(window, cx));
+            }
+        }
         if window.is_fullscreen() {
             window.toggle_fullscreen();
         }
@@ -922,6 +950,22 @@ impl Root {
                     .h(px(38.))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_section(Section::Browse, window, cx)
+                    })),
+                )
+                .child(
+                    ui::button(
+                        "multi-nav",
+                        "Multistream",
+                        Some(Icon::Grid),
+                        nav_style(self.multi.is_some()),
+                    )
+                    .h(px(38.))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if this.multi.is_some() {
+                            this.exit_multi(window, cx);
+                        } else {
+                            this.enter_multi(cx);
+                        }
                     })),
                 )
             })
@@ -2082,6 +2126,21 @@ impl Render for Root {
                 .view
                 .update(cx, |player, _| player.set_controls_delay(controls_delay));
         }
+        // Debug aid: `VIOLETWIRE_PROBE_MULTI=a,b,c` opens multistream with those
+        // channels once the followed list has loaded.
+        static PROBE_MULTI: std::sync::Once = std::sync::Once::new();
+        if self.loaded
+            && let Ok(channels) = std::env::var("VIOLETWIRE_PROBE_MULTI")
+        {
+            PROBE_MULTI.call_once(|| {
+                self.enter_multi(cx);
+                for login in channels.split(',').filter(|login| is_login(login)) {
+                    self.add_tile(login, login.to_owned().into(), cx);
+                }
+                self.activate_tile(0, cx);
+            });
+        }
+        self.sync_tiles(cx);
         let account = match &self.auth {
             Auth::SignedIn(session) => Some(session.identity.login.clone()),
             _ => None,
@@ -2104,6 +2163,7 @@ impl Render for Root {
         };
         let compact = f32::from(window.viewport_size().width) - sidebar_width - chat_width < 480.;
         let main = match &self.playing {
+            _ if self.multi.is_some() => self.multi_panel(fullscreen, window, cx),
             Some(playing) => self
                 .player_panel(playing, fullscreen, compact, cx)
                 .into_any_element(),
@@ -2159,7 +2219,7 @@ impl Render for Root {
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
                 if key == "escape"
-                    && let Some(playing) = &this.playing
+                    && let Some(playing) = this.current()
                     && playing.chat.read(cx).has_card()
                 {
                     playing.chat.update(cx, |chat, cx| chat.close_card(cx));
@@ -2186,7 +2246,7 @@ impl Render for Root {
                     return;
                 }
                 let modifiers = event.keystroke.modifiers;
-                let typing = this.playing.as_ref().is_some_and(|playing| {
+                let typing = this.current().is_some_and(|playing| {
                     playing.chat.read(cx).is_editing(window, cx)
                 }) || [&this.channel_input, &this.category_input].into_iter().any(|input| {
                     gpui::Focusable::focus_handle(input.read(cx), cx).is_focused(window)
@@ -2209,7 +2269,7 @@ impl Render for Root {
                     cx.stop_propagation();
                     return;
                 }
-                let Some(playing) = &this.playing else { return };
+                let Some(playing) = this.current() else { return };
                 if modifiers.control || modifiers.alt || modifiers.platform || typing {
                     return;
                 }
@@ -2223,7 +2283,10 @@ impl Render for Root {
                         cx.notify();
                     }
                     "c" => {
-                        this.chat_visible = !this.chat_visible;
+                        match &mut this.multi {
+                            Some(multi) => multi.chat_visible = !multi.chat_visible,
+                            None => this.chat_visible = !this.chat_visible,
+                        }
                         cx.notify();
                     }
                     "space" => playing.view.update(cx, |p, cx| p.toggle_pause(cx)),
@@ -2231,7 +2294,7 @@ impl Render for Root {
                     "g" => playing.view.update(cx, |p, cx| p.go_live(cx)),
                     "up" => playing.view.update(cx, |p, cx| p.change_volume(0.05, cx)),
                     "down" => playing.view.update(cx, |p, cx| p.change_volume(-0.05, cx)),
-                    "o" => {
+                    "o" if this.multi.is_none() => {
                         this.overlay_chat = !this.overlay_chat;
                         this.chat_visible = true;
                         cx.notify();

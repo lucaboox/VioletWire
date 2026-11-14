@@ -51,6 +51,15 @@ pub struct Preferences {
     pub blocked_imported: bool,
     /// Emote names starred in the picker (Alt+click).
     pub emote_favorites: Vec<String>,
+    /// Saved multistream line-ups (Electron's `multiStreamPresets`).
+    pub multi_stream_presets: Vec<MultiPreset>,
+    pub presets_imported: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MultiPreset {
+    pub name: String,
+    pub channels: Vec<String>,
 }
 
 /// Logical pixels, as GPUI reports them for the window's monitor.
@@ -99,6 +108,8 @@ impl Default for Preferences {
             blocked_chat_users: Vec::new(),
             blocked_imported: false,
             emote_favorites: Vec::new(),
+            multi_stream_presets: Vec::new(),
+            presets_imported: false,
         }
     }
 }
@@ -135,6 +146,21 @@ impl Preferences {
         });
         self.emote_favorites.dedup();
         self.emote_favorites.truncate(1000);
+        // Twitch logins only (Electron also stored `kick:` keys), at most four
+        // per line-up and twenty line-ups.
+        for preset in &mut self.multi_stream_presets {
+            preset.name = preset.name.chars().filter(|c| !c.is_control()).take(40).collect();
+            preset.channels = preset
+                .channels
+                .iter()
+                .map(|channel| channel.strip_prefix("twitch:").unwrap_or(channel).to_ascii_lowercase())
+                .filter(|login| crate::format::is_login(login))
+                .take(4)
+                .collect();
+        }
+        self.multi_stream_presets
+            .retain(|preset| !preset.name.is_empty() && !preset.channels.is_empty());
+        self.multi_stream_presets.truncate(20);
         if !matches!(self.chat_deleted_message_style.as_str(), "placeholder" | "dimmed") {
             self.chat_deleted_message_style = "placeholder".into();
         }
@@ -207,6 +233,15 @@ pub fn initialize(cx: &mut App) {
             settings.blocked_chat_users = electron.blocked_chat_users;
         }
         settings.blocked_imported = true;
+    }
+    if !settings.presets_imported {
+        if let Some(electron) = std::env::var_os("APPDATA").and_then(|path| {
+            read(PathBuf::from(path).join("twitch-windows-viewer/preferences.json"))
+        }) && settings.multi_stream_presets.is_empty()
+        {
+            settings.multi_stream_presets = electron.multi_stream_presets;
+        }
+        settings.presets_imported = true;
     }
     if !settings.playback_settings_imported {
         if let Some(electron) = std::env::var_os("APPDATA").and_then(|path| {

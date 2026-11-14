@@ -320,6 +320,14 @@ impl Player {
             cx.notify();
         }
     }
+    /// Multistream mutes every tile but the active one.
+    pub fn set_muted(&mut self, muted: bool, cx: &mut Context<Self>) {
+        if self.muted != muted {
+            self.muted = muted;
+            self.apply_audio();
+            cx.notify();
+        }
+    }
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         self.muted = !self.muted;
         self.apply_audio();
