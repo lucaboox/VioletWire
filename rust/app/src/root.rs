@@ -103,6 +103,8 @@ pub struct Root {
     _clock: Option<Task<()>>,
     /// The window chat was popped out into, if any.
     chat_popped: Option<gpui::AnyWindowHandle>,
+    /// The window the video was popped out into, if any.
+    player_popped: Option<gpui::AnyWindowHandle>,
     /// Refusals in a row of the stored Kick account; three sign it out.
     kick_refusals: u8,
     _kick_info: Option<Task<()>>,
@@ -312,6 +314,7 @@ impl Root {
             kick_task: None,
             _clock: None,
             chat_popped: None,
+            player_popped: None,
             kick_refusals: 0,
             _kick_info: None,
             account_image: None,
@@ -343,7 +346,11 @@ impl Root {
         root.restore(cx);
         root.start_kick(cx);
         // Closing the main window takes the chat window with it.
-        cx.on_release(|this, cx| this.close_chat_window(cx)).detach();
+        cx.on_release(|this, cx| {
+            this.close_chat_window(cx);
+            this.close_player_window(cx);
+        })
+        .detach();
         root._clock = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -913,7 +920,9 @@ impl Root {
             match action {
                 crate::player::PlayerAction::Settings => self.settings_open = true,
                 crate::player::PlayerAction::Chat => multi.chat_visible = !multi.chat_visible,
-                crate::player::PlayerAction::Overlay | crate::player::PlayerAction::PopOutChat => {}
+                crate::player::PlayerAction::Overlay
+                | crate::player::PlayerAction::PopOutChat
+                | crate::player::PlayerAction::PopOutPlayer => {}
                 crate::player::PlayerAction::Theater => self.theater = !self.theater,
             }
             cx.notify();
@@ -924,6 +933,7 @@ impl Root {
             // Hiding a popped-out chat closes its window instead.
             crate::player::PlayerAction::Chat if self.chat_popped.is_some() => self.close_chat_window(cx),
             crate::player::PlayerAction::Chat => self.chat_visible = !self.chat_visible,
+            crate::player::PlayerAction::PopOutPlayer => self.toggle_player_window(cx),
             crate::player::PlayerAction::PopOutChat => {
                 self.overlay_chat = false;
                 self.toggle_chat_window(cx);
@@ -939,6 +949,7 @@ impl Root {
     fn close_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.theater = false;
         self.close_chat_window(cx);
+        self.close_player_window(cx);
         if let Some(multi) = self.multi.take() {
             for tile in multi.tiles {
                 tile.view.update(cx, |player, cx| player.close(window, cx));
@@ -2218,12 +2229,21 @@ impl Root {
                         .on_click(cx.listener(move |_, _, _, cx| open_channel(&target, cx)))
                     }),
             );
-        let mut area = div()
-            .relative()
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .child(playing.view.clone());
+        let mut area = div().relative().flex_1().min_h_0().min_w_0();
+        area = if self.player_popped.is_some() {
+            // The video plays in its own window; this keeps its place.
+            area.flex().flex_col().items_center().justify_center().gap_3().bg(rgb(0x050506)).child(
+                div().text_size(px(15.)).text_color(theme::text_secondary()).child("Playing in its own window"),
+            )
+            .child(
+                ui::button("bring-back-player", "Bring it back", Some(Icon::PopOut), ButtonStyle::Secondary)
+                    .h(px(36.))
+                    .px_3()
+                    .on_click(cx.listener(|this, _, _, cx| this.close_player_window(cx))),
+            )
+        } else {
+            area.child(playing.view.clone())
+        };
         if !self.chat_visible && self.chat_popped.is_none() {
             // Electron's edge restore: with chat hidden, an arrow appears when
             // the pointer nears the edge chat lives on.
@@ -2777,12 +2797,20 @@ impl Render for Root {
             // while painting one is not allowed.
             POPPED.call_once(|| {
                 cx.spawn(async move |this, cx| {
-                    let _ = this.update(cx, |this, cx| this.toggle_chat_window(cx));
-                    // `VIOLETWIRE_PROBE_POPOUT=<path.png>` saves the chat window.
+                    // `player:` pops the video out instead of chat; a `.png`
+                    // path saves that window after ten seconds.
+                    let setting = std::env::var("VIOLETWIRE_PROBE_POPOUT").unwrap_or_default();
+                    let player = setting.starts_with("player");
+                    let _ = this.update(cx, |this, cx| {
+                        if player { this.toggle_player_window(cx) } else { this.toggle_chat_window(cx) }
+                    });
                     cx.background_executor().timer(Duration::from_secs(10)).await;
-                    let path = std::env::var("VIOLETWIRE_PROBE_POPOUT").unwrap_or_default();
+                    let path = setting.trim_start_matches("player:").to_owned();
                     if path.ends_with(".png") {
-                        let handle = this.update(cx, |this, _| this.chat_popped).ok().flatten();
+                        let handle = this
+                            .update(cx, |this, _| if player { this.player_popped } else { this.chat_popped })
+                            .ok()
+                            .flatten();
                         if let Some(handle) = handle {
                             let _ = handle.update(cx, |_, window, _| {
                                 if let Ok((width, height, pixels)) = window.capture_rendered_frame() {
@@ -3004,6 +3032,7 @@ impl Render for Root {
                     "g" => playing.view.update(cx, |p, cx| p.go_live(cx)),
                     "up" => playing.view.update(cx, |p, cx| p.change_volume(0.05, cx)),
                     "down" => playing.view.update(cx, |p, cx| p.change_volume(-0.05, cx)),
+                    "p" if this.multi.is_none() => this.toggle_player_window(cx),
                     "o" if this.multi.is_none() => {
                         this.overlay_chat = !this.overlay_chat;
                         this.chat_visible = true;
@@ -3168,6 +3197,7 @@ const SHORTCUTS: &[(&str, Option<&str>, &[Shortcut])] = &[
             keys(&["T"], "Theater mode"),
             keys(&["C"], "Show or hide chat"),
             keys(&["O"], "Chat over the video"),
+            keys(&["P"], "Player in its own window, or back"),
             keys(&["Esc"], "Leave fullscreen, then theater mode"),
         ],
     ),

@@ -26,6 +26,8 @@ pub enum PlayerAction {
     Chat,
     /// Move chat into its own window (or back).
     PopOutChat,
+    /// Move the video into its own window (or back).
+    PopOutPlayer,
     Overlay,
     Theater,
 }
@@ -678,6 +680,12 @@ impl Player {
                         self.presentation.2,
                     )
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PlayerAction::Theater))),
+                )
+            })
+            .when(wide, |bar| {
+                bar.child(
+                    ui::video_button("pop-out-player", Icon::PopOut, "Player in its own window (or back) · P", false)
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(PlayerAction::PopOutPlayer))),
                 )
             })
             .child(

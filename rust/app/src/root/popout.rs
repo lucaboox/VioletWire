@@ -14,6 +14,27 @@ pub struct ChatWindow {
     chat: Entity<crate::chat::Chat>,
 }
 
+/// The video in a window of its own: the same player view, so playback,
+/// controls and fullscreen (now of that window) carry on uninterrupted.
+pub struct PlayerWindow {
+    player: Entity<crate::player::Player>,
+}
+
+impl Render for PlayerWindow {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        crate::ui::set_scale(window.scale_factor());
+        div()
+            .size_full()
+            .flex()
+            .bg(gpui::black())
+            .text_color(theme::text())
+            .font_family(theme::UI_FONT)
+            .text_size(px(14.))
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
+            .child(AnyView::from(self.player.clone()))
+    }
+}
+
 impl Render for ChatWindow {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         crate::ui::set_scale(window.scale_factor());
@@ -74,6 +95,50 @@ impl Root {
     pub(super) fn close_chat_window(&mut self, cx: &mut App) {
         if let Some(handle) = self.chat_popped.take() {
             self.chat_visible = true;
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+    }
+
+    /// Moves the current stream's video into its own window, or back.
+    pub(super) fn toggle_player_window(&mut self, cx: &mut Context<Self>) {
+        if self.player_popped.is_some() {
+            self.close_player_window(cx);
+            return;
+        }
+        let Some(playing) = self.playing.as_ref() else {
+            return;
+        };
+        let player = playing.view.clone();
+        let title = format!("VioletWire · {}", playing.name);
+        let root = cx.entity().downgrade();
+        let options = WindowOptions {
+            titlebar: Some(TitlebarOptions { title: Some(title.into()), ..Default::default() }),
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(720.)), cx))),
+            ..Default::default()
+        };
+        let opened = cx.open_window(options, move |window, cx| {
+            // Closing the window puts the video back in the main window.
+            window.on_window_should_close(cx, move |_, cx| {
+                let _ = root.update(cx, |this, cx| {
+                    this.player_popped = None;
+                    cx.notify();
+                });
+                true
+            });
+            cx.new(|_| PlayerWindow { player })
+        });
+        match opened {
+            Ok(handle) => {
+                self.player_popped = Some(handle.into());
+                cx.notify();
+            }
+            Err(error) => self.show_notice(format!("Could not open the player window: {error}"), cx),
+        }
+    }
+
+    /// Closes the player window (the video returns to the main window).
+    pub(super) fn close_player_window(&mut self, cx: &mut App) {
+        if let Some(handle) = self.player_popped.take() {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
     }
