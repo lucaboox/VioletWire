@@ -2004,10 +2004,11 @@ impl Root {
             .px(px(12.))
             .flex()
             .items_center()
-            .gap(px(11.))
-            .bg(rgb(0x121216))
+            .gap(px(12.))
+            // The theme's bar colours, so OLED mode stays black.
+            .bg(theme::title_bar())
             .border_b_1()
-            .border_color(rgb(0x28282e))
+            .border_color(theme::border())
             .text_size(px(13.))
             .child(
                 div()
@@ -2028,54 +2029,18 @@ impl Root {
                 v.child(
                     div()
                         .flex_none()
+                        .size(px(38.))
+                        .mr(px(4.))
                         .rounded_full()
                         .border_2()
                         .border_color(rgb(0x3a2945))
                         .child(self.avatar(channel.and_then(|channel| channel.profile_image_url.as_deref()), 34.)),
                 )
             })
-            .when_some(stream.filter(|_| !compact), |v, stream| {
-                v.child(
-                    div()
-                        .flex_none()
-                        .min_w(px(76.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(5.))
-                                .text_size(px(12.))
-                                .line_height(gpui::relative(1.))
-                                .text_color(rgb(0xf43f5e))
-                                .child(gpui::svg().path(Icon::Users.path()).size(px(14.)).text_color(rgb(0xf43f5e)))
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::BOLD)
-                                        .child(crate::format::grouped_count(stream.viewer_count)),
-                                ),
-                        )
-                        .when_some(crate::format::uptime_seconds(&stream.started_at, now), |v, time| {
-                            v.child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(5.))
-                                    .text_size(px(10.5))
-                                    .line_height(gpui::relative(1.1))
-                                    .text_color(rgb(0x85858f))
-                                    .child(gpui::svg().path(Icon::Clock.path()).size(px(13.)).text_color(rgb(0x85858f)))
-                                    .child(time),
-                            )
-                        }),
-                )
-            })
             .child(
                 div()
-                    .flex_1()
-                    .min_w(px(170.))
+                    .flex_shrink()
+                    .min_w_0()
                     .max_w(px(660.))
                     .flex()
                     .flex_col()
@@ -2112,7 +2077,10 @@ impl Root {
                                         .max_w(px(180.))
                                         .truncate()
                                         .px(px(7.))
-                                        .py(px(2.))
+                                        .py(px(3.))
+                                        // A line as tall as the text, so the
+                                        // label sits in the middle of the pill.
+                                        .line_height(gpui::relative(1.))
                                         .rounded_full()
                                         .border_1()
                                         .border_color(rgb(0x4f3768))
@@ -2130,7 +2098,8 @@ impl Root {
                                         .max_w(px(100.))
                                         .truncate()
                                         .px(px(6.))
-                                        .py(px(2.))
+                                        .py(px(3.))
+                                        .line_height(gpui::relative(1.))
                                         .rounded_full()
                                         .bg(rgb(0x25252b))
                                         .text_color(rgb(0xaaaab4))
@@ -2141,13 +2110,57 @@ impl Root {
                             }),
                     ),
             )
+            // Takes the room between the title and the actions, so the actions
+            // sit flush right.
+            .child(div().flex_1().min_w(px(12.)))
             .child(
                 div()
-                    .ml_auto()
                     .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(5.))
+                    .when_some(stream.filter(|_| !compact), |v, stream| {
+                        v.child(
+                            div()
+                                .flex_none()
+                                .flex()
+                                .flex_col()
+                                .items_end()
+                                .gap(px(3.))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(5.))
+                                        .text_size(px(12.))
+                                        .line_height(gpui::relative(1.))
+                                        .text_color(rgb(0xf43f5e))
+                                        .child(gpui::svg().path(Icon::Users.path()).size(px(14.)).text_color(rgb(0xf43f5e)))
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::BOLD)
+                                                .child(crate::format::grouped_count(stream.viewer_count)),
+                                        ),
+                                )
+                                .when_some(crate::format::uptime_seconds(&stream.started_at, now), |v, time| {
+                                    v.child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(5.))
+                                            .text_size(px(10.5))
+                                            .line_height(gpui::relative(1.1))
+                                            .text_color(rgb(0x85858f))
+                                            .child(gpui::svg().path(Icon::Clock.path()).size(px(13.)).text_color(rgb(0x85858f)))
+                                            .child(time),
+                                    )
+                                }),
+                        )
+                    })
+                    // Electron's `.toolbar-separator` between the stats and actions.
+                    .when(stream.is_some() && !compact, |v| {
+                        v.child(div().w(px(1.)).h(px(21.)).mx(px(8.)).bg(rgb(0x303036)))
+                    })
                     // Follow: Kick on its own page (signed in), Twitch on
                     // twitch.tv, since neither can be done for the viewer.
                     .child({
@@ -2531,7 +2544,8 @@ impl Root {
                                         .children(tags.into_iter().map(|tag| {
                                             div()
                                                 .px(px(8.))
-                                                .py(px(4.))
+                                                .py(px(5.))
+                                                .line_height(gpui::relative(1.))
                                                 .rounded_full()
                                                 .bg(rgb(0x29292f))
                                                 .text_size(px(10.5))

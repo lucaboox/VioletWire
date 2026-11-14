@@ -27,3 +27,6 @@ unicode-segmentation = "1"
 resvg = { version = "0.45.1", default-features = false }
 wry = { version = "0.57.2", default-features = false }
 tungstenite = { version = "0.30.0", default-features = false, features = ["native-tls", "handshake"] }
+
+[build-dependencies]
+winresource = "0.1.34"
