@@ -410,6 +410,11 @@ fn eligible(parsed: &Parsed) -> bool {
             && std::env::var_os("VIOLETWIRE_PROGRESSIVE_MP4").is_some()))
         && parsed.media_sequence.is_some()
         && !parsed.segments.is_empty()
+        // Only a channel with Twitch's low latency on lists the fragments it
+        // is still writing; without them (LinusTech: 4 s segments, none
+        // listed) this input runs dry within seconds and falls back with a
+        // stall, so such streams start on ordinary HLS straight away.
+        && parsed.segments.iter().any(|segment| segment.prefetch)
         && parsed.segments.iter().all(|segment| {
             segment
                 .tags
@@ -848,8 +853,20 @@ mod tests {
         ] {
             assert!(!media_url(url));
         }
+        // Without low latency's prefetch entries there is nothing to stream.
+        let plain = parse(
+            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:4,live\na.ts\n",
+            "https://video.hls.ttvnw.net/live.m3u8",
+        );
+        assert!(!eligible(&plain));
+        // Amazon IVS (Kick) spells the prefetch tag without TWITCH.
+        let ivs = parse(
+            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:2,live\na.ts\n#EXT-X-PREFETCH:b.ts\n",
+            "https://x.playback.live-video.net/live.m3u8",
+        );
+        assert!(eligible(&ivs));
         let mut parsed = parse(
-            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:2,live\na.ts\n",
+            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:2,live\na.ts\n#EXT-X-TWITCH-PREFETCH:b.ts\n",
             "https://video.hls.ttvnw.net/live.m3u8",
         );
         assert!(eligible(&parsed));
