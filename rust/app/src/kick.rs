@@ -84,6 +84,8 @@ pub struct Channel {
     pub live: Option<Live>,
     /// Subscriber badge images by months, longest first.
     pub subscriber_badges: Vec<(u64, String)>,
+    /// The chat room's modes when the channel was looked up.
+    pub modes: crate::chat::model::Modes,
 }
 
 impl Channel {
@@ -132,8 +134,33 @@ impl Channel {
             chatroom_id: value["chatroom"]["id"].as_u64().unwrap_or(0),
             live,
             subscriber_badges,
+            modes: chatroom_modes(&value["chatroom"]),
             slug,
         })
+    }
+}
+
+/// A channel's `chatroom`, as Electron's `getChannel` reads it.
+fn chatroom_modes(room: &Value) -> crate::chat::model::Modes {
+    let on = |key: &str| room[key].as_bool().unwrap_or(false);
+    let minutes = |value: &Value| value.as_u64().map_or(0, |minutes| minutes.min(u64::from(u32::MAX)) as u32);
+    crate::chat::model::Modes {
+        followers: Some(on("followers_mode").then(|| minutes(&room["following_min_duration"]))),
+        subscribers: Some(on("subscribers_mode")),
+        emote_only: Some(on("emotes_mode")),
+        slow: Some(if on("slow_mode") { minutes(&room["message_interval"]) } else { 0 }),
+    }
+}
+
+/// Kick's `ChatroomUpdatedEvent`, where each mode is an object with `enabled`.
+pub fn updated_modes(data: &Value) -> crate::chat::model::Modes {
+    let mode = |key: &str| data[key]["enabled"].as_bool();
+    let number = |value: &Value| value.as_u64().map_or(0, |n| n.min(u64::from(u32::MAX)) as u32);
+    crate::chat::model::Modes {
+        followers: mode("followers_mode").map(|on| on.then(|| number(&data["followers_mode"]["min_duration"]))),
+        subscribers: mode("subscribers_mode"),
+        emote_only: mode("emotes_mode"),
+        slow: mode("slow_mode").map(|on| if on { number(&data["slow_mode"]["message_interval"]) } else { 0 }),
     }
 }
 

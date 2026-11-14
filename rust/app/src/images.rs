@@ -99,6 +99,9 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
 }
 
 pub fn fetch_chat(agent: &ureq::Agent, url: &str, animated: bool) -> Result<Arc<RenderImage>> {
+    if let Some(url) = url.strip_prefix("gif:") {
+        return fetch_gif(agent, url, animated);
+    }
     if let Some(kind) = url.strip_prefix("kick-badge:") {
         return svg_image(kick_glyph(kind).context("Unknown Kick badge.")?.as_bytes());
     }
@@ -133,7 +136,36 @@ pub fn fetch_chat(agent: &ureq::Agent, url: &str, animated: bool) -> Result<Arc<
     Ok(image)
 }
 
+/// A subscriber's GIF. The address is used exactly as Twitch sends it, as
+/// they ask, and it is not kept on disk: these are watched once and are many
+/// times an emote's size.
+fn fetch_gif(agent: &ureq::Agent, url: &str, animated: bool) -> Result<Arc<RenderImage>> {
+    if !crate::chat::model::giphy(url) {
+        bail!("Invalid GIF host.");
+    }
+    let mut response = agent
+        .get(url)
+        .config()
+        .max_redirects(0)
+        .timeout_global(Some(std::time::Duration::from_secs(15)))
+        .build()
+        .call()
+        .context("GIF download failed.")?;
+    if !response.status().is_success() {
+        bail!("GIF is unavailable.");
+    }
+    let bytes = response.body_mut().with_config().limit(10 * 1024 * 1024).read_to_vec()?;
+    decode_scaled(&bytes, animated, GIF_HEIGHT, 32 * 1024 * 1024)
+}
+
+/// The tallest a subscriber's GIF is drawn (Electron's 160 px cap).
+pub const GIF_HEIGHT: u32 = 160;
+
 fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
+    decode_scaled(bytes, animated, MAX_EMOTE_HEIGHT, 8 * 1024 * 1024)
+}
+
+fn decode_scaled(bytes: &[u8], animated: bool, max_height: u32, max_bytes: usize) -> Result<Arc<RenderImage>> {
     if looks_like_svg(bytes) {
         return svg_image(bytes);
     }
@@ -151,7 +183,7 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
     }
     // Large artwork (Kick's 500 px collectibles) is shrunk as it decodes, so
     // a frame is never kept bigger than chat draws it.
-    let scale = (f64::from(MAX_EMOTE_HEIGHT) / f64::from(height)).min(1.);
+    let scale = (f64::from(max_height) / f64::from(height)).min(1.);
     let shrink = |buffer: image::RgbaImage| -> image::RgbaImage {
         if scale >= 1. {
             return buffer;
@@ -184,7 +216,7 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
         let frame = frame?;
         // Counted as kept, after shrinking.
         size += (f64::from(frame.buffer().len() as u32) * scale * scale) as usize;
-        if size > 8 * 1024 * 1024 || decoded.len() >= 300 {
+        if size > max_bytes || decoded.len() >= 300 {
             decoded.truncate(1);
             break;
         }

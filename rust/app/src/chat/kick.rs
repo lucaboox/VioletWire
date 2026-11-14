@@ -30,6 +30,7 @@ pub fn spawn(slug: String, history: usize, cancelled: Arc<AtomicBool>, tx: SyncS
                 channel = crate::kick::channel(&slug).ok();
                 if let Some(channel) = &channel {
                     let _ = tx.try_send(Event::Room(format!("kick:{}:{}", channel.user_id, channel.slug)));
+                    let _ = tx.try_send(Event::Modes(channel.modes));
                     // Kick's own recent messages, oldest first (Electron's
                     // `getChatHistory`).
                     if history > 0
@@ -149,6 +150,9 @@ fn run(
                     let _ = tx.try_send(Event::ClearUser(login.to_owned()));
                 }
             }
+            "App\\Events\\ChatroomUpdatedEvent" => {
+                let _ = tx.try_send(Event::Modes(crate::kick::updated_modes(&data)));
+            }
             "App\\Events\\ChatroomClearEvent" => {
                 let _ = tx.try_send(Event::Clear);
             }
@@ -209,7 +213,7 @@ fn text_and_emotes(content: &str) -> (String, Vec<EmoteRange>) {
             Some((id, name, end)) => {
                 let at = text.len();
                 text.push_str(name);
-                emotes.push(EmoteRange { start: at, end: text.len(), id: format!("kick-{id}") });
+                emotes.push(EmoteRange { start: at, end: text.len(), id: format!("kick-{id}"), gif: None });
                 rest = &after[end + 1..];
             }
             None => {
@@ -365,6 +369,7 @@ mod tests {
             chatroom_id: 3,
             live: None,
             subscriber_badges: vec![(6, "https://files.kick.com/b/6".into()), (1, "https://files.kick.com/b/1".into())],
+            modes: Default::default(),
         }
     }
 

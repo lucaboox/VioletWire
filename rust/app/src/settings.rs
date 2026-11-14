@@ -21,6 +21,8 @@ pub enum Event {
     SetChatColor { kick: bool, name: &'static str, hex: &'static str },
     CheckForUpdates,
     InstallUpdate,
+    /// Open the version history (and close settings).
+    Changelog,
 }
 
 /// What Settings > About says about updates.
@@ -123,16 +125,24 @@ impl Settings {
             UpdateState::Failed(error) => (error.clone(), Some(("Try again", Event::CheckForUpdates))),
         };
         card(
-            "Updates",
+            "Updates and version history",
             description,
-            match button {
-                Some((label, event)) => ui::button("update-action", label, None, ButtonStyle::Primary)
-                    .px_3()
-                    .h(px(30.))
-                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(event.clone())))
-                    .into_any_element(),
-                None => div().into_any_element(),
-            },
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    ui::button("show-changelog", "Changelog", Some(Icon::Changelog), ButtonStyle::Secondary)
+                        .px_3()
+                        .h(px(30.))
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Changelog))),
+                )
+                .children(button.map(|(label, event)| {
+                    ui::button("update-action", label, None, ButtonStyle::Primary)
+                        .px_3()
+                        .h(px(30.))
+                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(event.clone())))
+                })),
         )
     }
 
@@ -692,6 +702,13 @@ fn chat_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElem
                 |s, style| s.chat_deleted_message_style = style.into(),
                 cx,
             ),
+        ))
+        .child(card(
+            "Subscriber GIFs",
+            "Draw the GIFs higher-tier subscribers send. Turned off, the description Twitch sends shows in the GIF's place instead.",
+            toggle("chat-gifs", settings.chat_show_gifs).on_click(cx.listener(|_, _, _, cx| {
+                preferences::update(cx, |s| s.chat_show_gifs = !s.chat_show_gifs)
+            })),
         ))
         .child(card(
             "Mention sound",

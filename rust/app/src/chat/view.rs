@@ -89,7 +89,7 @@ fn twitch_pin(pin: &serde_json::Value) -> Option<Pinned> {
         if fragment["type"] == "emote"
             && let Some(emote) = fragment["emote"]["id"].as_str().filter(|id| model::asset_id(id))
         {
-            emotes.push(model::EmoteRange { start, end: text.len(), id: emote.to_owned() });
+            emotes.push(model::EmoteRange { start, end: text.len(), id: emote.to_owned(), gif: None });
         }
     }
     if text.is_empty() {
@@ -238,6 +238,11 @@ pub struct Chat {
     /// The chat link under the pointer and its preview, once found.
     link_hover: Option<LinkHover>,
     history_loaded: usize,
+    /// Slow, followers-, subscribers- and emote-only modes as last reported.
+    modes: model::Modes,
+    /// Whether the viewer follows this channel, when known; followers-only
+    /// only stops them sending while they don't.
+    following: Option<bool>,
     _subscriptions: Vec<Subscription>,
 }
 impl gpui::EventEmitter<PlayerAction> for Chat {}
@@ -760,6 +765,7 @@ impl Chat {
                     Part::Text(text) => flow.text(&text, theme::text_secondary(), false),
                     Part::Mention(text) => flow.text(&text, theme::text(), true),
                     Part::Emote(emote) => self.emote_into(&mut flow, &row_id, part_index, emote, cx),
+                    Part::Gif { description, url } => self.gif_into(&mut flow, part_index, description, url, cx),
                 }
             }
         }
@@ -949,6 +955,8 @@ impl Chat {
             _pins: None,
             link_hover: None,
             history_loaded: 0,
+            modes: model::Modes::default(),
+            following: None,
             _subscriptions: vec![submitted, composer_keys, picker_changed, input_changed, search_changed, release],
         };
         let view = cx.entity().downgrade();
@@ -1039,6 +1047,19 @@ impl Chat {
         self.reload_assets(cx);
         cx.notify();
     }
+    pub fn set_following(&mut self, following: Option<bool>, cx: &mut Context<Self>) {
+        if self.following != following {
+            self.following = following;
+            cx.notify();
+        }
+    }
+
+    /// Followers-only while the viewer doesn't follow: sending is certain to
+    /// be refused, so the composer says so instead.
+    fn follow_blocked(&self) -> bool {
+        self.modes.followers_only().is_some() && self.following == Some(false)
+    }
+
     pub fn set_room(&mut self, room: &str, cx: &mut Context<Self>) {
         // A Twitch room ID, or Kick's `kick:<user id>:<slug>`.
         let valid = match room.strip_prefix("kick:") {
@@ -1179,6 +1200,10 @@ impl Chat {
                 Event::State(state) => self.state = state,
                 Event::Room(room) => {
                     self.set_room(&room, cx);
+                }
+                Event::Modes(change) => {
+                    self.modes.merge(change);
+                    invalidate = true;
                 }
                 Event::Message(message) => {
                     if self.blocked(&message.login) {
@@ -1424,6 +1449,57 @@ impl Chat {
         );
     }
 
+    /// A subscriber's GIF on its own line, bounded as Electron's `ChatGif`
+    /// is; its description stands in while it loads, if it fails, or when
+    /// GIFs are turned off.
+    fn gif_into(
+        &mut self,
+        flow: &mut super::flow::MessageFlow,
+        part_index: usize,
+        description: String,
+        url: String,
+        cx: &mut Context<Self>,
+    ) {
+        let image = if self.preferences.chat_show_gifs { self.image(&format!("gif:{url}"), true, cx) } else { None };
+        let Some(image) = image else {
+            flow.text(&description, rgb(0xb9b3c2), false);
+            return;
+        };
+        let size = image.size(0);
+        let ratio = size.width.0 as f32 / size.height.0.max(1) as f32;
+        let max_height = crate::images::GIF_HEIGHT as f32;
+        let (mut width, mut height) = (ratio * max_height, max_height);
+        if width > 260. {
+            (width, height) = (260., 260. / ratio.max(0.01));
+        }
+        let label: SharedString = description.trim_start_matches('[').trim_end_matches(']').trim().to_owned().into();
+        let element_id = SharedString::from(format!("gif-{part_index}"));
+        flow.block(
+            div()
+                .id(element_id.clone())
+                .mt(px(4.))
+                .mb(px(2.))
+                .w(px(width + 2.))
+                .h(px(height + 2.))
+                .overflow_hidden()
+                .rounded(px(8.))
+                .border_1()
+                .border_color(rgba(0xffffff1a))
+                .bg(rgba(0xffffff08))
+                .child(
+                    img(ImageSource::Render(image))
+                        .id(SharedString::from(format!("{element_id}-image")))
+                        .w(px(width))
+                        .h(px(height))
+                        .object_fit(ObjectFit::Contain),
+                )
+                .tooltip(move |_, cx| cx.new(|_| ui::Tooltip(label.clone())).into())
+                .into_any_element(),
+            width + 2.,
+            height + 8.,
+        );
+    }
+
     fn image(
         &mut self,
         url: &str,
@@ -1449,7 +1525,7 @@ impl Chat {
         if let Some(image) = self.images.get(&key) {
             return image.clone();
         }
-        if !assets::image_url(url) {
+        if !assets::image_url(url) && !url.strip_prefix("gif:").is_some_and(model::giphy) {
             return None;
         }
         if self.image_queue.len() >= MAX_IMAGES {
@@ -1779,6 +1855,7 @@ impl Chat {
                     Part::Emote(emote) => {
                         self.emote_into(&mut flow, &row_id, part_index, emote, cx);
                     }
+                    Part::Gif { description, url } => self.gif_into(&mut flow, part_index, description, url, cx),
                 }
             }
         }
@@ -3138,7 +3215,30 @@ impl Render for Chat {
             self.session.is_some()
         })
             && !self.sending
+            && !self.follow_blocked()
             && !self.input.read(cx).content.trim().is_empty();
+        let restriction = self.modes.label(self.following).map(|label| {
+            let blocked = self.follow_blocked();
+            let suffix = match (blocked, self.kick) {
+                (false, _) => "",
+                (true, true) => ". Follow to chat.",
+                (true, false) => ". Follow on Twitch to chat.",
+            };
+            // Electron's `.chat-restriction`, amber; red when it stops sending.
+            let (color, background) = if blocked { (0xf0a9a0, 0x2c1614) } else { (0xe8c37a, 0x2a2212) };
+            div()
+                .flex()
+                .items_center()
+                .gap(px(7.))
+                .px(px(10.))
+                .py(px(7.))
+                .rounded(px(8.))
+                .text_size(px(11.))
+                .text_color(rgb(color))
+                .bg(rgb(background))
+                .child(ui::icon(Icon::Lock, 13.).flex_none().text_color(rgb(color)))
+                .child(div().min_w_0().child(format!("{label}{suffix}")))
+        });
         div()
             .id("stream-chat")
             .relative()
@@ -3323,6 +3423,7 @@ impl Render for Chat {
                         .when_some(self.notice.clone(), |v, n| {
                             v.child(div().text_xs().text_color(rgb(0xf8a5ad)).child(n))
                         })
+                        .children(restriction)
                         .when_some(self.replying.as_ref(), |v, reply| {
                             v.child(
                                 div()

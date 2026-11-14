@@ -90,6 +90,11 @@ pub struct Root {
     settings_open: bool,
     /// The keyboard shortcuts list ("?").
     shortcuts_open: bool,
+    /// The version history (Electron's changelog modal), and its entries:
+    /// the bundled file until GitHub's release notes arrive.
+    changelog_open: bool,
+    changelog: Vec<crate::changelog::Entry>,
+    changelog_task: Option<Task<()>>,
     /// This window's handle, to own the twitch.tv sign-in window.
     hwnd: Option<isize>,
     /// Multistream's tiles, while it is open; `playing` is then empty.
@@ -287,6 +292,10 @@ impl Root {
                 crate::settings::Event::KickSignIn => this.kick_sign_in(cx),
                 crate::settings::Event::LoadChatColors => this.load_chat_colors(cx),
                 crate::settings::Event::CheckForUpdates => this.check_updates(false, cx),
+                crate::settings::Event::Changelog => {
+                    this.settings_open = false;
+                    this.open_changelog(cx);
+                }
                 crate::settings::Event::InstallUpdate => this.install_update(cx),
                 &crate::settings::Event::SetChatColor { kick, name, hex } => this.set_chat_color(kick, name, hex, cx),
                 crate::settings::Event::KickSignOut => this.kick_sign_out(cx),
@@ -312,6 +321,9 @@ impl Root {
             sidebar_force_expanded: false,
             settings_open: false,
             shortcuts_open: false,
+            changelog_open: false,
+            changelog: crate::changelog::bundled(),
+            changelog_task: None,
             hwnd: None,
             multi: None,
             kick_channels: Vec::new(),
@@ -352,6 +364,7 @@ impl Root {
         };
         root.restore(cx);
         root.start_kick(cx);
+        root.changelog_after_update(cx);
         // A quiet look for updates shortly after launch.
         root.update_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(20)).await;
@@ -634,6 +647,32 @@ impl Root {
                 }
             });
         }));
+    }
+
+    /// Electron opens the changelog once per release. A first launch only
+    /// records the version: someone coming from Electron has seen it there.
+    fn changelog_after_update(&mut self, cx: &mut Context<Self>) {
+        let current = crate::updates::current();
+        let seen = crate::preferences::get(cx).last_seen_changelog_version;
+        let probe = std::env::var_os("VIOLETWIRE_PROBE_CHANGELOG").is_some();
+        if probe || (!seen.is_empty() && seen != current) {
+            self.open_changelog(cx);
+        } else if seen.is_empty() {
+            crate::preferences::update(cx, |s| s.last_seen_changelog_version = current.to_owned());
+        }
+    }
+
+    fn open_changelog(&mut self, cx: &mut Context<Self>) {
+        self.changelog_open = true;
+        crate::preferences::update(cx, |s| s.last_seen_changelog_version = crate::updates::current().to_owned());
+        self.changelog_task = Some(cx.spawn(async move |this, cx| {
+            let Ok(remote) = cx.background_executor().spawn(async { crate::changelog::fetch() }).await else { return };
+            let _ = this.update(cx, |this, cx| {
+                this.changelog = crate::changelog::merge(remote, crate::changelog::bundled());
+                cx.notify();
+            });
+        }));
+        cx.notify();
     }
 
     /// Downloads and checks the installer, starts it, and quits.
@@ -1617,6 +1656,20 @@ impl Root {
         // Stable: within a rank the original order stays.
         ordered.sort_by_key(|channel| rank(channel));
         ordered
+    }
+
+    /// Whether the viewer follows a channel, once that is known: the
+    /// followed list has loaded for its service.
+    fn follow_state(&self, login: &str, cx: &App) -> Option<bool> {
+        if self.channels.iter().chain(&self.kick_followed).any(|known| known.login == login) {
+            return Some(true);
+        }
+        let known = if login.starts_with(crate::kick::PREFIX) {
+            crate::preferences::get(cx).kick_account.is_some() && !self.kick_followed.is_empty()
+        } else {
+            matches!(self.auth, Auth::SignedIn(_)) && self.loaded
+        };
+        known.then_some(false)
     }
 
     fn toggle_favorite(&mut self, login: &str, cx: &mut Context<Self>) {
@@ -2801,7 +2854,7 @@ impl Render for Root {
                 cx.observe(&self.category_input, |this, _, cx| this.category_query_changed(cx)),
             ];
         }
-        if self.settings_open || self.shortcuts_open || window.focused(cx).is_none() {
+        if self.settings_open || self.shortcuts_open || self.changelog_open || window.focused(cx).is_none() {
             window.focus(&self.focus);
         }
         if let Some(playing) = &self.playing {
@@ -2815,8 +2868,10 @@ impl Render for Root {
             } else {
                 None
             };
+            let following = self.follow_state(&playing.login, cx);
             playing.chat.update(cx, |chat, cx| {
                 chat.set_session(session, cx);
+                chat.set_following(following, cx);
                 // Followed-channel metadata already contains the room ID;
                 // provider loading need not wait for the IRC join round trip.
                 if let Some(room) = room {
@@ -3054,10 +3109,11 @@ impl Render for Root {
                     cx.stop_propagation();
                     return;
                 }
-                if this.settings_open || this.shortcuts_open {
+                if this.settings_open || this.shortcuts_open || this.changelog_open {
                     if key == "escape" {
                         this.settings_open = false;
                         this.shortcuts_open = false;
+                        this.changelog_open = false;
                         cx.notify();
                         cx.stop_propagation();
                     }
@@ -3220,6 +3276,28 @@ impl Render for Root {
                                 })),
                         )
                         .child(self.shortcuts_dialog(window, cx)),
+                )
+            })
+            .when(self.changelog_open, |v| {
+                v.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .id("changelog-backdrop")
+                                .absolute()
+                                .inset_0()
+                                .bg(rgba(0x00000099))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.changelog_open = false;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(self.changelog_dialog(window, cx)),
                 )
             })
             .when(self.settings_open, |v| {
@@ -3436,6 +3514,158 @@ impl Root {
                     .flex_col()
                     .gap_3()
                     .children(groups),
+            )
+    }
+}
+
+impl Root {
+    /// Electron's changelog modal: each release's additions, improvements
+    /// and fixes, with the running version outlined.
+    fn changelog_dialog(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        let current = crate::updates::current();
+        let oled = crate::preferences::get(cx).oled_mode;
+        let releases = self.changelog.iter().map(|entry| {
+            let groups = [("ADDITIONS", &entry.additions), ("IMPROVEMENTS", &entry.improvements), ("FIXES", &entry.fixes)]
+                .into_iter()
+                .filter(|(_, items)| !items.is_empty())
+                .enumerate()
+                .map(|(index, (title, items))| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .when(index > 0, |group| group.mt(px(17.)).pt(px(15.)).border_t_1().border_color(rgb(0x2b2b31)))
+                        .child(
+                            div()
+                                .mb(px(8.))
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::EXTRA_BOLD)
+                                .text_color(rgb(0xd8b4fe))
+                                .child(title),
+                        )
+                        .child(div().flex().flex_col().gap(px(7.)).children(items.iter().map(|item| {
+                            div()
+                                .flex()
+                                .gap(px(9.))
+                                .text_size(px(12.))
+                                .line_height(gpui::relative(1.5))
+                                .text_color(rgb(0xb5b5bd))
+                                .child(div().flex_none().text_color(theme::violet_hover()).child("\u{2022}"))
+                                .child(div().min_w_0().flex_1().child(item.clone()))
+                        })))
+                });
+            let is_current = entry.version == current;
+            div()
+                .flex_none()
+                .px(px(20.))
+                .py(px(18.))
+                .rounded(px(12.))
+                .border_1()
+                .border_color(if is_current { rgb(0x725095) } else { rgb(0x303037) })
+                .bg(if oled { rgb(0x000000) } else { rgb(0x17171b) })
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .justify_between()
+                        .gap(px(20.))
+                        .mb(px(15.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.))
+                                .child(
+                                    div()
+                                        .text_size(px(9.))
+                                        .font_weight(FontWeight::EXTRA_BOLD)
+                                        .text_color(theme::violet_hover())
+                                        .child(if entry.unreleased() {
+                                            "IN DEVELOPMENT".to_owned()
+                                        } else {
+                                            format!("VERSION {}", entry.version)
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(20.))
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_color(rgb(0xf4f4f5))
+                                        .child(if entry.unreleased() { "Coming next".to_owned() } else { entry.version.clone() }),
+                                ),
+                        )
+                        .when_some(entry.date.clone(), |header, date| {
+                            header.child(div().pt(px(3.)).text_size(px(11.)).text_color(rgb(0x777781)).child(date))
+                        }),
+                )
+                .children(groups)
+        });
+        div()
+            .id("changelog")
+            .occlude()
+            .w(px(760.))
+            .max_w(gpui::relative(0.94))
+            .max_h((window.viewport_size().height - px(80.)).max(px(200.)))
+            .rounded(px(14.))
+            .border_1()
+            .border_color(theme::button_border())
+            .bg(theme::background())
+            .shadow_xl()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex_none()
+                    .px(px(24.))
+                    .pt(px(22.))
+                    .pb(px(16.))
+                    .flex()
+                    .items_start()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(theme::border())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_weight(FontWeight::EXTRA_BOLD)
+                                    .text_color(theme::violet_hover())
+                                    .child("WHAT\u{2019}S NEW"),
+                            )
+                            .child(div().text_size(px(20.)).font_weight(FontWeight::BOLD).child("VioletWire changelog"))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(theme::text_dim())
+                                    .child(format!("You are running version {current}.")),
+                            ),
+                    )
+                    .child(
+                        ui::icon_button("changelog-close", Icon::Close, "Close changelog", false).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.changelog_open = false;
+                                cx.notify();
+                            },
+                        )),
+                    ),
+            )
+            .child(
+                div()
+                    .id("changelog-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(24.))
+                    .pt(px(20.))
+                    .pb(px(28.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.))
+                    .children(releases),
             )
     }
 }

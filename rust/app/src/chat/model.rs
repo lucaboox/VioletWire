@@ -32,11 +32,79 @@ pub struct EmoteRange {
     pub start: usize,
     pub end: usize,
     pub id: String,
+    /// A GIF a higher-tier subscriber sent: the range covers the description
+    /// Twitch puts in its place, and this is the image, used exactly as sent.
+    pub gif: Option<String>,
+}
+
+/// Chat modes as a change: `None` keeps the current value, since Twitch sends
+/// ROOMSTATE in full on join and then only what changed.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Modes {
+    /// Followers-only, with the minutes of following it asks for (`Some(None)`
+    /// is off).
+    pub followers: Option<Option<u32>>,
+    pub subscribers: Option<bool>,
+    pub emote_only: Option<bool>,
+    /// Seconds between messages; 0 is off.
+    pub slow: Option<u32>,
+}
+
+impl Modes {
+    /// Applies a change to the current modes.
+    pub fn merge(&mut self, change: Modes) {
+        self.followers = change.followers.or(self.followers);
+        self.subscribers = change.subscribers.or(self.subscribers);
+        self.emote_only = change.emote_only.or(self.emote_only);
+        self.slow = change.slow.or(self.slow);
+    }
+
+    pub fn followers_only(&self) -> Option<u32> {
+        self.followers.flatten()
+    }
+
+    /// Electron's restriction line. Followers-only is left out once the
+    /// viewer follows, since it no longer applies.
+    pub fn label(&self, following: Option<bool>) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(minutes) = self.followers_only()
+            && following == Some(false)
+        {
+            parts.push(if minutes > 0 {
+                format!("Followers-only · follow for {} to chat", follow_duration(minutes))
+            } else {
+                "Followers-only chat".to_owned()
+            });
+        }
+        if self.subscribers == Some(true) {
+            parts.push("Subscribers-only chat".to_owned());
+        }
+        if self.emote_only == Some(true) {
+            parts.push("Emote-only chat".to_owned());
+        }
+        if let Some(seconds) = self.slow.filter(|seconds| *seconds > 0) {
+            parts.push(format!("Slow mode · {seconds}s between messages"));
+        }
+        (!parts.is_empty()).then(|| parts.join(" · "))
+    }
+}
+
+/// `30 minutes`, `2 hours`, `3 days`, `1 week`, as Electron's
+/// `formatFollowDuration`.
+fn follow_duration(minutes: u32) -> String {
+    let (count, unit) = match minutes {
+        m if m >= 10_080 && m % 10_080 == 0 => (m / 10_080, "week"),
+        m if m >= 1_440 && m % 1_440 == 0 => (m / 1_440, "day"),
+        m if m >= 60 && m % 60 == 0 => (m / 60, "hour"),
+        m => (m, "minute"),
+    };
+    format!("{count} {unit}{}", if count == 1 { "" } else { "s" })
 }
 #[derive(Debug)]
 pub enum Event {
     Message(Message),
     Room(String),
+    Modes(Modes),
     Delete(String),
     ClearUser(String),
     Clear,
@@ -76,6 +144,26 @@ pub fn asset_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// ROOMSTATE's chat modes, beside the room ID `parse` reads from it.
+pub fn room_modes(line: &str, channel: &str) -> Option<Modes> {
+    let tagged = line.strip_prefix('@')?;
+    let (tags, rest) = tagged.split_once(' ')?;
+    if !rest.starts_with(&format!(":tmi.twitch.tv ROOMSTATE #{channel}")) {
+        return None;
+    }
+    let tags: HashMap<&str, &str> = tags.split(';').filter_map(|tag| tag.split_once('=')).collect();
+    Some(Modes {
+        // -1 off, 0 any follower, N minutes of following.
+        followers: tags
+            .get("followers-only")
+            .and_then(|value| value.parse::<i64>().ok())
+            .map(|minutes| u32::try_from(minutes).ok()),
+        subscribers: tags.get("subs-only").map(|value| *value == "1"),
+        emote_only: tags.get("emote-only").map(|value| *value == "1"),
+        slow: tags.get("slow").and_then(|value| value.parse::<u32>().ok()),
+    })
 }
 
 pub fn parse(line: &str, channel: &str) -> Option<Event> {
@@ -152,8 +240,26 @@ pub fn parse(line: &str, channel: &str) -> Option<Event> {
                             start: boundaries[a],
                             end: boundaries[b + 1],
                             id: id.into(),
+                            gif: None,
                         });
                     }
+                }
+            }
+            // `<start>-<end>|<id>|<url>` entries, Electron's `parseGifs`.
+            for entry in tags.get("gifs").copied().unwrap_or("").split(',') {
+                let mut fields = entry.split('|');
+                let (Some(range), Some(id), Some(url)) = (fields.next(), fields.next(), fields.next()) else {
+                    continue;
+                };
+                let Some((a, b)) = range.split_once('-') else { continue };
+                let (Ok(a), Ok(b)) = (a.parse::<usize>(), b.parse::<usize>()) else { continue };
+                if asset_id(id) && giphy(url) && a <= b && b < boundaries.len().saturating_sub(1) {
+                    emotes.push(EmoteRange {
+                        start: boundaries[a],
+                        end: boundaries[b + 1],
+                        id: id.into(),
+                        gif: Some(url.to_owned()),
+                    });
                 }
             }
             emotes.sort_by_key(|e| e.start);
@@ -225,6 +331,16 @@ pub fn parse(line: &str, channel: &str) -> Option<Event> {
         }
         _ => None,
     }
+}
+
+/// Only the service Twitch sends GIFs from, over https, with no credentials.
+pub fn giphy(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    url.len() <= 1024
+        && !host.contains(['@', ':'])
+        && (host == "giphy.com" || host.ends_with(".giphy.com"))
+        && url.bytes().all(|b| b.is_ascii_graphic())
 }
 
 pub fn mentioned(text: &str, login: &str) -> bool {
@@ -321,6 +437,8 @@ pub enum Part {
     /// `@name`, drawn bold as in Electron.
     Mention(String),
     Emote(EmotePart),
+    /// A subscriber's GIF: its description, and the image.
+    Gif { description: String, url: String },
 }
 
 fn twitch_url(id: &str) -> String {
@@ -368,6 +486,11 @@ pub fn parts(message: &Message, providers: &HashMap<String, ProviderEmote>) -> V
             continue;
         }
         words(&message.text[cursor..emote.start], providers, any_emote, &mut output);
+        if let Some(url) = &emote.gif {
+            output.push(Part::Gif { description: message.text[emote.start..emote.end].into(), url: url.clone() });
+            cursor = emote.end;
+            continue;
+        }
         output.push(Part::Emote(EmotePart {
             name: message.text[emote.start..emote.end].into(),
             url: twitch_url(&emote.id),
@@ -650,5 +773,42 @@ mod tests {
             parse(":tmi.twitch.tv CLEARCHAT #room :User", "room"),
             Some(Event::ClearUser(_))
         ));
+    }
+
+    #[test]
+    fn reads_room_modes_as_changes() {
+        let full = room_modes("@emote-only=0;followers-only=10;r9k=0;room-id=1;slow=30;subs-only=0 :tmi.twitch.tv ROOMSTATE #room", "room").unwrap();
+        let mut modes = Modes::default();
+        modes.merge(full);
+        assert_eq!(modes.followers_only(), Some(10));
+        assert_eq!(modes.label(Some(true)).as_deref(), Some("Slow mode · 30s between messages"));
+        assert_eq!(
+            modes.label(Some(false)).as_deref(),
+            Some("Followers-only · follow for 10 minutes to chat · Slow mode · 30s between messages")
+        );
+        // A later ROOMSTATE carries only what changed.
+        modes.merge(room_modes("@followers-only=-1;room-id=1 :tmi.twitch.tv ROOMSTATE #room", "room").unwrap());
+        assert_eq!(modes.followers_only(), None);
+        assert_eq!(modes.slow, Some(30));
+        assert!(room_modes("@slow=5 :tmi.twitch.tv ROOMSTATE #other", "room").is_none());
+        assert!(room_modes("@slow=5 :viewer!v@h PRIVMSG #room :ROOMSTATE", "room").is_none());
+        assert_eq!(follow_duration(1440), "1 day");
+        assert_eq!(follow_duration(120), "2 hours");
+    }
+
+    #[test]
+    fn reads_subscriber_gifs_and_rejects_other_hosts() {
+        let Some(Event::Message(message)) = parse(
+            "@gifs=0-4|abc|https://media.giphy.com/media/abc/giphy.gif,6-8|x|https://evil.example/x.gif :viewer!v@h PRIVMSG #room :[Yay] hey",
+            "room",
+        ) else {
+            panic!("message");
+        };
+        assert_eq!(message.emotes.len(), 1);
+        let parts = parts(&message, &HashMap::new());
+        assert!(matches!(&parts[0], Part::Gif { description, url } if description == "[Yay]" && url.ends_with("giphy.gif")));
+        assert!(!giphy("https://user@media.giphy.com/x.gif"));
+        assert!(!giphy("http://media.giphy.com/x.gif"));
+        assert!(giphy("https://giphy.com/x.gif"));
     }
 }

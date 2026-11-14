@@ -72,6 +72,12 @@ pub struct Preferences {
     /// How Tab completion matches emote names: `prefix` or `substring`
     /// (Electron's `emoteAutocompleteMatch`).
     pub emote_autocomplete_match: String,
+    /// Draw the GIFs higher-tier subscribers send (Electron's `chatShowGifs`);
+    /// off shows the description Twitch sends in their place.
+    pub chat_show_gifs: bool,
+    /// The newest version whose changes were shown (Electron's
+    /// `lastSeenChangelogVersion`); empty until the first launch records one.
+    pub last_seen_changelog_version: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -135,6 +141,8 @@ impl Default for Preferences {
             generic_link_previews: false,
             generic_link_preview_activation: "ctrl".into(),
             emote_autocomplete_match: "prefix".into(),
+            chat_show_gifs: true,
+            last_seen_changelog_version: String::new(),
         }
     }
 }
@@ -192,6 +200,9 @@ impl Preferences {
         self.mention_sound_volume = self.mention_sound_volume.min(200);
         if !matches!(self.emote_autocomplete_match.as_str(), "prefix" | "substring") {
             self.emote_autocomplete_match = "prefix".into();
+        }
+        if self.last_seen_changelog_version.len() > 64 {
+            self.last_seen_changelog_version.clear();
         }
         if !matches!(self.generic_link_preview_activation.as_str(), "ctrl" | "alt" | "hover") {
             self.generic_link_preview_activation = "ctrl".into();

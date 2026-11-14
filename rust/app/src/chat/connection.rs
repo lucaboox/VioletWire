@@ -114,6 +114,9 @@ fn run(channel: &str, stop: &AtomicBool, tx: &SyncSender<Event>) -> anyhow::Resu
             if command(&line) == "RECONNECT" {
                 return Ok(());
             }
+            if let Some(modes) = model::room_modes(&line, channel) {
+                let _ = tx.try_send(Event::Modes(modes));
+            }
             if let Some(event) = model::parse(&line, channel) {
                 let _ = tx.try_send(event);
             }

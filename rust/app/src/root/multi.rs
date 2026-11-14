@@ -16,6 +16,34 @@ use crate::ui::{self, ButtonStyle, Icon};
 /// Electron's `MAX_MULTISTREAM_TILES`.
 pub(super) const MAX_TILES: usize = 4;
 
+/// A tile being dragged by its name plate onto another, to trade places
+/// (Electron's draggable `multi-tile-name-box`).
+#[derive(Clone)]
+pub(super) struct TileDrag {
+    index: usize,
+    name: SharedString,
+}
+
+impl Render for TileDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(10.))
+            .h(px(26.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(theme::violet())
+            .bg(rgba(0x18181bee))
+            .text_size(px(12.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme::text())
+            .child(ui::icon(Icon::Grip, 13.))
+            .child(self.name.clone())
+    }
+}
+
 pub(super) struct Multi {
     pub(super) tiles: Vec<Playing>,
     pub(super) active: usize,
@@ -100,6 +128,21 @@ impl Root {
             multi.active = multi.active.saturating_sub(1);
         }
         self.sync_multi_audio(cx);
+        cx.notify();
+    }
+
+    /// Trades two tiles' places; the audio and chat stay with their stream.
+    pub(super) fn swap_tiles(&mut self, one: usize, other: usize, cx: &mut Context<Self>) {
+        let Some(multi) = &mut self.multi else { return };
+        if one == other || one >= multi.tiles.len() || other >= multi.tiles.len() {
+            return;
+        }
+        multi.tiles.swap(one, other);
+        if multi.active == one {
+            multi.active = other;
+        } else if multi.active == other {
+            multi.active = one;
+        }
         cx.notify();
     }
 
@@ -192,8 +235,10 @@ impl Root {
                 .find(|channel| channel.login == tile.login)
                 .map(|channel| channel.id.clone());
             let (session, preferences) = (session.clone(), preferences.clone());
+            let following = self.follow_state(&tile.login, cx);
             tile.chat.update(cx, |chat, cx| {
                 chat.set_session(session, cx);
+                chat.set_following(following, cx);
                 if let Some(room) = &room {
                     chat.set_room(room, cx);
                 }
@@ -307,9 +352,19 @@ impl Root {
                         .border_2()
                         .border_color(if active { theme::violet() } else { rgba(0x00000000) })
                         .capture_any_mouse_down(cx.listener(move |this, _, _, cx| this.activate_tile(index, cx)))
+                        .when(count > 1, |tile| {
+                            tile.drag_over::<TileDrag>(|style, _, _, _| style.border_color(theme::violet_hover()))
+                                .on_drop(cx.listener(move |this, drag: &TileDrag, _, cx| {
+                                    this.swap_tiles(drag.index, index, cx)
+                                }))
+                        })
                         .child(tile.view.clone())
-                        .child(
+                        .child({
+                            let drag = TileDrag { index, name: tile.name.clone() };
                             div()
+                                .id(SharedString::from(format!("tile-name-{}", tile.login)))
+                                // The plate takes its own clicks, not the video's.
+                                .occlude()
                                 .absolute()
                                 .top(px(8.))
                                 .left(px(8.))
@@ -323,11 +378,19 @@ impl Root {
                                 .text_size(px(12.))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme::text())
+                                .when(count > 1, |chip| {
+                                    chip.cursor_grab()
+                                        .child(ui::icon(Icon::Grip, 13.).text_color(theme::text_dim()))
+                                        .tooltip(|_, cx| {
+                                            cx.new(|_| ui::Tooltip("Drag onto another stream to swap places".into())).into()
+                                        })
+                                        .on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()))
+                                })
                                 .when(active, |chip| {
                                     chip.child(div().size(px(7.)).rounded_full().bg(rgb(0x22c55e)))
                                 })
-                                .child(tile.name.clone()),
-                        )
+                                .child(tile.name.clone())
+                        })
                         .child(
                             div()
                                 .absolute()

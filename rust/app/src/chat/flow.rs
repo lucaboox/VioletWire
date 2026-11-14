@@ -12,6 +12,8 @@ use unicode_segmentation::UnicodeSegmentation;
 enum Token {
     Text(SharedString, Font, Hsla, Option<String>),
     Image(usize, Size<Pixels>, bool),
+    /// Ends the line, if anything is on it.
+    Break,
 }
 enum Draw {
     Text(Box<ShapedLine>, Option<String>),
@@ -112,6 +114,12 @@ impl MessageFlow {
         ));
         self.images.push(element);
     }
+    /// An image on a line of its own (a subscriber's GIF).
+    pub fn block(&mut self, element: AnyElement, width: f32, height: f32) {
+        self.tokens.push(Token::Break);
+        self.image(element, width, height);
+        self.tokens.push(Token::Break);
+    }
 }
 
 fn link_url(text: &str) -> Option<String> {
@@ -161,6 +169,15 @@ fn measure(tokens: &[Token], width: Pixels, font_size: Pixels, window: &Window) 
     let mut previous_image: Option<(usize, Pixels)> = None;
     for token in tokens {
         match token {
+            Token::Break => {
+                if x > px(0.) {
+                    finish_line(&mut layout, first, height);
+                    first = layout.items.len();
+                    x = px(0.);
+                    height = line_height;
+                }
+                previous_image = None;
+            }
             Token::Image(index, dimensions, layered) => {
                 if *layered
                     && let Some((base, base_width)) =
