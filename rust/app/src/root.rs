@@ -2897,6 +2897,10 @@ impl Render for Root {
             .text_color(theme::text())
             .font_family(theme::UI_FONT)
             .text_size(px(14.))
+            // The browser's `line-height: normal` for Inter (its ascent plus
+            // descent). GPUI's default is 1.618, which made every text row
+            // taller than Electron's and set capitals off centre in buttons.
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .when(!fullscreen, |v| v.child(self.title_bar(window)))
             .child(body)
             .when_some(self.channel_menu.clone(), |root, (login, at)| {

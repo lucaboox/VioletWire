@@ -106,6 +106,8 @@ pub fn live_dot() -> Rgba {
 /// Inter's tall lower case reads larger than Segoe UI at the same size, so
 /// the app ships it rather than looking a size smaller than Electron.
 pub const UI_FONT: &str = "Inter";
+/// Inter's normal line height (hhea ascent 0.96875 + descent 0.2421875).
+pub const LINE_HEIGHT: f32 = 1.2109375;
 
 /// Inter's weights the UI uses, cut from Electron's variable font (SIL OFL;
 /// see `assets/fonts/Inter-LICENSE.txt`).

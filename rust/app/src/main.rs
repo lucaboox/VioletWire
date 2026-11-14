@@ -28,6 +28,15 @@ use gpui::{
 use root::Root;
 
 fn main() {
+    // GPUI scales by each monitor's DPI, but only if Windows is told the app
+    // can (Zed does this in its manifest). Without it, a 125 % display gave
+    // the app 100 % sizes, so the whole UI drew a size smaller than Electron.
+    // SAFETY: a process-wide setting, made before any window exists.
+    unsafe {
+        let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        );
+    }
     // Developer shortcut: `violetwire --play <channel>` opens that channel.
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let play = arguments
