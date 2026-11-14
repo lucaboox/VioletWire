@@ -377,11 +377,13 @@ async fn run_sign_in(owner: Option<isize>, cx: &mut AsyncApp) -> Result<Option<A
 /// Opens a Kick page (a channel, to follow it there) in a window on the
 /// signed-in profile. Following runs on Kick's own page: its follow button is
 /// guarded by scripts that only Kick's page can run.
-pub fn open_page(owner: Option<isize>, slug: &str, cx: &mut App, closed: impl FnOnce(&mut App) + 'static) {
-    if !crate::kick::is_slug(slug) {
+/// `page` is a channel's slug, or `slug/subscribe` for its subscription page.
+pub fn open_page(owner: Option<isize>, page: &str, cx: &mut App, closed: impl FnOnce(&mut App) + 'static) {
+    let (slug, rest) = page.split_once('/').unwrap_or((page, ""));
+    if !crate::kick::is_slug(slug) || !matches!(rest, "" | "subscribe") {
         return;
     }
-    let url = format!("https://kick.com/{slug}");
+    let url = format!("https://kick.com/{page}");
     cx.spawn(async move |cx: &mut AsyncApp| -> Result<()> {
         let window = Window(create_window(owner.map(|owner| HWND(owner as _)), "Kick", true)?);
         let mut context = wry::WebContext::new(profile());

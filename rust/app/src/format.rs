@@ -32,6 +32,26 @@ pub fn unix_from_rfc3339(text: &str) -> Option<u64> {
 }
 
 /// "3h 07m" or "42m".
+/// `54,372`: Electron's player header shows the whole count.
+pub fn grouped_count(count: u64) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// `8h 0m 49s` (or `12m 3s`): Electron's ticking header uptime.
+pub fn uptime_seconds(started_at: &str, now: u64) -> Option<String> {
+    let elapsed = now.checked_sub(unix_from_rfc3339(started_at)?)?;
+    let (hours, minutes, seconds) = (elapsed / 3_600, elapsed % 3_600 / 60, elapsed % 60);
+    Some(if hours > 0 { format!("{hours}h {minutes}m {seconds}s") } else { format!("{minutes}m {seconds}s") })
+}
+
 pub fn uptime(started_at: &str, now: u64) -> Option<String> {
     let elapsed = now.checked_sub(unix_from_rfc3339(started_at)?)?;
     let (hours, minutes) = (elapsed / 3_600, elapsed % 3_600 / 60);
@@ -133,6 +153,15 @@ pub fn is_login(text: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn header_counts_and_uptime() {
+        assert_eq!(grouped_count(54_372), "54,372");
+        assert_eq!(grouped_count(999), "999");
+        assert_eq!(grouped_count(1_000_000), "1,000,000");
+        let start = unix_from_rfc3339("2026-11-13T10:00:00Z").unwrap();
+        assert_eq!(uptime_seconds("2026-11-13T10:00:00Z", start + 8 * 3600 + 49).as_deref(), Some("8h 0m 49s"));
+        assert_eq!(uptime_seconds("2026-11-13T10:00:00Z", start + 723).as_deref(), Some("12m 3s"));
+    }
     #[test]
     fn compacts_viewer_counts() {
         assert_eq!(compact_count(950), "950");

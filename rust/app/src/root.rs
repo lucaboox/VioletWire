@@ -98,6 +98,8 @@ pub struct Root {
     /// The signed-in Kick account's followed channels.
     kick_followed: Vec<FollowedChannel>,
     kick_task: Option<Task<()>>,
+    /// Ticks the player header's uptime each second, as Electron's does.
+    _clock: Option<Task<()>>,
     /// Refusals in a row of the stored Kick account; three sign it out.
     kick_refusals: u8,
     _kick_info: Option<Task<()>>,
@@ -305,6 +307,7 @@ impl Root {
             kick_channels: Vec::new(),
             kick_followed: Vec::new(),
             kick_task: None,
+            _clock: None,
             kick_refusals: 0,
             _kick_info: None,
             account_image: None,
@@ -335,6 +338,19 @@ impl Root {
         };
         root.restore(cx);
         root.start_kick(cx);
+        root._clock = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let open = this.update(cx, |this, cx| {
+                    if this.playing.is_some() {
+                        cx.notify();
+                    }
+                });
+                if open.is_err() {
+                    break;
+                }
+            }
+        }));
         // A Kick channel opened at launch still gets its header details.
         if let Some(slug) = root.playing.as_ref().and_then(|playing| crate::kick::slug(&playing.login)).map(str::to_owned) {
             root.load_kick_info(slug, cx);
@@ -1930,53 +1946,103 @@ impl Root {
             .map(|stream| stream.title.clone().into())
             .unwrap_or_else(|| name.clone());
         let title_hint = title.clone();
+        // Electron's `.player-toolbar`: sizes and colours from its CSS.
+        let kick_slug = crate::kick::slug(&login).map(str::to_owned);
+        let now = auth::now();
+        let followed = self.channels.iter().chain(&self.kick_followed).any(|known| known.login == login);
+        let category = stream.map(|stream| stream.game_name.clone()).filter(|category| !category.is_empty());
+        let toolbar_icon = |id: &'static str, icon: Icon, tip: &'static str, active: Option<(u32, u32, u32)>| {
+            div()
+                .id(id)
+                .size(px(32.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(7.))
+                .border_1()
+                .border_color(gpui::transparent_black())
+                .text_color(rgb(0xa1a1aa))
+                .cursor_pointer()
+                .hover(|style| style.border_color(rgb(0x35353c)).text_color(rgb(0xf4f4f5)).bg(rgb(0x222228)))
+                .when_some(active, |button, (border, text, background)| {
+                    button.border_color(rgb(border)).text_color(rgb(text)).bg(rgb(background))
+                })
+                .child(gpui::svg().path(icon.path()).size(px(17.)).text_color(match active {
+                    Some((_, text, _)) => rgb(text),
+                    None => rgb(0xa1a1aa),
+                }))
+                .tooltip(move |_, cx| cx.new(|_| ui::Tooltip(tip.into())).into())
+        };
         let toolbar = div()
             .h(px(54.))
             .flex_none()
-            .px_3()
+            .px(px(12.))
             .flex()
             .items_center()
-            .gap_2p5()
-            .bg(theme::title_bar())
+            .gap(px(11.))
+            .bg(rgb(0x121216))
             .border_b_1()
-            .border_color(theme::border())
+            .border_color(rgb(0x28282e))
+            .text_size(px(13.))
             .child(
-                ui::icon_button("back", Icon::Back, "Back to Home", false)
+                div()
+                    .id("back")
+                    .size(px(36.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(7.))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(0x26262b)))
+                    .child(gpui::svg().path(Icon::ChevronLeft.path()).size(px(25.)).text_color(rgb(0xa1a1aa)))
+                    .tooltip(|_, cx| cx.new(|_| ui::Tooltip("Back".into())).into())
                     .on_click(cx.listener(|this, _, window, cx| this.close_player(window, cx))),
             )
             .when(!compact, |v| {
-                v.child(self.avatar(
-                    channel.and_then(|channel| channel.profile_image_url.as_deref()),
-                    34.,
-                ))
+                v.child(
+                    div()
+                        .flex_none()
+                        .rounded_full()
+                        .border_2()
+                        .border_color(rgb(0x3a2945))
+                        .child(self.avatar(channel.and_then(|channel| channel.profile_image_url.as_deref()), 34.)),
+                )
             })
             .when_some(stream.filter(|_| !compact), |v, stream| {
                 v.child(
                     div()
                         .flex_none()
+                        .min_w(px(76.))
                         .flex()
                         .flex_col()
-                        .gap_1()
-                        .mr(px(6.))
+                        .gap(px(2.))
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap_1()
-                                .text_color(theme::live_dot())
+                                .gap(px(5.))
                                 .text_size(px(12.))
-                                .child(ui::icon(Icon::Users, 13.))
-                                .child(compact_count(stream.viewer_count)),
+                                .line_height(gpui::relative(1.))
+                                .text_color(rgb(0xf43f5e))
+                                .child(gpui::svg().path(Icon::Users.path()).size(px(14.)).text_color(rgb(0xf43f5e)))
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(crate::format::grouped_count(stream.viewer_count)),
+                                ),
                         )
-                        .when_some(uptime(&stream.started_at, auth::now()), |v, time| {
+                        .when_some(crate::format::uptime_seconds(&stream.started_at, now), |v, time| {
                             v.child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap_1()
-                                    .text_color(theme::text_dim())
-                                    .text_size(px(10.))
-                                    .child(ui::icon(Icon::Clock, 11.))
+                                    .gap(px(5.))
+                                    .text_size(px(10.5))
+                                    .line_height(gpui::relative(1.1))
+                                    .text_color(rgb(0x85858f))
+                                    .child(gpui::svg().path(Icon::Clock.path()).size(px(13.)).text_color(rgb(0x85858f)))
                                     .child(time),
                             )
                         }),
@@ -1985,137 +2051,159 @@ impl Root {
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(170.))
+                    .max_w(px(660.))
                     .flex()
                     .flex_col()
-                    .gap(px(3.))
                     .child(
                         div()
                             .id("stream-title")
                             .truncate()
                             .text_size(px(13.))
                             .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xf4f4f5))
                             .child(title)
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| ui::Tooltip(title_hint.clone())).into()
-                            }),
+                            .tooltip(move |_, cx| cx.new(|_| ui::Tooltip(title_hint.clone())).into()),
                     )
                     .child(
                         div()
+                            .mt(px(3.))
                             .min_w_0()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .text_size(px(11.))
+                            .gap(px(6.))
                             .child(
                                 div()
+                                    .min_w_0()
                                     .truncate()
-                                    .text_color(theme::text_dim())
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(11.5))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(0xb8b8c1))
                                     .child(name),
                             )
-                            .when_some(
-                                stream.filter(|stream| !compact && !stream.game_name.is_empty()),
-                                |v, stream| {
-                                    v.child(
-                                        div()
-                                            .truncate()
-                                            .max_w(px(150.))
-                                            .px_2()
-                                            .py_0p5()
-                                            .rounded_full()
-                                            .border_1()
-                                            .border_color(theme::selected_border())
-                                            .bg(theme::selected())
-                                            .text_color(theme::accent_text())
-                                            .text_size(px(10.))
-                                            .child(stream.game_name.clone()),
-                                    )
-                                },
-                            )
-                            .when(!compact, |row| {
-                                row.children(tags.into_iter().map(|tag| {
+                            .when_some(category.filter(|_| !compact), |row, category| {
+                                row.child(
                                     div()
                                         .flex_none()
+                                        .max_w(px(180.))
+                                        .truncate()
+                                        .px(px(7.))
+                                        .py(px(2.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(rgb(0x4f3768))
+                                        .bg(rgb(0x2a2035))
+                                        .text_color(rgb(0xd8b4fe))
+                                        .text_size(px(10.5))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(category),
+                                )
+                            })
+                            .when(!compact, |row| {
+                                row.children(tags.into_iter().take(3).map(|tag| {
+                                    div()
+                                        .flex_none()
+                                        .max_w(px(100.))
+                                        .truncate()
                                         .px(px(6.))
-                                        .py_0p5()
-                                        .rounded(px(5.))
-                                        .bg(theme::button())
-                                        .text_color(theme::text_secondary())
-                                        .text_size(px(10.))
+                                        .py(px(2.))
+                                        .rounded_full()
+                                        .bg(rgb(0x25252b))
+                                        .text_color(rgb(0xaaaab4))
+                                        .text_size(px(9.5))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(tag)
                                 }))
                             }),
                     ),
             )
-            .when(self.channels.iter().any(|followed| followed.login == login), |bar| {
-                let favorite = crate::preferences::get(cx).favorite_channels.contains(&login);
-                let star_login = login.clone();
-                bar.child(
-                    ui::icon_button(
-                        "toolbar-favorite",
-                        if favorite { Icon::StarFilled } else { Icon::Star },
-                        if favorite { "Remove from favorites" } else { "Add to favorites" },
-                        favorite,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_favorite(&star_login, cx))),
-                )
-            })
-            .when_some(
-                crate::kick::slug(&login)
-                    .filter(|_| crate::preferences::get(cx).kick_account.is_some())
-                    .map(str::to_owned),
-                |bar, slug| {
-                    let following = self.kick_followed.iter().any(|followed| followed.login == login);
-                    bar.child(
-                        ui::button(
-                            "toolbar-kick-follow",
-                            if compact { "" } else if following { "Following" } else { "Follow" },
-                            Some(if following { Icon::StarFilled } else { Icon::Star }),
-                            if following { ButtonStyle::Secondary } else { ButtonStyle::Primary },
-                        )
-                        .when(compact, |button| button.w(px(34.)).px_0())
-                        .tooltip(|_, cx| {
-                            cx.new(|_| ui::Tooltip("Opens the channel on Kick, signed in, to follow or unfollow there".into()))
-                                .into()
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            // The followed list catches up once the page closes.
-                            let root = cx.entity().downgrade();
-                            crate::kick_web::open_page(this.hwnd, &slug, cx, move |cx| {
-                                let _ = root.update(cx, |this, cx| this.start_kick(cx));
-                            });
-                        })),
-                    )
-                },
-            )
-            .when(matches!(self.auth, Auth::SignedIn(_)) && crate::kick::slug(&login).is_none(), |bar| {
-                let login = login.clone();
-                let creating = self.clip_task.is_some();
-                bar.child(
-                    ui::button(
-                        "toolbar-clip",
-                        if compact { "" } else if creating { "Clipping…" } else { "Clip" },
-                        Some(Icon::Scissors),
-                        if creating { ButtonStyle::Disabled } else { ButtonStyle::Ghost },
-                    )
-                    .when(compact, |button| button.w(px(34.)).px_0())
-                    .tooltip(|_, cx| {
-                        cx.new(|_| ui::Tooltip("Create a clip with Twitch's official API".into()))
-                            .into()
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| this.create_clip(login.clone(), cx))),
-                )
-            })
             .child(
-                ui::icon_button(
-                    "toolbar-external",
-                    Icon::External,
-                    if crate::kick::slug(&login).is_some() { "Open on Kick" } else { "Open on Twitch" },
-                    false,
-                )
-                    .on_click(cx.listener(move |_, _, _, cx| open_channel(&login, cx))),
+                div()
+                    .ml_auto()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    // Follow: Kick on its own page (signed in), Twitch on
+                    // twitch.tv, since neither can be done for the viewer.
+                    .child({
+                        let target = login.clone();
+                        let slug = kick_slug.clone();
+                        toolbar_icon(
+                            "toolbar-follow",
+                            if followed { Icon::HeartFilled } else { Icon::Heart },
+                            if followed { "You follow this channel" } else if kick_slug.is_some() { "Follow on Kick" } else { "Follow on Twitch" },
+                            followed.then_some((0x6d3d83, 0xf0abfc, 0x38203f)),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| match &slug {
+                            Some(slug) if crate::preferences::get(cx).kick_account.is_some() => {
+                                let root = cx.entity().downgrade();
+                                crate::kick_web::open_page(this.hwnd, slug, cx, move |cx| {
+                                    let _ = root.update(cx, |this, cx| this.start_kick(cx));
+                                });
+                            }
+                            Some(_) => this.show_notice("Sign in to Kick from Settings to follow channels.", cx),
+                            None => open_channel(&target, cx),
+                        }))
+                    })
+                    // Subscribe: the service's own subscription page.
+                    .child({
+                        let target = login.clone();
+                        let slug = kick_slug.clone();
+                        toolbar_icon(
+                            "toolbar-subscribe",
+                            Icon::Star,
+                            if kick_slug.is_some() { "Open the Kick subscription page" } else { "Open the Twitch subscription page" },
+                            None,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| match &slug {
+                            Some(slug) => crate::kick_web::open_page(this.hwnd, &format!("{slug}/subscribe"), cx, |_| {}),
+                            None => {
+                                if is_login(&target) {
+                                    cx.open_url(&format!("https://www.twitch.tv/subs/{target}"));
+                                }
+                            }
+                        }))
+                    })
+                    .when(matches!(self.auth, Auth::SignedIn(_)) && kick_slug.is_none(), |bar| {
+                        let login = login.clone();
+                        let creating = self.clip_task.is_some();
+                        bar.child(
+                            div()
+                                .id("toolbar-clip")
+                                .min_h(px(34.))
+                                .px(px(10.))
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .rounded(px(7.))
+                                .border_1()
+                                .border_color(gpui::transparent_black())
+                                .text_size(px(12.5))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(0xa1a1aa))
+                                .cursor_pointer()
+                                .hover(|style| style.border_color(rgb(0x35353c)).text_color(rgb(0xf4f4f5)).bg(rgb(0x222228)))
+                                .child(gpui::svg().path(Icon::Scissors.path()).size(px(16.)).text_color(rgb(0xa1a1aa)))
+                                .when(!compact, |button| button.child(if creating { "Clipping…" } else { "Clip" }))
+                                .tooltip(|_, cx| cx.new(|_| ui::Tooltip("Create a clip with Twitch's official API".into())).into())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.clip_task.is_none() {
+                                        this.create_clip(login.clone(), cx);
+                                    }
+                                })),
+                        )
+                    })
+                    .child({
+                        let target = login.clone();
+                        toolbar_icon(
+                            "toolbar-external",
+                            Icon::External,
+                            if kick_slug.is_some() { "Open on Kick" } else { "Open on Twitch" },
+                            None,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| open_channel(&target, cx)))
+                    }),
             );
         let mut area = div()
             .relative()
