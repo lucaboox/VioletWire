@@ -125,6 +125,8 @@ pub struct Chat {
     menu: Option<(Message, gpui::Point<gpui::Pixels>)>,
     /// This chat's channel login, for the user card's lookups.
     channel: String,
+    /// A Kick channel's chat: read-only, Kick badges, no Twitch user cards.
+    kick: bool,
     /// Electron's chat user card, open for one chatter.
     card: Option<Card>,
     _card: Option<Task<()>>,
@@ -182,6 +184,16 @@ impl Chat {
         }
     }
 
+    /// A Twitch badge by its `set/version` key; a Kick badge is its own
+    /// image address.
+    fn badge_url(&self, badge: &str) -> Option<String> {
+        self.assets
+            .badges
+            .get(badge)
+            .cloned()
+            .or_else(|| (self.kick && crate::kick::is_image_url(badge)).then(|| badge.to_owned()))
+    }
+
     pub fn has_card(&self) -> bool {
         self.card.is_some()
     }
@@ -193,7 +205,7 @@ impl Chat {
     }
 
     fn open_card(&mut self, login: &str, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
-        if !crate::format::is_login(login) {
+        if self.kick || !crate::format::is_login(login) {
             return;
         }
         let login = login.to_ascii_lowercase();
@@ -270,7 +282,7 @@ impl Chat {
             .badges
             .iter()
             .filter_map(|badge| {
-                let url = self.assets.badges.get(badge)?.clone();
+                let url = self.badge_url(badge)?;
                 let image = self.image(&url, false, cx)?;
                 Some(img(ImageSource::Render(image)).size(px(20.)).into_any_element())
             })
@@ -625,7 +637,8 @@ impl Chat {
             sending: false,
             replying: None,
             menu: None,
-            channel: login.to_ascii_lowercase(),
+            channel: crate::kick::slug(login).map_or_else(|| login.to_ascii_lowercase(), str::to_owned),
+            kick: crate::kick::slug(login).is_some(),
             card: None,
             _card: None,
             _poll: None,
@@ -656,7 +669,7 @@ impl Chat {
             }
         }));
         let limit = usize::from(this.preferences.chat_history_limit);
-        if limit > 0 {
+        if limit > 0 && !this.kick {
             let channel = login.to_owned();
             let agent = this.agent.clone();
             this._history = Some(cx.spawn(async move |this, cx| {
@@ -1085,6 +1098,11 @@ impl Chat {
         if self.sending {
             return;
         }
+        if self.kick {
+            self.notice = Some("Kick chat is read-only in VioletWire for now.".into());
+            cx.notify();
+            return;
+        }
         let Some(session) = self.session.clone() else {
             self.notice = Some("Sign in with Twitch to chat.".into());
             cx.notify();
@@ -1178,7 +1196,7 @@ impl Chat {
             );
         }
         for badge in &message.badges {
-            if let Some(url) = self.assets.badges.get(badge).cloned() {
+            if let Some(url) = self.badge_url(badge) {
                 let image = self.image(&url, false, cx);
                 let label = badge.clone();
                 flow.image(
@@ -1962,6 +1980,7 @@ impl Render for Chat {
             || self.replying.is_some()
             || self.is_editing(window, cx);
         let can_send = self.session.is_some()
+            && !self.kick
             && !self.sending
             && !self.input.read(cx).content.trim().is_empty();
         div()
@@ -2194,11 +2213,16 @@ impl Render for Chat {
                                         .child(
                                             self.session
                                                 .as_ref()
+                                                .filter(|_| !self.kick)
                                                 .map(|s| {
                                                     format!("Chatting as {}", s.identity.login)
                                                 })
                                                 .unwrap_or_else(|| {
-                                                    "Sign in with Twitch to chat".into()
+                                                    if self.kick {
+                                                        "Kick chat is read-only here".into()
+                                                    } else {
+                                                        "Sign in with Twitch to chat".into()
+                                                    }
                                                 }),
                                         ),
                                 )

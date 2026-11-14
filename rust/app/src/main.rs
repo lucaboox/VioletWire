@@ -7,6 +7,7 @@ mod format;
 mod http;
 mod images;
 mod input;
+mod kick;
 mod playback;
 mod playback_link;
 mod player;
@@ -57,7 +58,7 @@ fn main() {
         .map(|pair| pair[1].clone())
     {
         playback::resolver::warm_up();
-        for login in logins.split(',').filter(|login| format::is_login(login)) {
+        for login in logins.split(',').filter(|login| format::is_channel(login)) {
             let qualities = playback::resolver::resolve_fresh(login, "best").and_then(|lookup| {
                 lookup
                     .result
@@ -66,7 +67,8 @@ fn main() {
             });
             match qualities {
                 Ok(resolved) => println!("{login}: {}", resolved.qualities.join(" ")),
-                Err(_) => println!("{login}: offline"),
+                // Only the top message: the chain can hold a signed address.
+                Err(error) => println!("{login}: {error}"),
             }
         }
         playback::resolver::shutdown();

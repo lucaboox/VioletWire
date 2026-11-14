@@ -93,6 +93,9 @@ pub struct Root {
     hwnd: Option<isize>,
     /// Multistream's tiles, while it is open; `playing` is then empty.
     multi: Option<multi::Multi>,
+    /// Kick channels opened this session, for the player header.
+    kick_channels: Vec<FollowedChannel>,
+    _kick_info: Option<Task<()>>,
     /// The signed-in account's profile picture (Electron's account chip).
     account_image: Option<String>,
     account_image_task: Option<Task<()>>,
@@ -228,7 +231,7 @@ impl Root {
     /// `play` opens a channel's player at once (the `--play` developer flag);
     /// it plays anonymously and does not need a sign-in.
     pub fn new(play: Option<String>, cx: &mut Context<Self>) -> Self {
-        let playing = play.filter(|login| is_login(login)).map(|login| {
+        let playing = play.filter(|login| crate::format::is_channel(login)).map(|login| {
             let view = cx.new(|cx| Player::new(&login, &crate::preferences::get(cx)));
             let controls = cx.subscribe(
                 &view,
@@ -288,6 +291,8 @@ impl Root {
             shortcuts_open: false,
             hwnd: None,
             multi: None,
+            kick_channels: Vec::new(),
+            _kick_info: None,
             account_image: None,
             account_image_task: None,
             window_observer: None,
@@ -498,7 +503,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !is_login(login) {
+        if !crate::format::is_channel(login) {
             return;
         }
         if self.multi.is_some() {
@@ -512,6 +517,9 @@ impl Root {
 
     /// A player and chat for one channel, wired to the window's controls.
     fn open_playing(&mut self, login: &str, name: SharedString, cx: &mut Context<Self>) -> Playing {
+        if let Some(slug) = crate::kick::slug(login) {
+            self.load_kick_info(slug.to_owned(), cx);
+        }
         let view = cx.new(|cx| Player::new(login, &crate::preferences::get(cx)));
         let controls = cx.subscribe(
             &view,
@@ -535,6 +543,24 @@ impl Root {
             _controls: controls,
             _chat_controls: chat_controls,
         }
+    }
+
+    /// A Kick channel's title, viewers and picture for the header.
+    fn load_kick_info(&mut self, slug: String, cx: &mut Context<Self>) {
+        self._kick_info = Some(cx.spawn(async move |this, cx| {
+            let channel = cx
+                .background_executor()
+                .spawn(async move { crate::kick::channel(&slug) })
+                .await;
+            let Ok(channel) = channel else { return };
+            this.update(cx, |this, cx| {
+                let followed = channel.followed();
+                this.kick_channels.retain(|known| known.login != followed.login);
+                this.kick_channels.push(followed);
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     /// Hovering a live channel starts looking it up, so a click plays sooner
@@ -1601,7 +1627,7 @@ impl Root {
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_favorite(&star_login, cx))),
                 )
             })
-            .when(matches!(self.auth, Auth::SignedIn(_)), |bar| {
+            .when(matches!(self.auth, Auth::SignedIn(_)) && crate::kick::slug(&login).is_none(), |bar| {
                 let login = login.clone();
                 let creating = self.clip_task.is_some();
                 bar.child(
@@ -1620,7 +1646,12 @@ impl Root {
                 )
             })
             .child(
-                ui::icon_button("toolbar-external", Icon::External, "Open on Twitch", false)
+                ui::icon_button(
+                    "toolbar-external",
+                    Icon::External,
+                    if crate::kick::slug(&login).is_some() { "Open on Kick" } else { "Open on Twitch" },
+                    false,
+                )
                     .on_click(cx.listener(move |_, _, _, cx| open_channel(&login, cx))),
             );
         let mut area = div()
@@ -1940,6 +1971,9 @@ impl Root {
             .chain(&self.browse.streams)
             .chain(&self.search.full.channels)
             .chain(&self.search.quick.channels)
+            .chain(&self.search.kick_quick)
+            .chain(&self.search.kick_full)
+            .chain(&self.kick_channels)
             .find(|channel| channel.login == login)
     }
 
@@ -2134,7 +2168,7 @@ impl Render for Root {
         {
             PROBE_MULTI.call_once(|| {
                 self.enter_multi(cx);
-                for login in channels.split(',').filter(|login| is_login(login)) {
+                for login in channels.split(',').filter(|login| crate::format::is_channel(login)) {
                     self.add_tile(login, login.to_owned().into(), cx);
                 }
                 self.activate_tile(0, cx);
@@ -2710,7 +2744,9 @@ fn banner(message: SharedString) -> Div {
 }
 
 fn open_channel(login: &str, cx: &mut App) {
-    if is_login(login) {
+    if let Some(slug) = crate::kick::slug(login) {
+        cx.open_url(&format!("https://kick.com/{slug}"));
+    } else if is_login(login) {
         cx.open_url(&format!("https://www.twitch.tv/{login}"));
     }
 }

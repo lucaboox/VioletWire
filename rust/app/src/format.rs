@@ -120,6 +120,11 @@ pub fn visible_tags(language: &str, tags: &[String]) -> Vec<String> {
 }
 
 /// Twitch logins are 1–25 ASCII letters, digits or underscores.
+/// A Twitch login or a `kick:<slug>` key: anything the player can open.
+pub fn is_channel(text: &str) -> bool {
+    is_login(text) || crate::kick::slug(text).is_some()
+}
+
 pub fn is_login(text: &str) -> bool {
     (1..=25).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }

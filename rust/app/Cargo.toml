@@ -24,3 +24,4 @@ windows-core = "0.61"
 native-tls = "0.2"
 unicode-segmentation = "1"
 wry = { version = "0.57.2", default-features = false }
+tungstenite = { version = "0.30.0", default-features = false, features = ["native-tls", "handshake"] }

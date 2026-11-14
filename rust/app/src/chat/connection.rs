@@ -20,6 +20,10 @@ impl Connection {
         let (stop, channel) = (Arc::new(AtomicBool::new(false)), login.to_owned());
         let (tx, events) = mpsc::sync_channel(1000);
         let cancelled = stop.clone();
+        if let Some(slug) = crate::kick::slug(login) {
+            super::kick::spawn(slug.to_owned(), cancelled, tx);
+            return Self { events, stop };
+        }
         thread::spawn(move || {
             let mut attempt = 0;
             while !cancelled.load(Ordering::Acquire) {

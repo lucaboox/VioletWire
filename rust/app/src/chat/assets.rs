@@ -75,6 +75,7 @@ pub fn image_url(url: &str) -> bool {
                     | "cdn.7tv.app"
             )
         })
+        || crate::kick::is_image_url(url)
 }
 /// A signed-in Helix GET, for the user card.
 pub(super) fn helix_json(
@@ -168,13 +169,22 @@ fn logical(width: &Value, height: &Value, fallback: f32) -> (f32, f32) {
     }
 }
 
+/// `room` is a Twitch room ID, or `kick:` and a Kick user ID; a Kick room
+/// gets 7TV's global and Kick channel sets, as Electron's Kick chat did.
 pub fn load(room: &str, session: Option<&Session>, offline: bool) -> Assets {
+    let (kick, room) = match room.strip_prefix("kick:") {
+        Some(id) => (true, id),
+        None => (false, room),
+    };
     if !room.bytes().all(|b| b.is_ascii_digit()) || room.is_empty() {
         return Assets::default();
     }
     let agent = crate::http::agent();
     std::thread::scope(|scope| {
         let bttv = scope.spawn(|| {
+            if kick {
+                return Vec::new();
+            }
             let mut emotes = Vec::new();
             for (scope, endpoint) in [
                 "https://api.betterttv.net/3/cached/emotes/global".into(),
@@ -217,6 +227,9 @@ pub fn load(room: &str, session: Option<&Session>, offline: bool) -> Assets {
             emotes
         });
         let ffz = scope.spawn(|| {
+            if kick {
+                return Vec::new();
+            }
             let mut emotes = Vec::new();
             for (scope, endpoint) in [
                 "https://api.frankerfacez.com/v1/set/global".into(),
@@ -272,7 +285,7 @@ pub fn load(room: &str, session: Option<&Session>, offline: bool) -> Assets {
             let mut emotes = Vec::new();
             for (scope, endpoint) in [
                 "https://7tv.io/v3/emote-sets/global".into(),
-                format!("https://7tv.io/v3/users/twitch/{room}"),
+                format!("https://7tv.io/v3/users/{}/{room}", if kick { "kick" } else { "twitch" }),
             ]
             .into_iter()
             .enumerate()
@@ -318,7 +331,7 @@ pub fn load(room: &str, session: Option<&Session>, offline: bool) -> Assets {
             }
             emotes
         });
-        let twitch = scope.spawn(|| twitch_assets(&agent, room, session, offline));
+        let twitch = scope.spawn(|| if kick { Assets::default() } else { twitch_assets(&agent, room, session, offline) });
         let mut result = twitch.join().unwrap_or_default();
         // Electron's precedence: 7TV, then FFZ, then BTTV; within each, the
         // channel's set over the global one (listed later, so it replaces).

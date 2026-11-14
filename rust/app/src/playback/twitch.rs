@@ -219,7 +219,7 @@ fn attribute(list: &str, wanted: &str) -> Option<String> {
 /// Qualities named the way Streamlink names them: Twitch's `IVS-NAME` (or,
 /// in the older layout, the video group's NAME without " (source)").
 /// Highest bandwidth first; audio only last.
-fn parse_master(text: &str) -> Vec<Variant> {
+pub fn parse_master(text: &str) -> Vec<Variant> {
     let mut names: Vec<(String, String)> = Vec::new();
     let mut variants = Vec::new();
     let mut pending: Option<(String, u64)> = None;

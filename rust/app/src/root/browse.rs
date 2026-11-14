@@ -56,6 +56,11 @@ pub(super) struct SearchState {
     pub typing: Option<Task<()>>,
     pub task: Option<Task<()>>,
     pub page_task: Option<Task<()>>,
+    /// Kick channels for the same query, searched alongside, signed in or not.
+    pub kick_quick: Vec<FollowedChannel>,
+    pub kick_full: Vec<FollowedChannel>,
+    pub kick_loading: bool,
+    pub kick_task: Option<Task<()>>,
 }
 
 const QUICK_CHANNELS: usize = 6;
@@ -253,7 +258,14 @@ impl Root {
         self.search.query = query.clone();
         self.search.open = query.chars().count() >= 2;
         self.search.quick = SearchResults::default();
+        self.search.kick_quick.clear();
         self.search.error = None;
+        if self.search.open {
+            self.search_kick(query.clone(), false, cx);
+        } else {
+            self.search.kick_task = None;
+            self.search.kick_loading = false;
+        }
         if !self.search.open || !matches!(self.auth, Auth::SignedIn(_)) {
             self.search.quick_loading = false;
             self.search.typing = None;
@@ -288,10 +300,49 @@ impl Root {
         cx.notify();
     }
 
+    /// Kick's channel search for `query`, into the dropdown or the page.
+    fn search_kick(&mut self, query: String, full: bool, cx: &mut Context<Self>) {
+        self.search.kick_loading = true;
+        self.search.kick_task = Some(cx.spawn(async move |this, cx| {
+            // Each lookup starts Streamlink, so wait for typing to settle.
+            if !full {
+                cx.background_executor().timer(std::time::Duration::from_millis(700)).await;
+            }
+            let asked = query.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::kick::search(&query) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.search.query != asked {
+                    return;
+                }
+                this.search.kick_loading = false;
+                let channels: Vec<FollowedChannel> = result
+                    .map(|channels| channels.iter().map(crate::kick::Channel::followed).collect())
+                    .unwrap_or_default();
+                if full {
+                    this.search.kick_full = channels;
+                } else {
+                    this.search.kick_quick = channels.into_iter().take(QUICK_CHANNELS).collect();
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     /// Enter in the top box: the results page when signed in; otherwise (or
-    /// for an exact login with no sign-in) open the channel directly.
+    /// for an exact login with no sign-in) open the channel directly. A Kick
+    /// address or `kick:name` opens that Kick channel.
     pub(super) fn submit_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.search_text(cx);
+        if let Some(key) = crate::kick::key_from_text(&query) {
+            self.search.open = false;
+            let name = key.trim_start_matches(crate::kick::PREFIX).to_owned();
+            self.play(&key, name.into(), window, cx);
+            return;
+        }
         let login = query.to_ascii_lowercase();
         if !matches!(self.auth, Auth::SignedIn(_)) {
             if is_login(&login) {
@@ -313,6 +364,8 @@ impl Root {
         self.search.full_loading = true;
         self.search.error = None;
         self.search.query = query.clone();
+        self.search.kick_full.clear();
+        self.search_kick(query.clone(), true, cx);
         let asked = query.clone();
         let task = self.helix_task(
             cx,
@@ -381,6 +434,15 @@ impl Root {
             self.search.open.then_some(&self.search.quick),
             (self.section == Section::Search && self.playing.is_none()).then_some(&self.search.full),
         ];
+        let kick = [
+            self.search.open.then_some(&self.search.kick_quick),
+            (self.section == Section::Search && self.playing.is_none()).then_some(&self.search.kick_full),
+        ];
+        for channel in kick.into_iter().flatten().flatten() {
+            if let Some(url) = &channel.profile_image_url {
+                wanted.push((url.clone(), 0));
+            }
+        }
         for results in results.into_iter().flatten() {
             for channel in &results.channels {
                 if let Some(url) = &channel.profile_image_url {
@@ -717,7 +779,30 @@ impl Root {
                     ),
             );
         }
-        if results.channels.is_empty() && results.categories.is_empty() && self.search.error.is_none() {
+        if !self.search.kick_full.is_empty() {
+            let now = auth::now();
+            page = page.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(section_heading("KICK CHANNELS"))
+                    .child(
+                        div().flex().flex_wrap().gap(px(14.)).children(
+                            self.search
+                                .kick_full
+                                .iter()
+                                .map(|channel| self.search_channel_card(channel, channel_width, now, cx)),
+                        ),
+                    ),
+            );
+        }
+        if results.channels.is_empty()
+            && results.categories.is_empty()
+            && self.search.kick_full.is_empty()
+            && !self.search.kick_loading
+            && self.search.error.is_none()
+        {
             page = page.child(note("No channels or categories found."));
         }
         page.into_any_element()
@@ -782,18 +867,36 @@ impl Root {
                     .on_click(cx.listener(|this, _, window, cx| this.go_to_typed_channel(window, cx))),
             );
         }
+        let kick_rows = |mut panel: gpui::Stateful<Div>| {
+            if !self.search.kick_quick.is_empty() {
+                panel = panel.child(dropdown_heading("Kick channels"));
+                for channel in &self.search.kick_quick {
+                    let login = channel.login.clone();
+                    let name = SharedString::from(channel.display_name.clone());
+                    panel = panel.child(
+                        dropdown_row(SharedString::from(format!("search-kick-{}", channel.id)))
+                            .child(self.avatar(channel.profile_image_url.as_deref(), 32.))
+                            .child(channel_text(channel, now, 13.))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.search.open = false;
+                                this.play(&login, name.clone(), window, cx);
+                            })),
+                    );
+                }
+            }
+            panel
+        };
         if !signed_in {
             return Some(
-                panel
-                    .child(dropdown_state("Sign in to search Twitch channels and categories."))
+                kick_rows(panel.child(dropdown_state("Sign in to search Twitch channels and categories.")))
                     .into_any_element(),
             );
         }
         if self.search.quick_loading {
-            return Some(panel.child(dropdown_state("Searching Twitch…")).into_any_element());
+            return Some(kick_rows(panel.child(dropdown_state("Searching Twitch…"))).into_any_element());
         }
         if let Some(error) = &self.search.error {
-            return Some(panel.child(dropdown_state(error.clone())).into_any_element());
+            return Some(kick_rows(panel.child(dropdown_state(error.clone()))).into_any_element());
         }
         if !results.categories.is_empty() {
             panel = panel.child(dropdown_heading("Categories"));
@@ -832,7 +935,12 @@ impl Root {
                 );
             }
         }
-        if results.channels.is_empty() && results.categories.is_empty() {
+        panel = kick_rows(panel);
+        if results.channels.is_empty()
+            && results.categories.is_empty()
+            && self.search.kick_quick.is_empty()
+            && !self.search.kick_loading
+        {
             panel = panel.child(dropdown_state("No channels or categories found."));
         }
         Some(panel.into_any_element())

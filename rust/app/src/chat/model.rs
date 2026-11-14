@@ -311,6 +311,9 @@ pub enum Part {
 }
 
 fn twitch_url(id: &str) -> String {
+    if let Some(id) = id.strip_prefix("kick-") {
+        return format!("https://files.kick.com/emotes/{id}/fullsize");
+    }
     format!("https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/2.0")
 }
 

@@ -229,8 +229,8 @@ impl GpuPlayback {
         }
     }
     pub fn new(login: &str, quality: &str, compression: bool) -> Result<Self> {
-        if !crate::format::is_login(login) {
-            bail!("Invalid Twitch channel.");
+        if !crate::format::is_channel(login) {
+            bail!("Invalid channel.");
         }
         let quality = if resolver::is_quality(quality) {
             quality

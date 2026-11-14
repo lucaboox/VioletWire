@@ -2,6 +2,7 @@ mod assets;
 mod connection;
 mod flow;
 mod history;
+mod kick;
 mod profile;
 pub mod model;
 mod view;
@@ -9,7 +10,7 @@ pub(crate) use assets::image_url as is_image_url;
 pub use view::Chat;
 
 pub fn probe(login: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(crate::format::is_login(login), "Invalid Twitch channel");
+    anyhow::ensure!(crate::format::is_channel(login), "Invalid channel");
     let connection = connection::Connection::new(login);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
     let (mut connected, mut count, mut emotes, mut room) = (false, 0, 0, String::new());

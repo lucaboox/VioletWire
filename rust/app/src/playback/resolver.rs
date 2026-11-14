@@ -79,6 +79,7 @@ fn remember(login: &str, quality: &str, resolved: &Resolved) {
 /// Starts looking a channel up before it is clicked (Electron's hover
 /// pre-resolve). The answer waits in the cache for [`resolve`].
 pub fn preresolve(login: &str, quality: &str) {
+    // Kick lookups start Streamlink; not worth it for a hover.
     if !crate::format::is_login(login) || !is_quality(quality) {
         return;
     }
@@ -237,6 +238,17 @@ pub fn probe_cold(login: &str) -> Result<()> {
         .context("No playable stream was found.")?;
     Ok(())
 }
+/// A Kick channel's qualities, from Streamlink's Kick plugin.
+fn kick(slug: &str, quality: &str) -> Result<Resolved> {
+    let variants = super::kick::streams(slug)?;
+    let variant = super::twitch::choose(&variants, quality).context("Kick's playlist listed no qualities.")?;
+    Ok(Resolved {
+        url: variant.url.clone(),
+        qualities: variants.iter().map(|variant| variant.name.clone()).collect(),
+        quality: if variant.name == quality { variant.name.clone() } else { "best".to_owned() },
+    })
+}
+
 pub fn resolve(login: &str, quality: &str) -> Result<Resolution> {
     lookup(login, quality, false)
 }
@@ -247,8 +259,8 @@ pub fn resolve_fresh(login: &str, quality: &str) -> Result<Resolution> {
 }
 
 fn lookup(login: &str, quality: &str, fresh: bool) -> Result<Resolution> {
-    if !crate::format::is_login(login) {
-        bail!("Invalid Twitch channel.");
+    if !crate::format::is_channel(login) {
+        bail!("Invalid channel.");
     }
     if !is_quality(quality) {
         bail!("Invalid stream quality.");
@@ -257,6 +269,19 @@ fn lookup(login: &str, quality: &str, fresh: bool) -> Result<Resolution> {
     let cancelled = Arc::new(AtomicBool::new(false));
     if !fresh && let Some(resolved) = cached(&login.to_ascii_lowercase(), quality, true) {
         let _ = send.try_send(Ok(resolved));
+        return Ok(Resolution { result, cancelled });
+    }
+    // Kick goes through Streamlink on its own thread, so a slow browser
+    // check never holds up Twitch lookups.
+    if let Some(slug) = crate::kick::slug(login) {
+        let (slug, quality, key) = (slug.to_owned(), quality.to_owned(), login.to_ascii_lowercase());
+        std::thread::Builder::new().name("vw-kick-lookup".into()).spawn(move || {
+            let result = kick(&slug, &quality);
+            if let Ok(resolved) = &result {
+                remember(&key, &quality, resolved);
+            }
+            let _ = send.try_send(result);
+        })?;
         return Ok(Resolution { result, cancelled });
     }
     warm_up();

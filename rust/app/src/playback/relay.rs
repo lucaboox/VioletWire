@@ -764,7 +764,11 @@ fn parse(text: &str, base: &str) -> Parsed {
         } else if line.starts_with("#EXT-X-MAP:") {
             map_tag = Some(line.to_owned());
             parsed.fmp4 = true;
-        } else if let Some(hint) = line.strip_prefix("#EXT-X-TWITCH-PREFETCH:") {
+        } else if let Some(hint) = line
+            .strip_prefix("#EXT-X-TWITCH-PREFETCH:")
+            // Amazon IVS (Kick) spells it without TWITCH.
+            .or_else(|| line.strip_prefix("#EXT-X-PREFETCH:"))
+        {
             let Some(previous) = parsed.segments.last() else {
                 continue;
             };

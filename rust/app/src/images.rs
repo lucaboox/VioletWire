@@ -16,8 +16,8 @@ use crate::twitch::helix::is_twitch_image_url;
 const MAX_IMAGE_BYTES: u64 = 4 * 1024 * 1024;
 
 pub fn fetch(agent: &ureq::Agent, url: &str) -> Result<Arc<Image>> {
-    if !is_twitch_image_url(url) {
-        bail!("Refused an image outside Twitch's CDN.");
+    if !is_twitch_image_url(url) && !crate::kick::is_image_url(url) {
+        bail!("Refused an image outside Twitch's and Kick's CDNs.");
     }
     let mut response = agent.get(url).call().context("Image request failed.")?;
     if !response.status().is_success() {

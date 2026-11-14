@@ -498,6 +498,8 @@ fn media_url(url: &str) -> bool {
                 "cloudfront.net",
                 "akamaized.net",
                 "akamaihd.net",
+                // Amazon IVS, which carries Kick.
+                "live-video.net",
             ]
             .iter()
             .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))

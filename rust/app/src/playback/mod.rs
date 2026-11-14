@@ -6,6 +6,7 @@ mod byte_stream;
 mod compressor;
 pub mod gpu;
 mod job;
+pub mod kick;
 mod media_source;
 mod mp4;
 mod pipeline;
@@ -14,6 +15,6 @@ pub mod resolver;
 mod shared;
 mod tools;
 mod ts;
-mod twitch;
+pub(crate) mod twitch;
 
 pub use pipeline::{Pipeline, Watch};
