@@ -226,6 +226,26 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
     Ok(Arc::new(RenderImage::new(decoded)))
 }
 
+/// A link preview's picture: its first frame, at most 360 by 200.
+pub fn decode_preview(bytes: &[u8]) -> Result<Arc<RenderImage>> {
+    if looks_like_svg(bytes) {
+        bail!("Vector images are not previewed.");
+    }
+    sniff(bytes).context("Unsupported preview image.")?;
+    let (width, height) = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()?
+        .into_dimensions()?;
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 40_000_000 {
+        bail!("Preview image is too large.");
+    }
+    let still = image::load_from_memory(bytes).context("Unreadable preview image.")?;
+    let mut still = still.thumbnail(360, 200).into_rgba8();
+    for pixel in still.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+    Ok(Arc::new(RenderImage::new(vec![Frame::new(still)])))
+}
+
 /// A flipped or rotated copy of an emote, for Electron's emote modifiers
 /// (`h!`, `v!`, `l!`, `r!` and FFZ's flip flags). Every frame keeps its delay.
 pub fn transformed(

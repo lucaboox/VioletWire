@@ -438,6 +438,34 @@ fn playback_section(settings: &Preferences, cx: &Context<Settings>) -> impl Into
         ))
 }
 
+/// Electron's "Generic link previews" card.
+fn link_preview_card(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElement {
+    let enabled = settings.generic_link_previews;
+    card(
+        "Generic link previews",
+        "Show titles, descriptions and images from any public website. The website sees your IP address; VioletWire caps downloads and never runs the page's scripts. Clips, YouTube and image links always preview.",
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .when(enabled, |row| {
+                row.child(choice(
+                    &[("preview-ctrl", "ctrl", "Ctrl"), ("preview-alt", "alt", "Alt"), ("preview-hover", "hover", "Hover")],
+                    match settings.generic_link_preview_activation.as_str() {
+                        "alt" => "alt",
+                        "hover" => "hover",
+                        _ => "ctrl",
+                    },
+                    |s, mode| s.generic_link_preview_activation = mode.into(),
+                    cx,
+                ))
+            })
+            .child(toggle("generic-previews", enabled).on_click(cx.listener(|_, _, _, cx| {
+                preferences::update(cx, |s| s.generic_link_previews = !s.generic_link_previews)
+            }))),
+    )
+}
+
 fn chat_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElement {
     let history = stepper(
         "history-down",
@@ -499,6 +527,7 @@ fn chat_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElem
                 preferences::update(cx, |s| s.chat_on_left = !s.chat_on_left)
             })),
         ))
+        .child(link_preview_card(settings, cx))
         .child(card(
             "Deleted messages",
             "Replace a removed message, or keep its text faded.",

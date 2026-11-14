@@ -3,6 +3,7 @@ mod connection;
 mod flow;
 mod history;
 mod kick;
+mod preview;
 mod profile;
 pub mod model;
 mod view;

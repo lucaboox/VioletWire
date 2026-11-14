@@ -35,6 +35,13 @@ enum RailMark {
     Favorites,
 }
 
+struct LinkHover {
+    url: String,
+    at: gpui::Point<gpui::Pixels>,
+    preview: Option<super::preview::Preview>,
+    _task: Task<()>,
+}
+
 #[derive(Clone)]
 struct Pinned {
     message: Message,
@@ -192,6 +199,8 @@ pub struct Chat {
     pinned: Option<Pinned>,
     pinned_hidden: Option<String>,
     _pins: Option<Task<()>>,
+    /// The chat link under the pointer and its preview, once found.
+    link_hover: Option<LinkHover>,
     history_loaded: usize,
     _subscriptions: Vec<Subscription>,
 }
@@ -227,11 +236,121 @@ impl Chat {
         }
     }
 
+    fn on_link_hover(&self, cx: &Context<Self>) -> super::flow::OnLinkHover {
+        let view = cx.entity().downgrade();
+        std::rc::Rc::new(move |link, window, cx| {
+            let modifiers = window.modifiers();
+            let _ = view.update(cx, |chat, cx| chat.hover_link(link.map(|(url, at)| (url.to_owned(), at)), modifiers, cx));
+        })
+    }
+
+    /// Starts (or drops) the preview for the link under the pointer, after a
+    /// short pause so passing over links fetches nothing.
+    fn hover_link(&mut self, link: Option<(String, gpui::Point<gpui::Pixels>)>, modifiers: gpui::Modifiers, cx: &mut Context<Self>) {
+        let Some((url, at)) = link else {
+            if self.link_hover.take().is_some() {
+                cx.notify();
+            }
+            return;
+        };
+        if self.link_hover.as_ref().is_some_and(|hover| hover.url == url) {
+            return;
+        }
+        let prefs = crate::preferences::get(cx);
+        let generic = prefs.generic_link_previews
+            && match prefs.generic_link_preview_activation.as_str() {
+                "hover" => true,
+                "alt" => modifiers.alt,
+                _ => modifiers.control,
+            };
+        let session = self.session.clone();
+        let wanted = url.clone();
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(300)).await;
+            let found = cx
+                .background_executor()
+                .spawn(async move { super::preview::resolve(&wanted, session.as_ref(), generic) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(hover) = &mut this.link_hover
+                    && hover.preview.is_none()
+                {
+                    hover.preview = found;
+                    cx.notify();
+                }
+            });
+        });
+        self.link_hover = Some(LinkHover { url, at, preview: None, _task: task });
+        cx.notify();
+    }
+
+    /// Electron's link preview tooltip: picture, title and details.
+    fn link_preview(&self) -> Option<AnyElement> {
+        let hover = self.link_hover.as_ref()?;
+        let preview = hover.preview.clone()?;
+        let panel = div()
+            .w(px(320.))
+            .flex()
+            .flex_col()
+            .rounded(px(10.))
+            .overflow_hidden()
+            .border_1()
+            .border_color(theme::button_border())
+            .bg(theme::popup())
+            .shadow_xl()
+            .when_some(preview.image.clone(), |panel, image| {
+                panel.child(
+                    div()
+                        .w_full()
+                        .h(px(170.))
+                        .bg(rgb(0x0e0e10))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(img(ImageSource::Render(image)).max_w_full().max_h_full().object_fit(ObjectFit::Contain)),
+                )
+            })
+            .child(
+                div()
+                    .p(px(10.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::violet_hover())
+                            .child(preview.kind.to_uppercase()),
+                    )
+                    .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(preview.title.clone()))
+                    .when_some(preview.detail.clone(), |v, detail| {
+                        v.child(div().text_size(px(11.)).text_color(theme::text_dim()).child(detail))
+                    }),
+            );
+        Some(
+            gpui::deferred(
+                gpui::anchored()
+                    .position(hover.at + gpui::point(px(0.), px(18.)))
+                    .anchor(if self.preferences.chat_on_left { gpui::Corner::TopLeft } else { gpui::Corner::TopRight })
+                    .snap_to_window_with_margin(px(8.))
+                    .child(panel),
+            )
+            .with_priority(4)
+            .into_any_element(),
+        )
+    }
+
     fn on_user(&self, cx: &Context<Self>) -> super::flow::OnUser {
         let view = cx.entity().downgrade();
         std::rc::Rc::new(move |login, at, _, cx| {
             let _ = view.update(cx, |chat, cx| chat.open_card(login, at, cx));
         })
+    }
+
+    /// Debug aid: shows the preview for `url` as if it were hovered.
+    pub fn probe_preview(&mut self, url: &str, cx: &mut Context<Self>) {
+        self.hover_link(Some((url.to_owned(), gpui::point(px(1880.), px(300.)))), gpui::Modifiers::default(), cx);
     }
 
     pub fn probe_card(&mut self, cx: &mut Context<Self>) {
@@ -724,6 +843,7 @@ impl Chat {
             pinned: None,
             pinned_hidden: None,
             _pins: None,
+            link_hover: None,
             history_loaded: 0,
             _subscriptions: vec![submitted, picker_changed, input_changed, release],
         };
@@ -1483,6 +1603,7 @@ impl Chat {
             format!("row-{index}")
         };
         let mut flow = super::flow::MessageFlow::new(self.preferences.chat_font_size);
+        flow.on_link_hover = Some(self.on_link_hover(cx));
         if self.preferences.chat_timestamps
             && let Some(time) = message.sent_at.and_then(model::local_time)
         {
@@ -2277,6 +2398,7 @@ impl Render for Chat {
         let picker = self.picker.then(|| self.picker(cx));
         let card = self.user_card(cx);
         let pinned = self.pinned_banner(cx);
+        let link_preview = self.link_preview();
         let pin_hidden = self.pinned.as_ref().is_some_and(|pin| self.pinned_hidden.as_deref() == Some(pin.message.id.as_str()));
         let menu = self
             .menu
@@ -2313,9 +2435,14 @@ impl Render for Chat {
             .border_color(theme::border())
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                 this.hovered = *hovered;
+                // Leaving chat ends any link preview.
+                if !*hovered {
+                    this.link_hover = None;
+                }
                 cx.notify();
             }))
             .when_some(card, |v, card| v.child(card))
+            .when_some(link_preview, |v, preview| v.child(preview))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" && this.card.is_some() {
                     this.close_card(cx);

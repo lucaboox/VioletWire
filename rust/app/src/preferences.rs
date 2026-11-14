@@ -64,6 +64,11 @@ pub struct Preferences {
     pub platform_filter: String,
     /// Which services the search covers (Electron's `searchPlatformFilter`).
     pub search_platform: String,
+    /// Previews of any public page, not just known sites; off by default,
+    /// since the linked site then sees the viewer's address.
+    pub generic_link_previews: bool,
+    /// When a generic preview shows: `ctrl`, `alt` (held) or `hover`.
+    pub generic_link_preview_activation: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -124,6 +129,8 @@ impl Default for Preferences {
             browse_kick: false,
             platform_filter: "both".into(),
             search_platform: "both".into(),
+            generic_link_previews: false,
+            generic_link_preview_activation: "ctrl".into(),
         }
     }
 }
@@ -179,6 +186,9 @@ impl Preferences {
             self.chat_deleted_message_style = "placeholder".into();
         }
         self.mention_sound_volume = self.mention_sound_volume.min(200);
+        if !matches!(self.generic_link_preview_activation.as_str(), "ctrl" | "alt" | "hover") {
+            self.generic_link_preview_activation = "ctrl".into();
+        }
         for platform in [&mut self.platform_filter, &mut self.search_platform] {
             if !matches!(platform.as_str(), "twitch" | "kick" | "both") {
                 *platform = "both".into();

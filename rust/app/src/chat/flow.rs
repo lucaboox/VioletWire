@@ -30,11 +30,14 @@ struct Layout {
 }
 /// A clicked chatter name: their login and where the click landed.
 pub type OnUser = Rc<dyn Fn(&str, Point<Pixels>, &mut Window, &mut App)>;
+/// The web link under the pointer, and where, or `None` once it leaves.
+pub type OnLinkHover = Rc<dyn Fn(Option<(&str, Point<Pixels>)>, &mut Window, &mut App)>;
 /// Marks a name token: never a web address, so `cx.open_url` never sees it.
 const USER_LINK: &str = "violetwire-user:";
 
 pub struct MessageFlow {
     on_user: Option<OnUser>,
+    pub on_link_hover: Option<OnLinkHover>,
     font_size: Pixels,
     tokens: Vec<Token>,
     images: Vec<AnyElement>,
@@ -45,6 +48,7 @@ impl MessageFlow {
     pub fn new(font_size: u8) -> Self {
         Self {
             on_user: None,
+            on_link_hover: None,
             font_size: px(f32::from(font_size)),
             tokens: Vec::new(),
             images: Vec::new(),
@@ -355,10 +359,42 @@ impl Element for MessageFlow {
             }
         }
         type LinkPress = Rc<RefCell<Option<(String, Point<Pixels>)>>>;
-        window.with_element_state::<LinkPress, _>(
+        type Hovered = Rc<RefCell<Option<String>>>;
+        window.with_element_state::<(LinkPress, Hovered), _>(
             global_id.expect("Message flow has an ID"),
             |state, window| {
-                let state = state.unwrap_or_default();
+                let (state, hovered) = state.unwrap_or_default();
+                // Which web link of this message the pointer is over, for
+                // link previews.
+                if let Some(on_hover) = self.on_link_hover.clone() {
+                    let links: Vec<(gpui::Hitbox, String)> = self
+                        .links
+                        .iter()
+                        .filter(|(_, link)| !link.starts_with(USER_LINK))
+                        .cloned()
+                        .collect();
+                    if !links.is_empty() {
+                        let hovered = hovered.clone();
+                        window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, window, cx| {
+                            if phase != gpui::DispatchPhase::Bubble {
+                                return;
+                            }
+                            let now = links
+                                .iter()
+                                .find(|(hitbox, _)| hitbox.is_hovered(window))
+                                .map(|(_, link)| link.clone());
+                            if *hovered.borrow() == now {
+                                return;
+                            }
+                            let was = hovered.replace(now.clone());
+                            match &now {
+                                Some(link) => on_hover(Some((link, event.position)), window, cx),
+                                None if was.is_some() => on_hover(None, window, cx),
+                                None => {}
+                            }
+                        });
+                    }
+                }
                 let on_user = self.on_user.clone();
                 for (hitbox, link) in &self.links {
                     window.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
@@ -397,7 +433,7 @@ impl Element for MessageFlow {
                         }
                     });
                 }
-                ((), state)
+                ((), (state, hovered))
             },
         );
     }

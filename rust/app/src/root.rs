@@ -2514,6 +2514,14 @@ impl Render for Root {
                 self.activate_tile(0, cx);
             });
         }
+        // Debug aid: `VIOLETWIRE_PROBE_PREVIEW=url` previews a link in chat.
+        if let Ok(url) = std::env::var("VIOLETWIRE_PROBE_PREVIEW")
+            && let Some(playing) = self.current()
+        {
+            static PREVIEWED: std::sync::Once = std::sync::Once::new();
+            let chat = playing.chat.clone();
+            PREVIEWED.call_once(|| chat.update(cx, |chat, cx| chat.probe_preview(&url, cx)));
+        }
         // Debug aid: `VIOLETWIRE_PROBE_SEARCH=text` types into the top search box.
         if let Ok(text) = std::env::var("VIOLETWIRE_PROBE_SEARCH") {
             static TYPED: std::sync::Once = std::sync::Once::new();
