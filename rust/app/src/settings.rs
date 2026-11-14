@@ -5,6 +5,7 @@ use crate::{
     ui::{self, ButtonStyle, Icon},
 };
 use gpui::{Context, Entity, Render, Subscription, Window, div, prelude::*, px, rgb, rgba};
+#[derive(Clone)]
 pub enum Event {
     Closed,
     /// Open the keyboard shortcuts list (and close settings).
@@ -18,6 +19,20 @@ pub enum Event {
     LoadChatColors,
     /// Set a name colour: Twitch's colour name and its hex value.
     SetChatColor { kick: bool, name: &'static str, hex: &'static str },
+    CheckForUpdates,
+    InstallUpdate,
+}
+
+/// What Settings > About says about updates.
+#[derive(Clone, Default)]
+pub enum UpdateState {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate,
+    Available(String),
+    Installing(String),
+    Failed(String),
 }
 
 /// Electron's `TWITCH_CHAT_COLORS`: Twitch's named chat colours, which Kick
@@ -74,12 +89,51 @@ pub struct Settings {
     account: Option<String>,
     twitch_color: ChatColor,
     kick_color: ChatColor,
+    update: UpdateState,
 }
 
 impl Settings {
     pub fn probe_section(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
         cx.notify();
+    }
+
+    pub fn set_update(&mut self, update: UpdateState, cx: &mut Context<Self>) {
+        self.update = update;
+        cx.notify();
+    }
+
+    /// Electron's update card: this version, and a newer one when released.
+    fn update_card(&self, cx: &Context<Self>) -> impl IntoElement {
+        let (description, button): (String, Option<(&'static str, Event)>) = match &self.update {
+            UpdateState::Idle => (
+                format!("Version {}. VioletWire checks GitHub releases for updates.", crate::updates::current()),
+                Some(("Check now", Event::CheckForUpdates)),
+            ),
+            UpdateState::Checking => ("Checking for updates…".into(), None),
+            UpdateState::UpToDate => (
+                format!("Version {} is the newest.", crate::updates::current()),
+                Some(("Check again", Event::CheckForUpdates)),
+            ),
+            UpdateState::Available(version) => (
+                format!("Version {version} is available (you have {}).", crate::updates::current()),
+                Some(("Install and restart", Event::InstallUpdate)),
+            ),
+            UpdateState::Installing(version) => (format!("Downloading and checking {version}…"), None),
+            UpdateState::Failed(error) => (error.clone(), Some(("Try again", Event::CheckForUpdates))),
+        };
+        card(
+            "Updates",
+            description,
+            match button {
+                Some((label, event)) => ui::button("update-action", label, None, ButtonStyle::Primary)
+                    .px_3()
+                    .h(px(30.))
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(event.clone())))
+                    .into_any_element(),
+                None => div().into_any_element(),
+            },
+        )
     }
 
     pub fn set_chat_color(&mut self, kick: bool, color: ChatColor, cx: &mut Context<Self>) {
@@ -211,7 +265,13 @@ impl Render for Settings {
                 .into_any_element(),
             Section::Emotes => emotes_section(&settings, cx).into_any_element(),
             Section::Appearance => appearance_section(&settings, cx).into_any_element(),
-            Section::About => about_section().into_any_element(),
+            Section::About => div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(about_section())
+                .child(self.update_card(cx))
+                .into_any_element(),
         };
         let nav_button = |section: Section, label: &'static str, icon: Icon, id: &'static str, cx: &mut Context<Self>| {
             let active = self.section == section;
@@ -770,7 +830,7 @@ fn about_section() -> impl IntoElement {
     section("ABOUT", "VioletWire", "A Windows Twitch viewer.")
         .child(card(
             "Version",
-            concat!("Rust preview ", env!("CARGO_PKG_VERSION"), ", built with GPUI."),
+            concat!("VioletWire ", env!("CARGO_PKG_VERSION"), ", built in Rust with GPUI."),
             div(),
         ))
         .child(card(

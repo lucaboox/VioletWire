@@ -1,6 +1,6 @@
 [package]
 name = "violetwire"
-version = "0.1.0"
+version = "0.3.4-alpha.25"
 description = "VioletWire, a Windows Twitch viewer, rebuilt in Rust with GPUI"
 edition.workspace = true
 license.workspace = true
@@ -27,6 +27,7 @@ unicode-segmentation = "1"
 resvg = { version = "0.45.1", default-features = false }
 wry = { version = "0.57.2", default-features = false }
 tungstenite = { version = "0.30.0", default-features = false, features = ["native-tls", "handshake"] }
+sha2 = "0.10"
 
 [build-dependencies]
 winresource = "0.1.34"

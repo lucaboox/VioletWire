@@ -105,6 +105,9 @@ pub struct Root {
     chat_popped: Option<gpui::AnyWindowHandle>,
     /// The window the video was popped out into, if any.
     player_popped: Option<gpui::AnyWindowHandle>,
+    /// A newer release found on GitHub, ready to install.
+    update: Option<crate::updates::Update>,
+    update_task: Option<Task<()>>,
     /// Refusals in a row of the stored Kick account; three sign it out.
     kick_refusals: u8,
     _kick_info: Option<Task<()>>,
@@ -283,6 +286,8 @@ impl Root {
                 }
                 crate::settings::Event::KickSignIn => this.kick_sign_in(cx),
                 crate::settings::Event::LoadChatColors => this.load_chat_colors(cx),
+                crate::settings::Event::CheckForUpdates => this.check_updates(false, cx),
+                crate::settings::Event::InstallUpdate => this.install_update(cx),
                 &crate::settings::Event::SetChatColor { kick, name, hex } => this.set_chat_color(kick, name, hex, cx),
                 crate::settings::Event::KickSignOut => this.kick_sign_out(cx),
             }
@@ -315,6 +320,8 @@ impl Root {
             _clock: None,
             chat_popped: None,
             player_popped: None,
+            update: None,
+            update_task: None,
             kick_refusals: 0,
             _kick_info: None,
             account_image: None,
@@ -345,6 +352,11 @@ impl Root {
         };
         root.restore(cx);
         root.start_kick(cx);
+        // A quiet look for updates shortly after launch.
+        root.update_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(20)).await;
+            let _ = this.update(cx, |this, cx| this.check_updates(true, cx));
+        }));
         // Closing the main window takes the chat window with it.
         cx.on_release(|this, cx| {
             this.close_chat_window(cx);
@@ -592,6 +604,58 @@ impl Root {
             _controls: controls,
             _chat_controls: chat_controls,
         }
+    }
+
+    // ----- Updates ---------------------------------------------------------------
+
+    fn show_update(&mut self, state: crate::settings::UpdateState, cx: &mut Context<Self>) {
+        self.settings.update(cx, |settings, cx| settings.set_update(state, cx));
+    }
+
+    /// Looks for a newer Rust release. `quiet`: only a found update is shown.
+    fn check_updates(&mut self, quiet: bool, cx: &mut Context<Self>) {
+        if !quiet {
+            self.show_update(crate::settings::UpdateState::Checking, cx);
+        }
+        self.update_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx.background_executor().spawn(async { crate::updates::check() }).await;
+            let _ = this.update(cx, |this, cx| {
+                use crate::settings::UpdateState;
+                match result {
+                    Ok(Some(update)) => {
+                        let version = update.version.clone();
+                        this.update = Some(update);
+                        this.show_update(UpdateState::Available(version.clone()), cx);
+                        this.show_notice(format!("VioletWire {version} is available. Install it from Settings > About."), cx);
+                    }
+                    Ok(None) if !quiet => this.show_update(UpdateState::UpToDate, cx),
+                    Err(error) if !quiet => this.show_update(UpdateState::Failed(error.to_string()), cx),
+                    _ => {}
+                }
+            });
+        }));
+    }
+
+    /// Downloads and checks the installer, starts it, and quits.
+    fn install_update(&mut self, cx: &mut Context<Self>) {
+        let Some(update) = self.update.clone() else { return };
+        self.show_update(crate::settings::UpdateState::Installing(update.version.clone()), cx);
+        self.update_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::updates::download(&update).and_then(|path| crate::updates::install(&path)) })
+                .await;
+            match result {
+                Ok(()) => {
+                    let _ = cx.update(|cx| cx.quit());
+                }
+                Err(error) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.show_update(crate::settings::UpdateState::Failed(error.to_string()), cx)
+                    });
+                }
+            }
+        }));
     }
 
     // ----- Chat name colours ------------------------------------------------

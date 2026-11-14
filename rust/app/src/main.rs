@@ -20,6 +20,7 @@ mod sound;
 mod theme;
 mod twitch;
 mod ui;
+mod updates;
 
 use gpui::{
     App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
@@ -53,6 +54,15 @@ fn main() {
         .find(|pair| pair[0] == "--app-probe-seconds")
         .and_then(|pair| pair[1].parse::<u64>().ok())
         .map(|seconds| seconds.clamp(5, 120));
+    // `--update-probe`: what the update check finds on GitHub.
+    if arguments.iter().any(|arg| arg == "--update-probe") {
+        match updates::check() {
+            Ok(Some(update)) => println!("update available: {}", update.version),
+            Ok(None) => println!("no newer Rust release (current {})", updates::current()),
+            Err(error) => println!("update check failed: {error}"),
+        }
+        return;
+    }
     if arguments.iter().any(|arg| arg == "--chat-probe") {
         if let Err(error) = chat::probe(play.as_deref().unwrap_or("summit1g")) {
             eprintln!("{error}");

@@ -1,0 +1,90 @@
+name: Release VioletWire (Rust)
+
+# Runs only for `rust-v<version>` tags, so Electron's `v*` releases are
+# untouched. The release carries the Rust installer and violetwire-rust.json,
+# which is what the Rust app's update check looks for.
+on:
+  push:
+    tags:
+      - "rust-v*"
+
+permissions: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        # actions/checkout v7, pinned so a moved tag cannot change CI code.
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Use stable Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Check the tag matches the app version
+        shell: pwsh
+        run: |
+          $toml = Get-Content rust/app/Cargo.toml -Raw
+          $version = [regex]::Match($toml, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+          if ($env:GITHUB_REF_NAME -ne "rust-v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match rust/app/Cargo.toml version $version."
+          }
+
+      - name: Test
+        working-directory: rust
+        run: cargo test -p violetwire --locked
+
+      - name: Make sure Inno Setup is available
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: ./rust/packaging/build-installer.ps1
+
+      - name: Upload verified release payload
+        # actions/upload-artifact v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: violetwire-rust-windows-release
+          if-no-files-found: error
+          retention-days: 2
+          path: |
+            rust/target/release/installer/VioletWire-Rust-Setup-*.exe
+            rust/target/release/installer/violetwire-rust.json
+
+  publish:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download verified release payload
+        # actions/download-artifact v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: violetwire-rust-windows-release
+          path: release
+
+      - name: Publish immutable GitHub pre-release
+        shell: pwsh
+        run: |
+          if (gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY 2>$null) {
+            throw "Release $env:GITHUB_REF_NAME already exists. Publish a newer version."
+          }
+          $manifest = Get-Content release/violetwire-rust.json -Raw | ConvertFrom-Json
+          gh release create $env:GITHUB_REF_NAME "release/$($manifest.file)" release/violetwire-rust.json `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "VioletWire (Rust) $($manifest.version)" `
+            --prerelease `
+            --notes "Rust preview build $($manifest.version)."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

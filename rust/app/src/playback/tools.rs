@@ -54,6 +54,11 @@ fn streamlink_roots() -> Vec<PathBuf> {
     if let Some(root) = env::var_os("VIOLETWIRE_STREAMLINK_ROOT") {
         roots.push(PathBuf::from(root));
     }
+    // The installer ships Streamlink beside the app (as Electron's does in
+    // its resources), so nothing else needs installing.
+    if let Some(directory) = env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+        roots.push(directory.join("streamlink"));
+    }
     if let Some(local) = env::var_os("LOCALAPPDATA") {
         roots.push(Path::new(&local).join("Programs").join("Streamlink"));
     }
