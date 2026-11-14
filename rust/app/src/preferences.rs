@@ -84,6 +84,18 @@ pub struct Preferences {
     /// The newest version whose changes were shown (Electron's
     /// `lastSeenChangelogVersion`); empty until the first launch records one.
     pub last_seen_changelog_version: String,
+    /// Where the chat overlay was dragged to on the video, if anywhere
+    /// (Electron's `chatOverlayPlaced` and its geometry).
+    pub chat_overlay: Option<OverlayPlacement>,
+}
+
+/// The chat overlay's place on the video, in logical pixels from its top-left.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct OverlayPlacement {
+    pub left: f32,
+    pub top: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -151,6 +163,7 @@ impl Default for Preferences {
             emote_search_all_providers: false,
             mention_tab_behavior: "complete".into(),
             last_seen_changelog_version: String::new(),
+            chat_overlay: None,
         }
     }
 }
@@ -208,6 +221,11 @@ impl Preferences {
         self.mention_sound_volume = self.mention_sound_volume.min(200);
         if !matches!(self.emote_autocomplete_match.as_str(), "prefix" | "substring") {
             self.emote_autocomplete_match = "prefix".into();
+        }
+        if self.chat_overlay.is_some_and(|placed| {
+            ![placed.left, placed.top, placed.width, placed.height].iter().all(|value| value.is_finite() && value.abs() < 100_000.)
+        }) {
+            self.chat_overlay = None;
         }
         if !matches!(self.mention_tab_behavior.as_str(), "complete" | "cycle") {
             self.mention_tab_behavior = "complete".into();

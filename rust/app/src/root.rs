@@ -15,6 +15,7 @@ use gpui::{
 
 mod browse;
 mod mini;
+mod overlay;
 mod multi;
 mod popout;
 use browse::Section;
@@ -115,6 +116,11 @@ pub struct Root {
     /// The chat panel's edge being dragged: where the press began, and the
     /// width then (Electron's side-chat width drag).
     chat_resize: Option<(gpui::Pixels, u16)>,
+    /// The chat overlay being moved or resized, and where it is meanwhile.
+    overlay_drag: Option<overlay::OverlayDrag>,
+    overlay_live: Option<crate::preferences::OverlayPlacement>,
+    /// The video area's bounds from the last layout, for the overlay.
+    video_area: Rc<Cell<gpui::Bounds<gpui::Pixels>>>,
     /// The window the video was popped out into, if any.
     player_popped: Option<gpui::AnyWindowHandle>,
     /// A newer release found on GitHub, ready to install.
@@ -331,6 +337,9 @@ impl Root {
             changelog_open: false,
             mini: None,
             chat_resize: None,
+            overlay_drag: None,
+            overlay_live: None,
+            video_area: Rc::default(),
             changelog: crate::changelog::bundled(),
             changelog_task: None,
             hwnd: None,
@@ -2434,21 +2443,26 @@ impl Root {
             );
         }
         if self.chat_in_main() && self.overlay_chat {
-            area = area.child(
-                div()
-                    .absolute()
-                    .right_3()
-                    .top_3()
-                    .bottom(px(64.))
-                    .w(px(340.))
-                    .rounded(px(11.))
-                    .border_1()
-                    .border_color(rgba(0xffffff1a))
-                    .child(gpui::AnyView::from(playing.chat.clone())
-                            // Re-laid out only when chat changes, not on every
-                            // video frame the player draws.
-                            .cached(gpui::StyleRefinement::default().size_full())),
-            );
+            let measured = self.video_area.clone();
+            let record = measured.clone();
+            let root = cx.entity().downgrade();
+            area = area
+                .child(
+                    // A new size moves a placed overlay back inside the video.
+                    gpui::canvas(
+                        move |bounds, _, cx| {
+                            if record.replace(bounds).size != bounds.size {
+                                let _ = root.update(cx, |_, cx| cx.notify());
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                        .absolute()
+                        .size_full(),
+                )
+                // Re-laid out only when chat changes, not on every video
+                // frame the player draws.
+                .child(self.chat_overlay(gpui::AnyView::from(playing.chat.clone()), measured, cx));
         }
         let player = div()
             .flex_1()
@@ -2968,6 +2982,18 @@ impl Render for Root {
                 }
             }
         }
+        // Debug aid: `VIOLETWIRE_PROBE_OVERLAY=<left>,<top>,<width>,<height>`
+        // shows chat as the overlay, placed there as if dragged.
+        if let Ok(place) = std::env::var("VIOLETWIRE_PROBE_OVERLAY")
+            && self.playing.is_some()
+            && !self.overlay_chat
+        {
+            self.overlay_chat = true;
+            let values: Vec<f32> = place.split(',').filter_map(|value| value.trim().parse().ok()).collect();
+            if let [left, top, width, height] = values[..] {
+                self.overlay_live = Some(crate::preferences::OverlayPlacement { left, top, width, height });
+            }
+        }
         // Debug aid: `VIOLETWIRE_PROBE_MINI=1` goes Home 6 s into a stream,
         // leaving it in the mini player.
         if std::env::var_os("VIOLETWIRE_PROBE_MINI").is_some() && self.playing.is_some() {
@@ -3318,6 +3344,7 @@ impl Render for Root {
                 )
             })
             .children(self.mini_player(window, cx))
+            .children(self.overlay_drag_layer(cx))
             .when_some(self.chat_resize, |root, (start, width)| {
                 // Follows the pointer anywhere in the window until release.
                 let sidebar = sidebar_width;
