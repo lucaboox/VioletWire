@@ -261,9 +261,18 @@ impl WindowsPlatform {
                     let Some(all_windows) = all_windows.upgrade() else {
                         break;
                     };
-                    for hwnd in all_windows.read().iter() {
+                    // VioletWire patch: upstream only invalidated, leaving the paint
+                    // to WM_PAINT, which Windows synthesizes only for an idle queue
+                    // and hands to one window at a time. With a second window open
+                    // (popped-out chat) the main one went a second at a time
+                    // without a frame, stalling the video drawn in it. Updating
+                    // now delivers each window's paint every vsync.
+                    // The list is copied first: the paint waits on the UI thread,
+                    // which needs this lock to open a window.
+                    let windows: Vec<HWND> = all_windows.read().iter().map(|hwnd| hwnd.as_raw()).collect();
+                    for hwnd in windows {
                         unsafe {
-                            let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+                            let _ = RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW);
                         }
                     }
                 }

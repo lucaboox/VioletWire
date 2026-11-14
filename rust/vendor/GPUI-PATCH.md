@@ -63,3 +63,11 @@ instead of using the preceding mouse event's cached hit test. The rendered
 caption lookup and input-dispatch result are public so the hidden UI probe can
 verify caption routing without desktop input. VioletWire's drag region occludes
 the root focus listener, which otherwise prevents Windows' default drag action.
+
+The vsync thread now repaints each window with `RDW_INVALIDATE | RDW_UPDATENOW`
+instead of only invalidating it. Upstream left the paint to `WM_PAINT`, which
+Windows synthesizes only for an idle queue and hands to one window at a time:
+with a second window open (popped-out chat or player) the main window went up to
+a second at a time without a frame, so its video and per-frame callbacks
+stalled. The window list is copied before painting, because an immediate paint
+waits on the UI thread, which takes the same lock to open a window.

@@ -3217,18 +3217,24 @@ impl Render for Chat {
                         .border_b_1()
                         .border_color(theme::border())
                         .bg(theme::chat_header())
+                        // Equal-width sides keep the title centred.
                         .child(
-                            ui::icon_button(
-                                "collapse-chat",
-                                Icon::ChatClose,
-                                "Hide chat · C",
-                                false,
-                            )
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(PlayerAction::Chat))),
+                            div()
+                                .w(px(68.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .child(
+                                    ui::icon_button("collapse-chat", Icon::ChatClose, "Hide chat · C", false)
+                                        .w(px(30.))
+                                        .h(px(30.))
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(PlayerAction::Chat))),
+                                ),
                         )
                         .child(
                             div()
                                 .flex_1()
+                                .min_w_0()
                                 .flex()
                                 .justify_center()
                                 .font_weight(FontWeight::BOLD)
@@ -3236,48 +3242,36 @@ impl Render for Chat {
                                 .child("Stream Chat"),
                         )
                         .child(
-                            ui::icon_button("chat-pop-out", Icon::External, "Chat in its own window (or back)", false)
-                                .w(px(30.))
-                                .h(px(30.))
-                                .on_click(cx.listener(|_, _, _, cx| cx.emit(PlayerAction::PopOutChat))),
-                        )
-                        .child(
-                            ui::icon_button("chat-users", Icon::Users, "Users in chat", self.user_list)
-                                .w(px(30.))
-                                .h(px(30.))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.user_list = !this.user_list;
-                                    this.thread = None;
-                                    if this.user_list {
-                                        this.user_search.update(cx, |input, cx| {
-                                            input.clear(cx);
-                                            window.focus(&gpui::Focusable::focus_handle(input, cx));
-                                        });
-                                    }
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
                             div()
-                                .id("chat-status")
+                                .w(px(68.))
                                 .flex_none()
-                                .w(px(20.))
                                 .flex()
-                                .justify_center()
-                                .child(div().size(px(6.)).rounded_full().bg(
-                                    if self.state == "Connected" {
-                                        rgb(0x22c55e)
-                                    } else {
-                                        theme::text_dim()
-                                    },
-                                ))
-                                .tooltip({
-                                    let state = self.state;
-                                    move |_, cx| cx.new(|_| ui::Tooltip(state.into())).into()
-                                }),
-                        )
-                        // Balances the collapse button so the title stays centred.
-                        .child(div().w(px(34.)).flex_none()),
+                                .items_center()
+                                .justify_end()
+                                .gap(px(4.))
+                                .child(
+                                    ui::icon_button("chat-pop-out", Icon::External, "Chat in its own window (or back)", false)
+                                        .w(px(30.))
+                                        .h(px(30.))
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(PlayerAction::PopOutChat))),
+                                )
+                                .child(
+                                    ui::icon_button("chat-users", Icon::Users, "Users in chat", self.user_list)
+                                        .w(px(30.))
+                                        .h(px(30.))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.user_list = !this.user_list;
+                                            this.thread = None;
+                                            if this.user_list {
+                                                this.user_search.update(cx, |input, cx| {
+                                                    input.clear(cx);
+                                                    window.focus(&gpui::Focusable::focus_handle(input, cx));
+                                                });
+                                            }
+                                            cx.notify();
+                                        })),
+                                ),
+                        ),
                 )
             })
             .children(pinned)

@@ -70,6 +70,7 @@ impl Root {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(420.), px(820.)), cx))),
             ..Default::default()
         };
+        let started = std::time::Instant::now();
         let opened = cx.open_window(options, move |window, cx| {
             // Closing the window puts chat back beside the stream.
             window.on_window_should_close(cx, move |_, cx| {
@@ -82,6 +83,9 @@ impl Root {
             });
             cx.new(|_| ChatWindow { chat })
         });
+        if std::env::var_os("VIOLETWIRE_PLAYBACK_LOG").is_some() {
+            eprintln!("[popout] chat window opened in {} ms", started.elapsed().as_millis());
+        }
         match opened {
             Ok(handle) => {
                 self.chat_popped = Some(handle.into());

@@ -2877,6 +2877,8 @@ impl Render for Root {
                 cx.spawn(async move |this, cx| {
                     // `player:` pops the video out instead of chat; a `.png`
                     // path saves that window after ten seconds.
+                    // Once playback has settled, so a stall shows on its own.
+                    cx.background_executor().timer(Duration::from_secs(10)).await;
                     let setting = std::env::var("VIOLETWIRE_PROBE_POPOUT").unwrap_or_default();
                     let player = setting.starts_with("player");
                     let _ = this.update(cx, |this, cx| {
