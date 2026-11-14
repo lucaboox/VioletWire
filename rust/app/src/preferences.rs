@@ -59,6 +59,11 @@ pub struct Preferences {
     pub kick_account: Option<crate::kick_web::Account>,
     /// Browse shows Kick's directory rather than Twitch's.
     pub browse_kick: bool,
+    /// Which services the followed list shows: `twitch`, `kick` or `both`
+    /// (Electron's `platformFilter`).
+    pub platform_filter: String,
+    /// Which services the search covers (Electron's `searchPlatformFilter`).
+    pub search_platform: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -117,6 +122,8 @@ impl Default for Preferences {
             presets_imported: false,
             kick_account: None,
             browse_kick: false,
+            platform_filter: "both".into(),
+            search_platform: "both".into(),
         }
     }
 }
@@ -172,6 +179,11 @@ impl Preferences {
             self.chat_deleted_message_style = "placeholder".into();
         }
         self.mention_sound_volume = self.mention_sound_volume.min(200);
+        for platform in [&mut self.platform_filter, &mut self.search_platform] {
+            if !matches!(platform.as_str(), "twitch" | "kick" | "both") {
+                *platform = "both".into();
+            }
+        }
         if !matches!(self.playback_latency_mode.as_str(), "ultra-low" | "balanced") {
             self.playback_latency_mode = "ultra-low".into();
         }

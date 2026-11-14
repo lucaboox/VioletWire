@@ -31,6 +31,7 @@ SidebarClose=>"panel-left-close", SidebarOpen=>"panel-left-open",
     AudioLinesOff=>"audio-lines-off", Compass=>"compass", Check=>"check",
     ChevronDown=>"chevron-down", Scissors=>"scissors", Star=>"star", StarFilled=>"star-filled",
     Keyboard=>"keyboard", Monitor=>"monitor", Info=>"info", Globe=>"globe", Sparkles=>"sparkles", Grid=>"layout-grid",
+    Twitch=>"twitch", Kick=>"kick",
 }
 pub struct Assets;
 impl AssetSource for Assets {
@@ -55,6 +56,17 @@ pub fn icon(icon: Icon, size: f32) -> gpui::Svg {
         .flex_none()
         .text_color(theme::text_secondary())
 }
+/// Twitch's or Kick's mark in its own colour (Electron's `ProviderLogo`).
+pub fn provider_logo(kick: bool, size: f32) -> gpui::Svg {
+    svg()
+        .path(if kick { Icon::Kick.path() } else { Icon::Twitch.path() })
+        .size(px(size))
+        .flex_none()
+        .text_color(gpui::rgb(if kick { KICK_GREEN } else { TWITCH_PURPLE }))
+}
+pub const TWITCH_PURPLE: u32 = 0xa970ff;
+pub const KICK_GREEN: u32 = 0x53fc18;
+
 pub fn brand(size: f32) -> impl IntoElement {
     use gpui::{Image, ImageFormat, img};
     img(std::sync::Arc::new(Image::from_bytes(

@@ -341,19 +341,42 @@ pub fn channel(slug: &str) -> Result<Channel> {
     Ok(channel)
 }
 
-pub fn search(term: &str) -> Result<Vec<Channel>> {
+/// Channels and categories matching `term`.
+pub fn search(term: &str) -> Result<(Vec<Channel>, Vec<crate::twitch::helix::Category>)> {
     let term: String = term.chars().filter(|c| !c.is_control()).take(60).collect();
     let value = crate::playback::kick::get(&format!(
         "https://kick.com/api/search?searched_word={}",
         crate::playback::kick::encode(&term)
     ))?;
-    Ok(value["channels"]
+    // Search entries are shaped differently: `isLive`, `user.profilePic` and
+    // `recentCategories`, without viewer counts (Electron's `kickSearchSchema`).
+    let channels = value["channels"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(Channel::from_json)
+        .filter_map(|entry| {
+            let mut channel = Channel::from_json(entry)?;
+            if channel.avatar.is_none() {
+                channel.avatar = image(&entry["user"]["profilePic"]);
+            }
+            if channel.live.is_none() && entry["isLive"].as_bool() == Some(true) {
+                channel.live = Some(Live {
+                    title: String::new(),
+                    viewers: 0,
+                    category: entry["recentCategories"]
+                        .get(0)
+                        .map(|category| text(&category["name"], 60))
+                        .unwrap_or_default(),
+                    thumbnail: None,
+                    started: String::new(),
+                });
+            }
+            Some(channel)
+        })
         .take(12)
-        .collect())
+        .collect();
+    let categories = value["categories"].as_array().into_iter().flatten().filter_map(category).take(12).collect();
+    Ok((channels, categories))
 }
 
 /// Pusher's app key and cluster for Kick chat, as Kick hands them to its site.

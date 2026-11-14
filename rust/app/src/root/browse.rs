@@ -61,6 +61,8 @@ pub(super) struct SearchState {
     /// Kick channels for the same query, searched alongside, signed in or not.
     pub kick_quick: Vec<FollowedChannel>,
     pub kick_full: Vec<FollowedChannel>,
+    pub kick_categories_quick: Vec<Category>,
+    pub kick_categories_full: Vec<Category>,
     pub kick_loading: bool,
     pub kick_task: Option<Task<()>>,
 }
@@ -258,6 +260,14 @@ impl Root {
 
     pub(super) fn open_category(&mut self, category: Category, window: &mut Window, cx: &mut Context<Self>) {
         self.close_player(window, cx);
+        // Back from a category returns to that service's categories.
+        let kick = category.id.starts_with(crate::kick::PREFIX);
+        if kick != self.browse.kick {
+            self.browse.kick = kick;
+            self.browse.categories.clear();
+            self.browse.cursor = None;
+            self.browse.loaded = false;
+        }
         self.section = Section::Browse;
         self.search.open = false;
         self.browse.selected = Some(category);
@@ -348,23 +358,41 @@ impl Root {
     }
 
     /// The dropdown's results, a moment after the last key.
+    /// Which services the search covers (Electron's `searchPlatformFilter`).
+    pub(super) fn search_platform(cx: &gpui::App) -> Platform {
+        Platform::from(crate::preferences::get(cx).search_platform.as_str())
+    }
+
+    fn search_wants(&self, cx: &gpui::App) -> (bool, bool) {
+        let platform = Self::search_platform(cx);
+        (platform.twitch() && matches!(self.auth, Auth::SignedIn(_)), platform.kick())
+    }
+
     pub(super) fn search_changed(&mut self, cx: &mut Context<Self>) {
         let query = self.search_text(cx);
         if query == self.search.query && (self.search.open || query.is_empty()) {
             return;
         }
-        self.search.query = query.clone();
-        self.search.open = query.chars().count() >= 2;
+        self.search.query = query;
+        self.search.open = self.search.query.chars().count() >= 2;
+        self.run_quick_search(cx);
+    }
+
+    /// The dropdown's results for the current query, from the chosen services.
+    fn run_quick_search(&mut self, cx: &mut Context<Self>) {
+        let query = self.search.query.clone();
         self.search.quick = SearchResults::default();
         self.search.kick_quick.clear();
+        self.search.kick_categories_quick.clear();
         self.search.error = None;
-        if self.search.open {
+        let (twitch, kick) = self.search_wants(cx);
+        if self.search.open && kick {
             self.search_kick(query.clone(), false, cx);
         } else {
             self.search.kick_task = None;
             self.search.kick_loading = false;
         }
-        if !self.search.open || !matches!(self.auth, Auth::SignedIn(_)) {
+        if !self.search.open || !twitch {
             self.search.quick_loading = false;
             self.search.typing = None;
             cx.notify();
@@ -398,13 +426,29 @@ impl Root {
         cx.notify();
     }
 
-    /// Kick's channel search for `query`, into the dropdown or the page.
+    /// The Twitch / Kick / Both switch above the results.
+    pub(super) fn set_search_platform(&mut self, platform: Platform, cx: &mut Context<Self>) {
+        if Self::search_platform(cx) == platform {
+            return;
+        }
+        crate::preferences::update(cx, |prefs| prefs.search_platform = platform.as_str().into());
+        if self.section == Section::Search && self.playing.is_none() {
+            self.run_full_search(cx);
+        }
+        if self.search.open {
+            self.run_quick_search(cx);
+        }
+        cx.notify();
+    }
+
+    /// Kick's channel and category search for `query`, into the dropdown or
+    /// the page.
     fn search_kick(&mut self, query: String, full: bool, cx: &mut Context<Self>) {
         self.search.kick_loading = true;
         self.search.kick_task = Some(cx.spawn(async move |this, cx| {
-            // Each lookup starts Streamlink, so wait for typing to settle.
+            // Wait for typing to settle before asking Kick.
             if !full {
-                cx.background_executor().timer(std::time::Duration::from_millis(700)).await;
+                cx.background_executor().timer(std::time::Duration::from_millis(450)).await;
             }
             let asked = query.clone();
             let result = cx
@@ -416,23 +460,28 @@ impl Root {
                     return;
                 }
                 this.search.kick_loading = false;
-                let channels: Vec<FollowedChannel> = result
-                    .map(|channels| channels.iter().map(crate::kick::Channel::followed).collect())
+                let (channels, categories) = result
+                    .map(|(channels, categories)| {
+                        (channels.iter().map(crate::kick::Channel::followed).collect::<Vec<_>>(), categories)
+                    })
                     .unwrap_or_default();
                 if full {
                     this.search.kick_full = channels;
+                    this.search.kick_categories_full = categories;
                 } else {
                     this.search.kick_quick = channels.into_iter().take(QUICK_CHANNELS).collect();
+                    this.search.kick_categories_quick = categories.into_iter().take(QUICK_CATEGORIES).collect();
                 }
+                this.queue_images(cx);
                 cx.notify();
             })
             .ok();
         }));
     }
 
-    /// Enter in the top box: the results page when signed in; otherwise (or
-    /// for an exact login with no sign-in) open the channel directly. A Kick
-    /// address or `kick:name` opens that Kick channel.
+    /// Enter in the top box: the results page. A Kick address or
+    /// `kick:name` opens that Kick channel; signed out with only Twitch
+    /// chosen, a login opens that Twitch channel.
     pub(super) fn submit_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.search_text(cx);
         if let Some(key) = crate::kick::key_from_text(&query) {
@@ -441,8 +490,14 @@ impl Root {
             self.play(&key, name.into(), window, cx);
             return;
         }
-        let login = query.to_ascii_lowercase();
-        if !matches!(self.auth, Auth::SignedIn(_)) {
+        let login = query.strip_prefix("twitch:").unwrap_or(&query).to_ascii_lowercase();
+        if query.to_ascii_lowercase().starts_with("twitch:") && is_login(&login) {
+            self.search.open = false;
+            self.play(&login, login.clone().into(), window, cx);
+            return;
+        }
+        let (twitch, kick) = self.search_wants(cx);
+        if !twitch && !kick {
             if is_login(&login) {
                 self.search.open = false;
                 self.play(&login, login.clone().into(), window, cx);
@@ -458,12 +513,31 @@ impl Root {
         self.close_player(window, cx);
         self.section = Section::Search;
         self.search.open = false;
+        self.search.query = query;
+        self.run_full_search(cx);
+        window.focus(&self.focus);
+        cx.notify();
+    }
+
+    /// The results page for the current query, from the chosen services.
+    fn run_full_search(&mut self, cx: &mut Context<Self>) {
+        let query = self.search.query.clone();
+        let (twitch, kick) = self.search_wants(cx);
         self.search.full = SearchResults::default();
-        self.search.full_loading = true;
-        self.search.error = None;
-        self.search.query = query.clone();
         self.search.kick_full.clear();
-        self.search_kick(query.clone(), true, cx);
+        self.search.kick_categories_full.clear();
+        self.search.error = None;
+        if kick {
+            self.search_kick(query.clone(), true, cx);
+        } else {
+            self.search.kick_task = None;
+            self.search.kick_loading = false;
+        }
+        self.search.full_loading = twitch;
+        if !twitch {
+            self.search.page_task = None;
+            return;
+        }
         let asked = query.clone();
         let task = self.helix_task(
             cx,
@@ -480,8 +554,6 @@ impl Root {
             },
         );
         self.search.page_task = task;
-        window.focus(&self.focus);
-        cx.notify();
     }
 
     pub(super) fn go_to_typed_channel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -499,6 +571,25 @@ impl Root {
             .map_or_else(|| login.clone().into(), |c| SharedString::from(c.display_name.clone()));
         self.search.open = false;
         self.play(&login, name, window, cx);
+        window.focus(&self.focus);
+    }
+
+    /// Opens the typed name as a Kick channel.
+    fn go_to_typed_kick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let slug = self.search_text(cx).trim().to_ascii_lowercase();
+        if !crate::kick::is_slug(&slug) {
+            return;
+        }
+        let key = format!("{}{slug}", crate::kick::PREFIX);
+        let name = self
+            .search
+            .kick_quick
+            .iter()
+            .chain(&self.search.kick_full)
+            .find(|channel| channel.login == key)
+            .map_or_else(|| slug.clone().into(), |c| SharedString::from(c.display_name.clone()));
+        self.search.open = false;
+        self.play(&key, name, window, cx);
         window.focus(&self.focus);
     }
 
@@ -538,6 +629,15 @@ impl Root {
         ];
         for channel in kick.into_iter().flatten().flatten() {
             if let Some(url) = &channel.profile_image_url {
+                wanted.push((url.clone(), 0));
+            }
+        }
+        let kick_categories = [
+            self.search.open.then_some(&self.search.kick_categories_quick),
+            (self.section == Section::Search && self.playing.is_none()).then_some(&self.search.kick_categories_full),
+        ];
+        for category in kick_categories.into_iter().flatten().flatten() {
+            if let Some(url) = &category.box_art_url {
                 wanted.push((url.clone(), 0));
             }
         }
@@ -831,9 +931,12 @@ impl Root {
     pub(super) fn search_page(&self, width: f32, cx: &Context<Self>) -> AnyElement {
         let query = self.search.query.clone();
         let results = &self.search.full;
+        let platform = Self::search_platform(cx);
+        let signed_in = matches!(self.auth, Auth::SignedIn(_));
         let available = (width - 76.).max(200.);
         let columns = ((available + 14.) / (300. + 14.)).floor().max(1.);
         let channel_width = ((available - (columns - 1.) * 14.) / columns).floor();
+        let now = auth::now();
         let mut page = div()
             .id("search")
             .flex_1()
@@ -845,86 +948,104 @@ impl Root {
             .flex()
             .flex_col()
             .gap(px(26.))
-            .child(div().flex().child(Self::page_header(
-                "SEARCH",
-                format!("Results for “{query}”"),
-                "Channels and categories on Twitch.",
-            )));
-        if is_login(&query.to_ascii_lowercase()) {
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_end()
+                    .justify_between()
+                    .gap_6()
+                    .child(Self::page_header(
+                        "SEARCH",
+                        format!("Results for “{query}”"),
+                        "Channels and categories across the services you choose.",
+                    ))
+                    .child(div().w(px(330.)).flex_none().child(platform_switch("search-page", platform, false, cx))),
+            );
+        let lowered = query.trim().to_ascii_lowercase();
+        let go_twitch = platform.twitch() && is_login(&lowered);
+        let go_kick = platform.kick() && crate::kick::is_slug(&lowered);
+        if go_twitch || go_kick {
             page = page.child(
-                div().flex().child(
-                    ui::button("search-direct", format!("Go to {query} on Twitch"), Some(Icon::Forward), ButtonStyle::Secondary)
-                        .h(px(40.))
-                        .px_4()
-                        .on_click(cx.listener(|this, _, window, cx| this.go_to_typed_channel(window, cx))),
-                ),
+                div()
+                    .flex_none()
+                    .flex()
+                    .gap_2()
+                    .when(go_twitch, |row| {
+                        row.child(direct_button("search-direct", &query, false).on_click(
+                            cx.listener(|this, _, window, cx| this.go_to_typed_channel(window, cx)),
+                        ))
+                    })
+                    .when(go_kick, |row| {
+                        row.child(direct_button("search-direct-kick", &query, true).on_click(
+                            cx.listener(|this, _, window, cx| this.go_to_typed_kick(window, cx)),
+                        ))
+                    }),
             );
         }
-        if self.search.full_loading {
-            return page.child(note("Searching Twitch…")).into_any_element();
+        let twitch_loading = platform.twitch() && self.search.full_loading;
+        let kick_loading = platform.kick() && self.search.kick_loading;
+        if twitch_loading || kick_loading {
+            page = page.child(note(match (twitch_loading, kick_loading) {
+                (true, true) => "Searching…",
+                (true, false) => "Searching Twitch…",
+                _ => "Searching Kick…",
+            }));
+        }
+        if platform == Platform::Twitch && !signed_in {
+            page = page.child(note("Sign in with Twitch to search its channels and categories, or switch to Kick above."));
         }
         if let Some(error) = &self.search.error {
             page = page.child(banner(error.clone()));
         }
-        if !results.categories.is_empty() {
-            page = page.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(section_heading("CATEGORIES"))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_x(px(16.))
-                            .gap_y(px(20.))
-                            .children(results.categories.iter().map(|category| self.category_card(category, 150., cx))),
-                    ),
-            );
+        let categories = |label: &'static str, kick: bool, list: &[Category]| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(provider_section_heading(label, Some(kick)))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_x(px(16.))
+                        .gap_y(px(20.))
+                        .children(list.iter().map(|category| self.category_card(category, 150., cx))),
+                )
+        };
+        let channels = |label: &'static str, kick: bool, list: &[FollowedChannel]| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(provider_section_heading(label, Some(kick)))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(14.))
+                        .children(list.iter().map(|channel| self.search_channel_card(channel, channel_width, now, cx))),
+                )
+        };
+        if platform.twitch() && !results.categories.is_empty() {
+            page = page.child(categories("TWITCH CATEGORIES", false, &results.categories));
         }
-        if !results.channels.is_empty() {
-            let now = auth::now();
-            page = page.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(section_heading("CHANNELS"))
-                    .child(
-                        div().flex().flex_wrap().gap(px(14.)).children(
-                            results
-                                .channels
-                                .iter()
-                                .map(|channel| self.search_channel_card(channel, channel_width, now, cx)),
-                        ),
-                    ),
-            );
+        if platform.kick() && !self.search.kick_categories_full.is_empty() {
+            page = page.child(categories("KICK CATEGORIES", true, &self.search.kick_categories_full));
         }
-        if !self.search.kick_full.is_empty() {
-            let now = auth::now();
-            page = page.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(section_heading("KICK CHANNELS"))
-                    .child(
-                        div().flex().flex_wrap().gap(px(14.)).children(
-                            self.search
-                                .kick_full
-                                .iter()
-                                .map(|channel| self.search_channel_card(channel, channel_width, now, cx)),
-                        ),
-                    ),
-            );
+        if platform.twitch() && !results.channels.is_empty() {
+            page = page.child(channels("TWITCH", false, &results.channels));
         }
-        if results.channels.is_empty()
+        if platform.kick() && !self.search.kick_full.is_empty() {
+            page = page.child(channels("KICK", true, &self.search.kick_full));
+        }
+        let empty = results.channels.is_empty()
             && results.categories.is_empty()
             && self.search.kick_full.is_empty()
-            && !self.search.kick_loading
-            && self.search.error.is_none()
-        {
+            && self.search.kick_categories_full.is_empty();
+        if empty && !twitch_loading && !kick_loading && self.search.error.is_none() && (signed_in || platform.kick()) {
             page = page.child(note("No channels or categories found."));
         }
         page.into_any_element()
@@ -953,19 +1074,20 @@ impl Root {
             .into_any_element()
     }
 
-    /// The panel under the top search box.
+    /// The panel under the top search box: Electron's `top-search-results`.
     pub(super) fn search_dropdown(&self, cx: &Context<Self>) -> Option<AnyElement> {
         if !self.search.open {
             return None;
         }
         let query = self.search.query.clone();
         let signed_in = matches!(self.auth, Auth::SignedIn(_));
+        let platform = Self::search_platform(cx);
         let results = &self.search.quick;
         let now = auth::now();
         let mut panel = div()
             .id("search-dropdown")
             .w_full()
-            .max_h(px(470.))
+            .max_h(px(520.))
             .overflow_y_scroll()
             .p(px(6.))
             .flex()
@@ -976,53 +1098,53 @@ impl Root {
             .border_color(theme::button_border())
             .bg(theme::popup())
             .shadow_lg()
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        if is_login(&query.to_ascii_lowercase()) {
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .pb(px(6.))
+                    .mb(px(4.))
+                    .border_b_1()
+                    .border_color(theme::border())
+                    .child(platform_switch("search-dropdown", platform, true, cx)),
+            );
+        let lowered = query.trim().to_ascii_lowercase();
+        if platform.twitch() && is_login(&lowered) {
             panel = panel.child(
                 dropdown_row("search-go-to")
-                    .child(ui::icon(Icon::Forward, 16.).text_color(theme::violet_hover()))
-                    .child(
-                        div()
-                            .truncate()
-                            .child(format!("Go to {query} on Twitch")),
-                    )
+                    .child(ui::provider_logo(false, 16.))
+                    .child(div().truncate().child(format!("Go to {} on Twitch", query.trim())))
                     .on_click(cx.listener(|this, _, window, cx| this.go_to_typed_channel(window, cx))),
             );
         }
-        let kick_rows = |mut panel: gpui::Stateful<Div>| {
-            if !self.search.kick_quick.is_empty() {
-                panel = panel.child(dropdown_heading("Kick channels"));
-                for channel in &self.search.kick_quick {
-                    let login = channel.login.clone();
-                    let name = SharedString::from(channel.display_name.clone());
-                    panel = panel.child(
-                        dropdown_row(SharedString::from(format!("search-kick-{}", channel.id)))
-                            .child(self.avatar(channel.profile_image_url.as_deref(), 32.))
-                            .child(channel_text(channel, now, 13.))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.search.open = false;
-                                this.play(&login, name.clone(), window, cx);
-                            })),
-                    );
-                }
-            }
-            panel
-        };
-        if !signed_in {
-            return Some(
-                kick_rows(panel.child(dropdown_state("Sign in to search Twitch channels and categories.")))
-                    .into_any_element(),
+        if platform.kick() && crate::kick::is_slug(&lowered) {
+            panel = panel.child(
+                dropdown_row("search-go-to-kick")
+                    .child(ui::provider_logo(true, 16.))
+                    .child(div().truncate().child(format!("Go to {} on Kick", query.trim())))
+                    .on_click(cx.listener(|this, _, window, cx| this.go_to_typed_kick(window, cx))),
             );
         }
-        if self.search.quick_loading {
-            return Some(kick_rows(panel.child(dropdown_state("Searching Twitch…"))).into_any_element());
+        let twitch_loading = platform.twitch() && signed_in && self.search.quick_loading;
+        let kick_loading = platform.kick() && self.search.kick_loading;
+        if twitch_loading || kick_loading {
+            panel = panel.child(dropdown_state(match (twitch_loading, kick_loading) {
+                (true, true) => "Searching…",
+                (true, false) => "Searching Twitch…",
+                _ => "Searching Kick…",
+            }));
+        }
+        if platform.twitch() && !signed_in {
+            panel = panel.child(dropdown_state("Sign in to search Twitch channels and categories."));
         }
         if let Some(error) = &self.search.error {
-            return Some(kick_rows(panel.child(dropdown_state(error.clone()))).into_any_element());
+            panel = panel.child(dropdown_state(error.clone()));
         }
-        if !results.categories.is_empty() {
-            panel = panel.child(dropdown_heading("Categories"));
-            for category in &results.categories {
+        let category_rows = |mut panel: gpui::Stateful<Div>, label: &'static str, kick: bool, list: &[Category]| {
+            if list.is_empty() {
+                return panel;
+            }
+            panel = panel.child(provider_dropdown_heading(label, None));
+            for category in list {
                 let chosen = category.clone();
                 panel = panel.child(
                     dropdown_row(SharedString::from(format!("search-category-{}", category.id)))
@@ -1033,17 +1155,28 @@ impl Root {
                                 .flex()
                                 .flex_col()
                                 .child(div().truncate().font_weight(FontWeight::SEMIBOLD).child(category.name.clone()))
-                                .child(div().text_size(px(11.)).text_color(theme::text_dim()).child("Category")),
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(4.))
+                                        .text_size(px(11.))
+                                        .text_color(theme::text_dim())
+                                        .child(ui::provider_logo(kick, 12.))
+                                        .child("Category"),
+                                ),
                         )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_category(chosen.clone(), window, cx)
-                        })),
+                        .on_click(cx.listener(move |this, _, window, cx| this.open_category(chosen.clone(), window, cx))),
                 );
             }
-        }
-        if !results.channels.is_empty() {
-            panel = panel.child(dropdown_heading("Channels"));
-            for channel in &results.channels {
+            panel
+        };
+        let channel_rows = |mut panel: gpui::Stateful<Div>, label: &'static str, kick: bool, list: &[FollowedChannel]| {
+            if list.is_empty() {
+                return panel;
+            }
+            panel = panel.child(provider_dropdown_heading(label, Some(kick)));
+            for channel in list {
                 let login = channel.login.clone();
                 let name = SharedString::from(channel.display_name.clone());
                 panel = panel.child(
@@ -1056,35 +1189,156 @@ impl Root {
                         })),
                 );
             }
+            panel
+        };
+        if platform.twitch() {
+            panel = category_rows(panel, "Twitch categories", false, &results.categories);
         }
-        panel = kick_rows(panel);
-        if results.channels.is_empty()
+        if platform.kick() {
+            panel = category_rows(panel, "Kick categories", true, &self.search.kick_categories_quick);
+        }
+        if platform.twitch() {
+            panel = channel_rows(panel, "Twitch", false, &results.channels);
+        }
+        if platform.kick() {
+            panel = channel_rows(panel, "Kick", true, &self.search.kick_quick);
+        }
+        let empty = results.channels.is_empty()
             && results.categories.is_empty()
             && self.search.kick_quick.is_empty()
-            && !self.search.kick_loading
-        {
+            && self.search.kick_categories_quick.is_empty();
+        if empty && !twitch_loading && !kick_loading && self.search.error.is_none() && (signed_in || platform.kick()) {
             panel = panel.child(dropdown_state("No channels or categories found."));
         }
         Some(panel.into_any_element())
     }
 }
 
-fn section_heading(text: &'static str) -> Div {
+/// Twitch, Kick, or both (Electron's `followedPlatforms` and search filter).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Platform {
+    Twitch,
+    Kick,
+    Both,
+}
+
+impl Platform {
+    pub fn twitch(self) -> bool {
+        self != Self::Kick
+    }
+    pub fn kick(self) -> bool {
+        self != Self::Twitch
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Twitch => "twitch",
+            Self::Kick => "kick",
+            Self::Both => "both",
+        }
+    }
+}
+
+impl From<&str> for Platform {
+    fn from(text: &str) -> Self {
+        match text {
+            "twitch" => Self::Twitch,
+            "kick" => Self::Kick,
+            _ => Self::Both,
+        }
+    }
+}
+
+/// Electron's three-way service switch: `compact` for the dropdown's row,
+/// otherwise the search page's. Picking one re-runs the search.
+fn platform_switch(id: &'static str, current: Platform, compact: bool, cx: &Context<Root>) -> impl IntoElement {
     div()
+        .flex()
+        .gap(px(4.))
+        .children([Platform::Twitch, Platform::Kick, Platform::Both].into_iter().map(|option| {
+            let active = option == current;
+            div()
+                .id(SharedString::from(format!("{id}-{}", option.as_str())))
+                .flex_1()
+                .h(px(if compact { 30. } else { 34. }))
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(5.))
+                .rounded(px(7.))
+                .border_1()
+                .border_color(if active { rgb(0x6d28d9).into() } else { gpui::transparent_black() })
+                .when(active, |button| button.bg(rgb(0x2a1f3d)))
+                .text_size(px(12.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(if active { rgb(0xf4f4f5) } else { rgb(0xa1a1aa) })
+                .cursor_pointer()
+                .hover(|style| style.bg(rgb(0x232329)).text_color(rgb(0xf4f4f5)))
+                .children(service_logos(option, 13.))
+                .child(match option {
+                    Platform::Twitch => "Twitch",
+                    Platform::Kick => "Kick",
+                    Platform::Both => "Both",
+                })
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, _, cx| this.set_search_platform(option, cx)))
+        }))
+}
+
+/// The logos for a service choice: one, or Twitch's and Kick's together.
+pub(super) fn service_logos(platform: Platform, size: f32) -> Vec<gpui::Svg> {
+    match platform {
+        Platform::Twitch => vec![ui::provider_logo(false, size)],
+        Platform::Kick => vec![ui::provider_logo(true, size)],
+        Platform::Both => vec![ui::provider_logo(false, size), ui::provider_logo(true, size)],
+    }
+}
+
+/// "Go to NAME on Twitch/Kick", on the search page.
+fn direct_button(id: &'static str, name: &str, kick: bool) -> gpui::Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(40.))
+        .px_4()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(theme::button_border())
+        .bg(theme::button())
+        .text_size(px(13.))
+        .cursor_pointer()
+        .hover(|style| style.bg(theme::button_hover()))
+        .child(ui::provider_logo(kick, 15.))
+        .child("Go to")
+        .child(div().font_weight(FontWeight::BOLD).child(name.trim().to_owned()))
+        .child(if kick { "on Kick" } else { "on Twitch" })
+}
+
+fn provider_section_heading(text: &'static str, kick: Option<bool>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
         .text_size(px(11.))
         .font_weight(FontWeight::BOLD)
         .text_color(theme::text_dim())
+        .when_some(kick, |row, kick| row.child(ui::provider_logo(kick, 13.)))
         .child(text)
 }
 
-fn dropdown_heading(text: &'static str) -> Div {
+fn provider_dropdown_heading(text: &'static str, kick: Option<bool>) -> Div {
     div()
         .px(px(10.))
         .pt(px(10.))
         .pb(px(4.))
+        .flex()
+        .items_center()
+        .gap(px(5.))
         .text_size(px(10.))
         .font_weight(FontWeight::BOLD)
         .text_color(theme::text_dim())
+        .when_some(kick, |row, kick| row.child(ui::provider_logo(kick, 11.)))
         .child(text.to_uppercase())
 }
 
@@ -1121,7 +1375,8 @@ fn channel_text(channel: &FollowedChannel, now: u64, size: f32) -> Div {
             } else {
                 stream.game_name.clone()
             }),
-            Some(format!("{} viewers", compact_count(stream.viewer_count))),
+            // Kick's search gives no viewer count.
+            (stream.viewer_count > 0).then(|| format!("{} viewers", compact_count(stream.viewer_count))),
             uptime(&stream.started_at, now),
         ]
         .into_iter()
@@ -1165,9 +1420,13 @@ fn channel_text(channel: &FollowedChannel, now: u64, size: f32) -> Div {
         )
         .child(
             div()
-                .truncate()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(4.))
                 .text_size(px(size - 2.))
                 .text_color(theme::text_dim())
-                .child(detail),
+                .child(ui::provider_logo(channel.login.starts_with(crate::kick::PREFIX), size - 2.))
+                .child(div().truncate().child(detail)),
         )
 }

@@ -1367,14 +1367,24 @@ impl Root {
     /// Followed channels as the sidebar lists them: live, then offline, each
     /// with favourites first and otherwise in Twitch's order. An offline
     /// favourite never outranks a live channel.
-    fn sidebar_order(&self, favorites: &[String]) -> Vec<&FollowedChannel> {
+    /// The followed channels of the services the sidebar shows.
+    fn followed_shown(&self, platform: browse::Platform) -> impl Iterator<Item = &FollowedChannel> {
+        let twitch = if platform.twitch() { &self.channels[..] } else { &[] };
+        let kick = if platform.kick() { &self.kick_followed[..] } else { &[] };
+        twitch.iter().chain(kick)
+    }
+
+    fn sidebar_order(&self, favorites: &[String], platform: browse::Platform) -> Vec<&FollowedChannel> {
+        // Live ones sort together across services by viewers, so the list
+        // reads as one set of people who are on now (as Electron's does).
         let rank = |channel: &FollowedChannel| {
             (
                 channel.stream.is_none(),
                 !favorites.contains(&channel.login),
+                std::cmp::Reverse(channel.stream.as_ref().map_or(0, |stream| stream.viewer_count)),
             )
         };
-        let mut ordered: Vec<&FollowedChannel> = self.channels.iter().chain(&self.kick_followed).collect();
+        let mut ordered: Vec<&FollowedChannel> = self.followed_shown(platform).collect();
         // Stable: within a rank the original order stays.
         ordered.sort_by_key(|channel| rank(channel));
         ordered
@@ -1394,8 +1404,12 @@ impl Root {
     }
 
     fn sidebar(&self, collapsed: bool, cx: &Context<Self>) -> impl IntoElement {
-        let favorites = crate::preferences::get(cx).favorite_channels;
-        let ordered = self.sidebar_order(&favorites);
+        let prefs = crate::preferences::get(cx);
+        let favorites = prefs.favorite_channels;
+        let platform = browse::Platform::from(prefs.platform_filter.as_str());
+        let kick_signed_in = prefs.kick_account.is_some();
+        let ordered = self.sidebar_order(&favorites, platform);
+        let ring = platform == browse::Platform::Both;
         let live = ordered.iter().filter(|channel| channel.stream.is_some()).count();
         let total = ordered.len();
         div()
@@ -1470,7 +1484,41 @@ impl Root {
                         })),
                     ),
             )
-            .when(!collapsed, |v| {
+            .when(!collapsed, |v| v.child(self.followed_platforms(platform, cx)))
+            .when(!collapsed && ordered.is_empty(), |v| {
+                let (title, detail, kick_button) = match platform {
+                    browse::Platform::Kick if !kick_signed_in => {
+                        ("Not signed in to Kick", "Sign in to see the Kick channels you follow.", true)
+                    }
+                    _ if !matches!(self.auth, Auth::SignedIn(_)) && !kick_signed_in => {
+                        ("Your channels will live here", "Sign in to see followed channels and who is live.", false)
+                    }
+                    _ => ("Nothing here yet", "Channels you follow show here.", false),
+                };
+                v.child(
+                    div()
+                        .mx_3()
+                        .mt_2()
+                        .p_3()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(theme::border())
+                        .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(title))
+                        .child(div().text_size(px(11.)).text_color(theme::text_dim()).child(detail))
+                        .when(kick_button, |card| {
+                            card.child(
+                                ui::button("sidebar-kick-sign-in", "Sign in to Kick", None, ButtonStyle::Secondary)
+                                    .mt_1()
+                                    .h(px(28.))
+                                    .on_click(cx.listener(|this, _, _, cx| this.kick_sign_in(cx))),
+                            )
+                        }),
+                )
+            })
+            .when(!collapsed && live > 0, |v| {
                 v.child(
                     div()
                         .px_5()
@@ -1528,6 +1576,7 @@ impl Root {
                                         channel,
                                         collapsed,
                                         favorites.contains(&channel.login),
+                                        ring,
                                         cx,
                                     )
                                     .into_any_element(),
@@ -1538,13 +1587,57 @@ impl Root {
             )
     }
 
+    /// Electron's `followed-platforms`: which services the list shows.
+    fn followed_platforms(&self, current: browse::Platform, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .mx(px(9.))
+            .mb(px(8.))
+            .p(px(3.))
+            .flex()
+            .gap(px(3.))
+            .rounded(px(8.))
+            .bg(rgb(0x17171b))
+            .children([browse::Platform::Twitch, browse::Platform::Kick, browse::Platform::Both].into_iter().map(|option| {
+                let active = option == current;
+                div()
+                    .id(SharedString::from(format!("followed-{}", option.as_str())))
+                    .flex_1()
+                    .h(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(5.))
+                    .rounded(px(6.))
+                    .when(active, |button| button.bg(rgb(0x2f2938)))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(if active { rgb(0xf4f4f5) } else { rgb(0x8a8a94) })
+                    .cursor_pointer()
+                    .hover(|style| style.text_color(rgb(0xe4e4e7)))
+                    .children(browse::service_logos(option, 13.))
+                    .child(match option {
+                        browse::Platform::Twitch => "Twitch",
+                        browse::Platform::Kick => "Kick",
+                        browse::Platform::Both => "Both",
+                    })
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        crate::preferences::update(cx, |prefs| prefs.platform_filter = option.as_str().into());
+                        cx.notify();
+                    }))
+            }))
+    }
+
+    /// `ring`: mark the service with a coloured ring round the avatar, as
+    /// Electron does while both services are listed.
     fn channel_row(
         &self,
         channel: &FollowedChannel,
         collapsed: bool,
         favorite: bool,
+        ring: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let kick = channel.login.starts_with(crate::kick::PREFIX);
         let login = channel.login.clone();
         let menu_login = channel.login.clone();
         let name = SharedString::from(channel.display_name.clone());
@@ -1591,28 +1684,19 @@ impl Root {
                     .child(
                         div()
                             .size_full()
-                            .when(channel.stream.is_none(), |v| v.opacity(0.45))
-                            .child(self.avatar(channel.profile_image_url.as_deref(), 36.)),
+                            .when(ring, |v| {
+                                v.rounded_full()
+                                    .border_2()
+                                    .border_color(rgb(if kick { ui::KICK_GREEN } else { ui::TWITCH_PURPLE }))
+                                    .p(px(1.5))
+                            })
+                            .child(
+                                div()
+                                    .size_full()
+                                    .when(channel.stream.is_none(), |v| v.opacity(0.45))
+                                    .child(self.avatar(channel.profile_image_url.as_deref(), if ring { 29. } else { 36. })),
+                            ),
                     )
-                    .when(channel.login.starts_with(crate::kick::PREFIX), |v| {
-                        // Kick's mark, like Electron's provider logo.
-                        v.child(
-                            div()
-                                .absolute()
-                                .left(px(-3.))
-                                .bottom(px(-3.))
-                                .size(px(14.))
-                                .rounded(px(3.))
-                                .bg(rgb(0x53fc18))
-                                .text_color(rgb(0x000000))
-                                .text_size(px(10.))
-                                .font_weight(FontWeight::BOLD)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child("K"),
-                        )
-                    })
                     .when(favorite, |v| {
                         v.child(
                             ui::icon(Icon::StarFilled, 11.)
@@ -2007,12 +2091,10 @@ impl Root {
         let available = (width - 76.).max(200.);
         let columns = ((available + 16.) / 316.).floor().max(1.);
         let card_width = ((available - (columns - 1.) * 16.) / columns).floor();
-        let live: Vec<&FollowedChannel> = self
-            .channels
-            .iter()
-            .chain(&self.kick_followed)
-            .filter(|channel| channel.stream.is_some())
-            .collect();
+        let platform = browse::Platform::from(crate::preferences::get(cx).platform_filter.as_str());
+        let mut live: Vec<&FollowedChannel> =
+            self.followed_shown(platform).filter(|channel| channel.stream.is_some()).collect();
+        live.sort_by_key(|channel| std::cmp::Reverse(channel.stream.as_ref().map_or(0, |stream| stream.viewer_count)));
         let now = auth::now();
         let content: AnyElement = if !self.loaded {
             note(if self.loading {
@@ -2230,11 +2312,13 @@ impl Root {
     fn avatar(&self, url: Option<&str>, size: f32) -> AnyElement {
         let size = px(size);
         match url.and_then(|url| self.image(url)) {
-            Some(image) => img(ImageSource::Image(image))
+            // Clipped, so a picture that is not square stays in its circle.
+            Some(image) => div()
                 .size(size)
                 .flex_none()
                 .rounded_full()
-                .object_fit(ObjectFit::Cover)
+                .overflow_hidden()
+                .child(img(ImageSource::Image(image)).size_full().rounded_full().object_fit(ObjectFit::Cover))
                 .into_any_element(),
             None => div()
                 .size(size)
@@ -2423,6 +2507,22 @@ impl Render for Root {
                 }
                 self.activate_tile(0, cx);
             });
+        }
+        // Debug aid: `VIOLETWIRE_PROBE_SEARCH=text` types into the top search box.
+        if let Ok(text) = std::env::var("VIOLETWIRE_PROBE_SEARCH") {
+            static TYPED: std::sync::Once = std::sync::Once::new();
+            if self.loaded {
+                TYPED.call_once(|| {
+                    self.channel_input.update(cx, |input, cx| {
+                        input.clear(cx);
+                        input.append(&text, cx);
+                    });
+                    self.search_changed(cx);
+                    if std::env::var_os("VIOLETWIRE_PROBE_SEARCH_PAGE").is_some() {
+                        self.submit_search(window, cx);
+                    }
+                });
+            }
         }
         // Debug aid: `VIOLETWIRE_PROBE_KICK_BROWSE=1` opens Kick's Browse, then
         // its first category, and logs what loads.
