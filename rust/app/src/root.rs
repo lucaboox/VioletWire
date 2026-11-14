@@ -15,6 +15,7 @@ use gpui::{
 
 mod browse;
 mod multi;
+mod popout;
 use browse::Section;
 
 use crate::format::{compact_count, is_login, uptime};
@@ -100,6 +101,8 @@ pub struct Root {
     kick_task: Option<Task<()>>,
     /// Ticks the player header's uptime each second, as Electron's does.
     _clock: Option<Task<()>>,
+    /// The window chat was popped out into, if any.
+    chat_popped: Option<gpui::AnyWindowHandle>,
     /// Refusals in a row of the stored Kick account; three sign it out.
     kick_refusals: u8,
     _kick_info: Option<Task<()>>,
@@ -308,6 +311,7 @@ impl Root {
             kick_followed: Vec::new(),
             kick_task: None,
             _clock: None,
+            chat_popped: None,
             kick_refusals: 0,
             _kick_info: None,
             account_image: None,
@@ -338,6 +342,8 @@ impl Root {
         };
         root.restore(cx);
         root.start_kick(cx);
+        // Closing the main window takes the chat window with it.
+        cx.on_release(|this, cx| this.close_chat_window(cx)).detach();
         root._clock = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -907,7 +913,7 @@ impl Root {
             match action {
                 crate::player::PlayerAction::Settings => self.settings_open = true,
                 crate::player::PlayerAction::Chat => multi.chat_visible = !multi.chat_visible,
-                crate::player::PlayerAction::Overlay => {}
+                crate::player::PlayerAction::Overlay | crate::player::PlayerAction::PopOutChat => {}
                 crate::player::PlayerAction::Theater => self.theater = !self.theater,
             }
             cx.notify();
@@ -915,7 +921,13 @@ impl Root {
         }
         match action {
             crate::player::PlayerAction::Settings => self.settings_open = true,
+            // Hiding a popped-out chat closes its window instead.
+            crate::player::PlayerAction::Chat if self.chat_popped.is_some() => self.close_chat_window(cx),
             crate::player::PlayerAction::Chat => self.chat_visible = !self.chat_visible,
+            crate::player::PlayerAction::PopOutChat => {
+                self.overlay_chat = false;
+                self.toggle_chat_window(cx);
+            }
             crate::player::PlayerAction::Overlay => {
                 self.overlay_chat = !self.overlay_chat;
                 self.chat_visible = true;
@@ -926,6 +938,7 @@ impl Root {
     }
     fn close_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.theater = false;
+        self.close_chat_window(cx);
         if let Some(multi) = self.multi.take() {
             for tile in multi.tiles {
                 tile.view.update(cx, |player, cx| player.close(window, cx));
@@ -2211,7 +2224,7 @@ impl Root {
             .min_h_0()
             .min_w_0()
             .child(playing.view.clone());
-        if !self.chat_visible {
+        if !self.chat_visible && self.chat_popped.is_none() {
             // Electron's edge restore: with chat hidden, an arrow appears when
             // the pointer nears the edge chat lives on.
             let left = crate::preferences::get(cx).chat_on_left;
@@ -2255,7 +2268,7 @@ impl Root {
                     ),
             );
         }
-        if self.chat_visible && self.overlay_chat {
+        if self.chat_in_main() && self.overlay_chat {
             area = area.child(
                 div()
                     .absolute()
@@ -2288,7 +2301,7 @@ impl Root {
             .bg(theme::surface())
             .when(crate::preferences::get(cx).chat_on_left, |v| v.flex_row_reverse())
             .child(player)
-            .when(self.chat_visible && !self.overlay_chat, |v| {
+            .when(self.chat_in_main() && !self.overlay_chat, |v| {
                 v.child(
                     div()
                         .w(px(f32::from(
@@ -2715,7 +2728,7 @@ impl Render for Root {
                 chat.set_preferences(crate::preferences::get(cx), cx);
             });
             playing.view.update(cx, |player, cx| {
-                player.set_presentation(self.chat_visible, self.overlay_chat, self.theater, cx)
+                player.set_presentation(self.chat_in_main(), self.overlay_chat, self.theater, cx)
             });
             let controls_delay = crate::preferences::get(cx).controls_hide_delay;
             playing
@@ -2756,6 +2769,31 @@ impl Render for Root {
                     DONE.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
+        }
+        // Debug aid: `VIOLETWIRE_PROBE_POPOUT=1` pops chat out once playing.
+        if std::env::var_os("VIOLETWIRE_PROBE_POPOUT").is_some() && self.playing.is_some() {
+            static POPPED: std::sync::Once = std::sync::Once::new();
+            // Outside this render, as a click would be: opening a window
+            // while painting one is not allowed.
+            POPPED.call_once(|| {
+                cx.spawn(async move |this, cx| {
+                    let _ = this.update(cx, |this, cx| this.toggle_chat_window(cx));
+                    // `VIOLETWIRE_PROBE_POPOUT=<path.png>` saves the chat window.
+                    cx.background_executor().timer(Duration::from_secs(10)).await;
+                    let path = std::env::var("VIOLETWIRE_PROBE_POPOUT").unwrap_or_default();
+                    if path.ends_with(".png") {
+                        let handle = this.update(cx, |this, _| this.chat_popped).ok().flatten();
+                        if let Some(handle) = handle {
+                            let _ = handle.update(cx, |_, window, _| {
+                                if let Ok((width, height, pixels)) = window.capture_rendered_frame() {
+                                    let _ = image::save_buffer(&path, &pixels, width, height, image::ColorType::Rgba8);
+                                }
+                            });
+                        }
+                    }
+                })
+                .detach();
+            });
         }
         // Debug aid: `VIOLETWIRE_PROBE_PREVIEW=url` previews a link in chat.
         if let Ok(url) = std::env::var("VIOLETWIRE_PROBE_PREVIEW")
@@ -2825,7 +2863,7 @@ impl Render for Root {
         } else {
             244.
         };
-        let chat_width = if self.chat_visible && !self.overlay_chat {
+        let chat_width = if self.chat_in_main() && !self.overlay_chat {
             f32::from(crate::preferences::get(cx).chat_sidebar_width)
         } else {
             0.

@@ -24,6 +24,8 @@ use crate::ui::{self, Icon};
 pub enum PlayerAction {
     Settings,
     Chat,
+    /// Move chat into its own window (or back).
+    PopOutChat,
     Overlay,
     Theater,
 }

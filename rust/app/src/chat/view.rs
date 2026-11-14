@@ -3236,6 +3236,12 @@ impl Render for Chat {
                                 .child("Stream Chat"),
                         )
                         .child(
+                            ui::icon_button("chat-pop-out", Icon::External, "Chat in its own window (or back)", false)
+                                .w(px(30.))
+                                .h(px(30.))
+                                .on_click(cx.listener(|_, _, _, cx| cx.emit(PlayerAction::PopOutChat))),
+                        )
+                        .child(
                             ui::icon_button("chat-users", Icon::Users, "Users in chat", self.user_list)
                                 .w(px(30.))
                                 .h(px(30.))
