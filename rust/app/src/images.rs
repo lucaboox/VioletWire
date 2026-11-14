@@ -14,6 +14,8 @@ use image::{
 use crate::twitch::helix::is_twitch_image_url;
 
 const MAX_IMAGE_BYTES: u64 = 4 * 1024 * 1024;
+/// Chat draws emotes at most ~40 px tall; twice that and more for high DPI.
+const MAX_EMOTE_HEIGHT: u32 = 128;
 
 pub fn fetch(agent: &ureq::Agent, url: &str) -> Result<Arc<Image>> {
     if !is_twitch_image_url(url) && !crate::kick::is_image_url(url) {
@@ -123,7 +125,8 @@ pub fn fetch_chat(agent: &ureq::Agent, url: &str, animated: bool) -> Result<Arc<
     let bytes = response
         .body_mut()
         .with_config()
-        .limit(512 * 1024)
+        // Kick's collectible emotes run to a few megabytes.
+        .limit(4 * 1024 * 1024)
         .read_to_vec()?;
     let image = decode_chat(&bytes, animated)?;
     crate::cache::write(crate::cache::Kind::Images, url, &bytes);
@@ -140,12 +143,23 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
         .into_dimensions()?;
     if width == 0
         || height == 0
-        || width > 1536
-        || height > 256
-        || u64::from(width) * u64::from(height) > 65_536
+        || width > 2048
+        || height > 1024
+        || u64::from(width) * u64::from(height) > 1024 * 1024
     {
         bail!("Emote dimensions are too large.");
     }
+    // Large artwork (Kick's 500 px collectibles) is shrunk as it decodes, so
+    // a frame is never kept bigger than chat draws it.
+    let scale = (f64::from(MAX_EMOTE_HEIGHT) / f64::from(height)).min(1.);
+    let shrink = |buffer: image::RgbaImage| -> image::RgbaImage {
+        if scale >= 1. {
+            return buffer;
+        }
+        let w = ((f64::from(buffer.width()) * scale).round() as u32).max(1);
+        let h = ((f64::from(buffer.height()) * scale).round() as u32).max(1);
+        image::imageops::resize(&buffer, w, h, image::imageops::FilterType::Triangle)
+    };
     let cursor = std::io::Cursor::new(bytes);
     let frames: Box<dyn Iterator<Item = image::ImageResult<Frame>>> = match format {
         ImageFormat::Gif => Box::new(GifDecoder::new(cursor)?.into_frames()),
@@ -168,7 +182,8 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
     let (mut decoded, mut size) = (Vec::new(), 0usize);
     for frame in frames {
         let frame = frame?;
-        size += frame.buffer().len();
+        // Counted as kept, after shrinking.
+        size += (f64::from(frame.buffer().len() as u32) * scale * scale) as usize;
         if size > 8 * 1024 * 1024 || decoded.len() >= 300 {
             decoded.truncate(1);
             break;
@@ -181,8 +196,11 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
         } else {
             frame.delay()
         };
-        let (left, top) = (frame.left(), frame.top());
-        let mut buffer = frame.into_buffer();
+        let (left, top) = (
+            (f64::from(frame.left()) * scale) as u32,
+            (f64::from(frame.top()) * scale) as u32,
+        );
+        let mut buffer = shrink(frame.into_buffer());
         for pixel in buffer.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }
@@ -195,9 +213,11 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
     if decoded.is_empty() {
         // A still WebP yields no frames from the animation decoder: it was
         // every static 7TV emote.
-        let mut still = image::load_from_memory(bytes)
-            .context("Emote has no image frames.")?
-            .into_rgba8();
+        let mut still = shrink(
+            image::load_from_memory(bytes)
+                .context("Emote has no image frames.")?
+                .into_rgba8(),
+        );
         for pixel in still.chunks_exact_mut(4) {
             pixel.swap(0, 2);
         }

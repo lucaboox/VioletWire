@@ -35,6 +35,60 @@ enum RailMark {
     Favorites,
 }
 
+#[derive(Clone)]
+struct Pinned {
+    message: Message,
+    by: Option<String>,
+    /// When the pin ends, in Unix seconds.
+    ends: Option<u64>,
+}
+
+/// A Helix `chat/pins` entry as a message: its fragments give the emotes.
+fn twitch_pin(pin: &serde_json::Value) -> Option<Pinned> {
+    let id = pin["message_id"].as_str().filter(|id| model::asset_id(id))?.to_owned();
+    let clean = |value: &serde_json::Value, limit: usize| -> String {
+        value.as_str().unwrap_or_default().chars().filter(|c| !c.is_control()).take(limit).collect()
+    };
+    let mut text = String::new();
+    let mut emotes = Vec::new();
+    for fragment in pin["message"]["fragments"].as_array().into_iter().flatten() {
+        let part = clean(&fragment["text"], 500);
+        let start = text.len();
+        text.push_str(&part);
+        if fragment["type"] == "emote"
+            && let Some(emote) = fragment["emote"]["id"].as_str().filter(|id| model::asset_id(id))
+        {
+            emotes.push(model::EmoteRange { start, end: text.len(), id: emote.to_owned() });
+        }
+    }
+    if text.is_empty() {
+        text = clean(&pin["message"]["text"], 500);
+    }
+    let login = clean(&pin["sender_user_login"], 25).to_ascii_lowercase();
+    let name = Some(clean(&pin["sender_user_name"], 40)).filter(|name| !name.is_empty()).unwrap_or_else(|| login.clone());
+    let ends = pin["ends_at"].as_str().and_then(crate::format::unix_from_rfc3339);
+    Some(Pinned {
+        message: Message {
+            first_message: false,
+            sent_at: None,
+            reply: None,
+            system: None,
+            id,
+            login,
+            user_id: model::digits(pin["sender_user_id"].as_str()),
+            name,
+            color: 0xf1e8ff,
+            text,
+            emotes,
+            badges: Vec::new(),
+            action: false,
+            deleted: false,
+        },
+        by: Some(clean(&pin["pinned_by_user_name"], 40)).filter(|name| !name.is_empty()),
+        ends,
+    })
+}
+
 /// A titled group of emotes in the picker (Electron's picker sections). An
 /// emoji entry's "url" is `emoji:` followed by its name.
 struct PickerSection {
@@ -134,6 +188,10 @@ pub struct Chat {
     _metadata: Option<Task<()>>,
     _send: Option<Task<()>>,
     _history: Option<Task<()>>,
+    /// The channel's pinned message, and the pin the viewer hid.
+    pinned: Option<Pinned>,
+    pinned_hidden: Option<String>,
+    _pins: Option<Task<()>>,
     history_loaded: usize,
     _subscriptions: Vec<Subscription>,
 }
@@ -663,6 +721,9 @@ impl Chat {
             _metadata: None,
             _send: None,
             _history: None,
+            pinned: None,
+            pinned_hidden: None,
+            _pins: None,
             history_loaded: 0,
             _subscriptions: vec![submitted, picker_changed, input_changed, release],
         };
@@ -755,14 +816,133 @@ impl Chat {
         cx.notify();
     }
     pub fn set_room(&mut self, room: &str, cx: &mut Context<Self>) {
-        if room != self.room
-            && !room.is_empty()
-            && room.len() <= 20
-            && room.bytes().all(|b| b.is_ascii_digit())
-        {
+        // A Twitch room ID, or Kick's `kick:<user id>:<slug>`.
+        let valid = match room.strip_prefix("kick:") {
+            Some(rest) => rest.split_once(':').is_some_and(|(id, slug)| {
+                !id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit()) && crate::kick::is_slug(slug)
+            }),
+            None => !room.is_empty() && room.len() <= 20 && room.bytes().all(|b| b.is_ascii_digit()),
+        };
+        if room != self.room && valid {
             self.room = room.to_owned();
             self.reload_assets(cx);
+            self.watch_pins(cx);
         }
+    }
+
+    /// Checks the channel's pinned message every 30 s, as Electron does.
+    /// Twitch only shows pins to the channel's moderators through its API, so
+    /// for everyone else that check backs off.
+    fn watch_pins(&mut self, cx: &mut Context<Self>) {
+        let kick = self.kick;
+        let slug = self.channel.clone();
+        let room = self.room.clone();
+        self._pins = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let session = this.update(cx, |this, _| this.session.clone()).ok().flatten();
+                let (slug, room, agent) = (slug.clone(), room.clone(), crate::http::agent());
+                let found: Option<Option<Pinned>> = cx
+                    .background_executor()
+                    .spawn(async move {
+                        if kick {
+                            return super::kick::pinned(&slug)
+                                .ok()
+                                .map(|pin| pin.map(|(message, by, ends)| Pinned { message, by, ends }));
+                        }
+                        let session = session?;
+                        let value = assets::helix_json(
+                            &agent,
+                            "https://api.twitch.tv/helix/chat/pins",
+                            &session,
+                            &[("broadcaster_id", room.as_str()), ("moderator_id", session.identity.user_id.as_str())],
+                        )?;
+                        Some(twitch_pin(&value["data"][0]))
+                    })
+                    .await;
+                if std::env::var_os("VIOLETWIRE_PIN_LOG").is_some() {
+                    eprintln!("[pin] kick={kick} found={:?}", found.as_ref().map(|pin| pin.as_ref().map(|pin| (pin.message.id.clone(), pin.ends))));
+                }
+                let wait = if found.is_some() { 30 } else { 300 };
+                if this
+                    .update(cx, |this, cx| {
+                        let now = crate::twitch::auth::now();
+                        let pin = found.flatten().filter(|pin| pin.ends.is_none_or(|ends| ends > now));
+                        if pin.as_ref().map(|pin| &pin.message.id) != this.pinned.as_ref().map(|pin| &pin.message.id) {
+                            this.pinned = pin;
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                cx.background_executor().timer(Duration::from_secs(wait)).await;
+            }
+        }));
+    }
+
+    /// Electron's `PinnedChatMessage` banner above the messages.
+    fn pinned_banner(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let pin = self.pinned.clone()?;
+        if self.pinned_hidden.as_deref() == Some(pin.message.id.as_str()) {
+            return None;
+        }
+        let mut message = pin.message.clone();
+        message.sent_at = None;
+        let name = message.name.clone();
+        let body = self.card_message(message, cx);
+        Some(
+            div()
+                .flex_none()
+                .px(px(11.))
+                .pt(px(9.))
+                .pb(px(10.))
+                .border_b_1()
+                .border_color(rgb(0x323039))
+                .bg(rgb(0x221d29))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .mb(px(5.))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0xbf94ff))
+                                .child(ui::icon(Icon::Pin, 13.).text_color(rgb(0xbf94ff)))
+                                .child(div().truncate().child(match &pin.by {
+                                    Some(by) => format!("Pinned by {by}"),
+                                    None => "Pinned message".to_owned(),
+                                })),
+                        )
+                        .child(
+                            ui::icon_button("hide-pin", Icon::Close, "Hide pinned message", false)
+                                .w(px(24.))
+                                .h(px(24.))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.pinned_hidden = this.pinned.as_ref().map(|pin| pin.message.id.clone());
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .max_h(px(80.))
+                        .overflow_hidden()
+                        .flex()
+                        .gap_1()
+                        .child(div().flex_none().font_weight(FontWeight::BOLD).text_color(rgb(0xf1e8ff)).child(format!("{name}:")))
+                        .child(div().flex_1().min_w_0().child(body)),
+                )
+                .into_any_element(),
+        )
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
         let events: Vec<_> = self.connection.events.try_iter().take(250).collect();
@@ -2096,6 +2276,8 @@ impl Render for Chat {
         self.sync_composer_emotes(cx);
         let picker = self.picker.then(|| self.picker(cx));
         let card = self.user_card(cx);
+        let pinned = self.pinned_banner(cx);
+        let pin_hidden = self.pinned.as_ref().is_some_and(|pin| self.pinned_hidden.as_deref() == Some(pin.message.id.as_str()));
         let menu = self
             .menu
             .clone()
@@ -2207,6 +2389,7 @@ impl Render for Chat {
                         .child(div().w(px(34.)).flex_none()),
                 )
             })
+            .children(pinned)
             .child(div().flex_1().min_h_0().flex().flex_col().child(list))
             .when(self.paused, |v| {
                 v.child(
@@ -2319,6 +2502,17 @@ impl Render for Chat {
                                 .items_center()
                                 .justify_between()
                                 .gap_2()
+                                .when(pin_hidden, |row| {
+                                    row.child(
+                                        ui::icon_button("show-pin", Icon::Pin, "Show pinned message", false)
+                                            .w(px(26.))
+                                            .h(px(26.))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.pinned_hidden = None;
+                                                cx.notify();
+                                            })),
+                                    )
+                                })
                                 .child(
                                     ui::icon_button(
                                         "chat-settings",

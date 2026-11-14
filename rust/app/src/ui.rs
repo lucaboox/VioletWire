@@ -31,7 +31,7 @@ SidebarClose=>"panel-left-close", SidebarOpen=>"panel-left-open",
     AudioLinesOff=>"audio-lines-off", Compass=>"compass", Check=>"check",
     ChevronDown=>"chevron-down", Scissors=>"scissors", Star=>"star", StarFilled=>"star-filled",
     Keyboard=>"keyboard", Monitor=>"monitor", Info=>"info", Globe=>"globe", Sparkles=>"sparkles", Grid=>"layout-grid",
-    Twitch=>"twitch", Kick=>"kick",
+    Twitch=>"twitch", Kick=>"kick", Pin=>"pin",
 }
 pub struct Assets;
 impl AssetSource for Assets {

@@ -333,6 +333,10 @@ impl Root {
         };
         root.restore(cx);
         root.start_kick(cx);
+        // A Kick channel opened at launch still gets its header details.
+        if let Some(slug) = root.playing.as_ref().and_then(|playing| crate::kick::slug(&playing.login)).map(str::to_owned) {
+            root.load_kick_info(slug, cx);
+        }
         root
     }
 
@@ -625,6 +629,7 @@ impl Root {
             Ok(Some(channels)) => {
                 self.kick_refusals = 0;
                 self.kick_followed = channels;
+                self.queue_images(cx);
             }
             Ok(None) => {
                 // One refusal can be Kick's edge; several in a row mean the
@@ -659,6 +664,7 @@ impl Root {
                 let followed = channel.followed();
                 this.kick_channels.retain(|known| known.login != followed.login);
                 this.kick_channels.push(followed);
+                this.queue_images(cx);
                 cx.notify();
             })
             .ok();

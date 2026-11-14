@@ -169,6 +169,24 @@ fn clean(value: &Value, limit: usize) -> String {
         .collect()
 }
 
+/// The channel's pinned message, from the same recent-messages route as the
+/// history (Electron's `getPinnedChatMessage`): the message, who pinned it,
+/// and when the pin ends (Unix seconds).
+/// A pinned message, who pinned it, and when the pin ends.
+pub type Pin = (Message, Option<String>, Option<u64>);
+
+pub fn pinned(slug: &str) -> anyhow::Result<Option<Pin>> {
+    let channel = crate::kick::channel(slug)?;
+    let recent = crate::playback::kick::get(&format!("https://kick.com/api/v2/channels/{}/messages", channel.id))?;
+    let pin = &recent["data"]["pinned_message"];
+    let Some(message) = message(&pin["message"], &channel) else {
+        return Ok(None);
+    };
+    let by = Some(clean(&pin["pinned_by"]["username"], 40)).filter(|name| !name.is_empty());
+    let ends = sent_at(&pin["finish_at"]).map(|ms| ms / 1000);
+    Ok(Some((message, by, ends)))
+}
+
 /// `[emote:ID:NAME]` codes become the name, with a range for the image.
 fn text_and_emotes(content: &str) -> (String, Vec<EmoteRange>) {
     let mut text = String::with_capacity(content.len());
@@ -291,9 +309,21 @@ fn message(data: &Value, channel: &crate::kick::Channel) -> Option<Message> {
     );
     let (text, emotes) = text_and_emotes(&clean(&data["content"], 2000));
     let reply = (data["type"] == "reply").then(|| {
-        let metadata = &data["metadata"];
-        let login = clean(&metadata["original_sender"]["slug"], 40).to_ascii_lowercase();
+        // Kick's recent-messages route sends the metadata as a JSON string.
+        let parsed;
+        let metadata = match &data["metadata"] {
+            Value::String(text) if text.len() < 64 * 1024 => {
+                parsed = serde_json::from_str::<Value>(text).unwrap_or(Value::Null);
+                &parsed
+            }
+            other => other,
+        };
         let name = clean(&metadata["original_sender"]["username"], 40);
+        // The live feed names the parent's sender without a slug.
+        let login = Some(clean(&metadata["original_sender"]["slug"], 40))
+            .filter(|slug| !slug.is_empty())
+            .unwrap_or_else(|| name.clone())
+            .to_ascii_lowercase();
         let (parent, _) = text_and_emotes(&clean(&metadata["original_message"]["content"], 500));
         Box::new(Reply {
             id: clean(&metadata["original_message"]["id"], 64),
