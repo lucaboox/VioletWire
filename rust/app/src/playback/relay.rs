@@ -1,8 +1,8 @@
-//! A small loopback relay for the HLS *media playlist* (never media segments),
+//! A loopback HLS playlist relay with opt-in progressive MPEG-TS pieces,
 //! modelled on the Electron client's filtered relay.
 //!
 //! Each session keeps its own playlist. Every Twitch segment is identified by
-//! its PROGRAM-DATE-TIME (stable even when Twitch rotates the CDN path) and gets
+//! Twitch media sequence (falling back to PROGRAM-DATE-TIME) and gets
 //! a local media sequence number that never changes, and the list only moves
 //! forward — Media Engine follows the HLS rule that the sequence never goes
 //! back, and a playlist that broke it made it skip data and smear the picture.
@@ -21,7 +21,8 @@
 //! Segments stay on Twitch's CDN with their absolute URLs; only playlist text
 //! crosses the loopback socket. Every URL carries a random per-process secret,
 //! so other local programs cannot use the relay, and signed upstream URLs never
-//! leave this process.
+//! leave this process. With VIOLETWIRE_PARTS, eligible TS sessions instead
+//! serve immutable short media pieces through the same secret-protected relay.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -35,6 +36,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result, bail};
 
 use super::ts;
+mod parts;
 
 /// How much media playback starts behind the newest segment's end.
 pub const START_CUSHION_SECONDS: f64 = 5.0;
@@ -66,10 +68,16 @@ const PROBE_CANDIDATES: usize = 5;
 /// What the player needs to know about a session.
 #[derive(Default)]
 pub struct Status {
+    cancelled: AtomicBool,
+    parts: AtomicBool,
+    mp4: AtomicBool,
     ready: AtomicBool,
     ad_break: AtomicBool,
     ads_skipped: AtomicU32,
     failure: Mutex<Option<String>>,
+    /// The failure is temporary (an ad, a break in the stream, a network
+    /// hiccup): restart the progressive input rather than abandon it.
+    retryable: AtomicBool,
     /// Twitch's PROGRAM-DATE-TIME (ms) of the first listed segment: the
     /// broadcast moment at the player's time zero.
     start_date: Mutex<Option<f64>>,
@@ -105,6 +113,8 @@ struct Session {
     upstream: String,
     playlist: Mutex<Playlist>,
     status: Arc<Status>,
+    pieces: Mutex<Option<parts::Pieces>>,
+    allow_parts: bool,
 }
 
 struct Relay {
@@ -113,6 +123,14 @@ struct Relay {
     agent: ureq::Agent,
     sessions: Mutex<HashMap<u64, Arc<Session>>>,
     next: AtomicU64,
+    requests: AtomicU32,
+}
+
+struct RequestPermit(Arc<Relay>);
+impl Drop for RequestPermit {
+    fn drop(&mut self) {
+        self.0.requests.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 static RELAY: OnceLock<Result<Arc<Relay>, String>> = OnceLock::new();
@@ -129,8 +147,8 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 fn start() -> Result<Arc<Relay>> {
-    let listener =
-        TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).context("Could not open the playlist relay.")?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .context("Could not open the playlist relay.")?;
     let relay = Arc::new(Relay {
         port: listener.local_addr()?.port(),
         secret: secret()?,
@@ -141,6 +159,7 @@ fn start() -> Result<Arc<Relay>> {
             .into(),
         sessions: Mutex::new(HashMap::new()),
         next: AtomicU64::new(1),
+        requests: AtomicU32::new(0),
     });
     let serving = relay.clone();
     std::thread::Builder::new()
@@ -150,10 +169,23 @@ fn start() -> Result<Arc<Relay>> {
                 if !stream.peer_addr().is_ok_and(|peer| peer.ip().is_loopback()) {
                     continue;
                 }
+                if serving
+                    .requests
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                        (count < 32).then_some(count + 1)
+                    })
+                    .is_err()
+                {
+                    continue;
+                }
+                let permit = RequestPermit(serving.clone());
                 let relay = serving.clone();
                 let _ = std::thread::Builder::new()
                     .name("vw-playlist-request".into())
-                    .spawn(move || relay.serve(stream));
+                    .spawn(move || {
+                        let _permit = permit;
+                        relay.serve(stream);
+                    });
             }
         })?;
     Ok(relay)
@@ -176,10 +208,26 @@ fn secret() -> Result<String> {
 pub struct Relayed {
     id: u64,
     pub url: String,
+    continuous_url: String,
+    continuous_mp4_url: String,
     status: Arc<Status>,
 }
 
 impl Relayed {
+    pub fn continuous(&self) -> bool {
+        self.parts_active() && std::env::var_os("VIOLETWIRE_PROGRESSIVE_SOURCE").is_some()
+    }
+    pub fn source_url(&self) -> &str {
+        if self.continuous() {
+            if self.status.mp4.load(Ordering::Acquire) {
+                &self.continuous_mp4_url
+            } else {
+                &self.continuous_url
+            }
+        } else {
+            &self.url
+        }
+    }
     /// Live segments are listed and the player can start.
     pub fn ready(&self) -> bool {
         self.status.ready.load(Ordering::Acquire)
@@ -194,15 +242,30 @@ impl Relayed {
     pub fn failure(&self) -> Option<String> {
         lock(&self.status.failure).clone()
     }
+    /// See `Status::retryable`.
+    pub fn retryable(&self) -> bool {
+        self.status.retryable.load(Ordering::Acquire)
+    }
     /// When (ms since the epoch) Twitch received the media at the player's
     /// time zero; with the playhead it gives the latency to the broadcaster.
     pub fn start_date_ms(&self) -> Option<f64> {
         *lock(&self.status.start_date)
     }
+    pub fn parts_active(&self) -> bool {
+        self.status.parts.load(Ordering::Acquire)
+    }
+    /// Only media fully served to this player counts, not HLS buffered ranges.
+    pub fn safe_part_target(&self, cushion: f64) -> Option<f64> {
+        let relay = relay().ok()?;
+        let session = lock(&relay.sessions).get(&self.id).cloned()?;
+        let pieces = lock(&session.pieces);
+        pieces.as_ref()?.safe_target(cushion)
+    }
 }
 
 impl Drop for Relayed {
     fn drop(&mut self) {
+        self.status.cancelled.store(true, Ordering::Release);
         if let Ok(relay) = relay() {
             lock(&relay.sessions).remove(&self.id);
         }
@@ -211,7 +274,7 @@ impl Drop for Relayed {
 
 /// Serves the media playlist at `upstream` through the relay. The session
 /// primes itself in the background; [`Relayed::ready`] says when to start.
-pub fn register(upstream: &str) -> Result<Relayed> {
+pub fn register(upstream: &str, allow_parts: bool) -> Result<Relayed> {
     let relay = relay()?;
     let id = relay.next.fetch_add(1, Ordering::Relaxed);
     let status = Arc::new(Status::default());
@@ -219,6 +282,8 @@ pub fn register(upstream: &str) -> Result<Relayed> {
         upstream: upstream.to_owned(),
         playlist: Mutex::new(Playlist::default()),
         status: status.clone(),
+        pieces: Mutex::new(None),
+        allow_parts,
     });
     lock(&relay.sessions).insert(id, session.clone());
     let weak: Weak<Session> = Arc::downgrade(&session);
@@ -229,7 +294,18 @@ pub fn register(upstream: &str) -> Result<Relayed> {
         .spawn(move || priming.prime(weak))?;
     Ok(Relayed {
         id,
-        url: format!("http://127.0.0.1:{}/{}/{id}/live.m3u8", relay.port, relay.secret),
+        url: format!(
+            "http://127.0.0.1:{}/{}/{id}/live.m3u8",
+            relay.port, relay.secret
+        ),
+        continuous_url: format!(
+            "http://127.0.0.1:{}/{}/{id}/live.ts",
+            relay.port, relay.secret
+        ),
+        continuous_mp4_url: format!(
+            "http://127.0.0.1:{}/{}/{id}/live.mp4",
+            relay.port, relay.secret
+        ),
         status,
     })
 }
@@ -238,6 +314,13 @@ impl Relay {
     /// Reads the playlist until live segments can start playback, waiting out
     /// a pre-roll ad. Ends early if the session is dropped.
     fn prime(&self, session: Weak<Session>) {
+        if parts::enabled()
+            && let Some(active) = session.upgrade()
+            && active.allow_parts
+            && parts::run(self, &active)
+        {
+            return;
+        }
         let started = Instant::now();
         loop {
             let Some(session) = session.upgrade() else {
@@ -260,17 +343,47 @@ impl Relay {
     fn serve(&self, mut stream: TcpStream) {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
-        let (status, body) = match read_path(&stream).map(|path| self.respond(&path)) {
-            Some(Some(body)) => ("200 OK", body),
-            Some(None) | None => ("404 Not Found", String::new()),
+        let path = read_path(&stream);
+        if let Some(session) = path
+            .as_deref()
+            .and_then(|path| self.continuous_session(path))
+        {
+            self.serve_continuous(stream, session);
+            return;
+        }
+        let response = path.as_deref().and_then(|path| {
+            if path.ends_with("/live.m3u8") {
+                self.respond(path).map(|body| {
+                    (
+                        "application/vnd.apple.mpegurl",
+                        Arc::<[u8]>::from(body.into_bytes()),
+                    )
+                })
+            } else {
+                self.piece(path).map(|bytes| ("video/mp2t", bytes))
+            }
+        });
+        let (status, content_type, body) = match response {
+            Some((content_type, body)) => ("200 OK", content_type, body),
+            None => ("404 Not Found", "text/plain", Arc::from([])),
+        };
+        let cache = if content_type == "video/mp2t" {
+            "private, max-age=30, immutable"
+        } else {
+            "no-cache, no-store"
         };
         let head = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: {}\r\nCache-Control: no-cache, no-store\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache}\r\nConnection: close\r\n\r\n",
             body.len()
         );
-        let _ = stream.write_all(head.as_bytes());
-        let _ = stream.write_all(body.as_bytes());
-        let _ = stream.flush();
+        if stream.write_all(head.as_bytes()).is_ok()
+            && stream.write_all(&body).is_ok()
+            && stream.flush().is_ok()
+            && status == "200 OK"
+            && let Some(path) = path
+        {
+            self.delivered(&path);
+        }
     }
 
     fn respond(&self, path: &str) -> Option<String> {
@@ -283,10 +396,110 @@ impl Relay {
         let session = lock(&self.sessions).get(&id).cloned()?;
         self.refresh(&session)
     }
+    fn continuous_session(&self, path: &str) -> Option<Arc<Session>> {
+        let (path, mp4) = if let Some(path) = path.strip_suffix("/live.mp4") {
+            (path, true)
+        } else {
+            (path.strip_suffix("/live.ts")?, false)
+        };
+        let id = path
+            .strip_prefix('/')?
+            .strip_prefix(&self.secret)?
+            .strip_prefix('/')?
+            .parse::<u64>()
+            .ok()?;
+        let session = lock(&self.sessions).get(&id).cloned()?;
+        if session.status.mp4.load(Ordering::Acquire) != mp4 {
+            return None;
+        }
+        let active = session.status.parts.load(Ordering::Acquire)
+            && lock(&session.pieces)
+                .as_ref()
+                .and_then(|pieces| pieces.next(0))
+                .is_some();
+        active.then_some(session)
+    }
+    fn serve_continuous(&self, mut stream: TcpStream, session: Arc<Session>) {
+        let mime = if session.status.mp4.load(Ordering::Acquire) {
+            "video/mp4"
+        } else {
+            "video/mp2t"
+        };
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nTransfer-Encoding: chunked\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+        );
+        if stream.write_all(head.as_bytes()).is_err() {
+            return;
+        }
+        let mut next = 0;
+        while !session.status.cancelled.load(Ordering::Acquire) {
+            let piece = lock(&session.pieces)
+                .as_ref()
+                .and_then(|pieces| pieces.next(next));
+            if let Some((sequence, bytes)) = piece {
+                if sequence != next {
+                    return;
+                }
+                if write!(stream, "{:x}\r\n", bytes.len()).is_err()
+                    || stream.write_all(&bytes).is_err()
+                    || stream.write_all(b"\r\n").is_err()
+                    || stream.flush().is_err()
+                {
+                    return;
+                }
+                next += 1;
+            } else {
+                if lock(&session.status.failure).is_some() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let _ = stream.write_all(b"0\r\n\r\n");
+    }
+
+    fn piece(&self, path: &str) -> Option<Arc<[u8]>> {
+        let rest = path
+            .strip_prefix('/')?
+            .strip_prefix(self.secret.as_str())?
+            .strip_prefix('/')?;
+        let (id, sequence) = rest.split_once("/p/")?;
+        let id = id.parse::<u64>().ok()?;
+        let sequence = sequence.strip_suffix(".ts")?.parse::<u64>().ok()?;
+        let session = lock(&self.sessions).get(&id).cloned()?;
+        let pieces = lock(&session.pieces);
+        pieces.as_ref()?.get(sequence)
+    }
+    fn delivered(&self, path: &str) {
+        let Some(rest) = path
+            .strip_prefix('/')
+            .and_then(|path| path.strip_prefix(self.secret.as_str()))
+            .and_then(|path| path.strip_prefix('/'))
+        else {
+            return;
+        };
+        let Some((id, sequence)) = rest.split_once("/p/") else {
+            return;
+        };
+        let (Ok(id), Some(Ok(sequence))) = (
+            id.parse::<u64>(),
+            sequence.strip_suffix(".ts").map(str::parse::<u64>),
+        ) else {
+            return;
+        };
+        if let Some(session) = lock(&self.sessions).get(&id).cloned()
+            && let Some(pieces) = lock(&session.pieces).as_mut()
+        {
+            pieces.delivered(sequence);
+        }
+    }
 
     /// Reads Twitch's playlist into the session's and renders it. Refreshes
     /// of one session run one at a time, under its playlist lock.
     fn refresh(&self, session: &Session) -> Option<String> {
+        if let Some(pieces) = &*lock(&session.pieces) {
+            return pieces.render();
+        }
         let timer = Instant::now();
         let mut playlist = lock(&session.playlist);
         if let Some((at, body)) = &playlist.cached
@@ -296,10 +509,10 @@ impl Relay {
         }
         let text = self.fetch(&session.upstream).ok()?;
         let parsed = parse(&text, &session.upstream);
-        session
-            .status
-            .ad_break
-            .store(parsed.segments.last().is_some_and(|s| s.ad), Ordering::Release);
+        session.status.ad_break.store(
+            parsed.segments.last().is_some_and(|s| s.ad),
+            Ordering::Release,
+        );
         if playlist.started {
             playlist.merge(parsed, &session.status);
         } else {
@@ -345,7 +558,10 @@ impl Relay {
                     scope.spawn(move || (index, self.opens_on_keyframe(&uri)))
                 })
                 .collect();
-            probes.into_iter().filter_map(|probe| probe.join().ok()).collect()
+            probes
+                .into_iter()
+                .filter_map(|probe| probe.join().ok())
+                .collect()
         });
         found.insert(nearest, first);
         found
@@ -512,7 +728,8 @@ fn parse(text: &str, base: &str) -> Parsed {
         ended: false,
     };
     let (mut tags, mut discontinuity) = (Vec::new(), false);
-    let (mut duration, mut title, mut date): (Option<f64>, String, Option<f64>) = (None, String::new(), None);
+    let (mut duration, mut title, mut date): (Option<f64>, String, Option<f64>) =
+        (None, String::new(), None);
     let (mut key_tag, mut map_tag): (Option<String>, Option<String>) = (None, None);
     let mut byte_range: Option<String> = None;
     let mut previous_date: Option<f64> = None;
@@ -524,7 +741,11 @@ fn parse(text: &str, base: &str) -> Parsed {
         } else if let Some(value) = line.strip_prefix("#EXT-X-VERSION:") {
             parsed.version = value.trim().parse().unwrap_or(3);
         } else if let Some(value) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
-            parsed.media_sequence = value.trim().parse().ok();
+            parsed.media_sequence = value
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|value| *value < u64::MAX - 65_536);
         } else if let Some(value) = line.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:") {
             date = date_ms(value);
             tags.push(line.to_owned());
@@ -564,11 +785,16 @@ fn parse(text: &str, base: &str) -> Parsed {
                 (None, None) => format!("{}|", uri_key(&uri)),
             };
             let ad = previous.ad
-                || inferred.is_some_and(|date| ads.iter().any(|(start, end)| date >= *start && date < *end));
+                || inferred.is_some_and(|date| {
+                    ads.iter().any(|(start, end)| date >= *start && date < *end)
+                });
             previous_date = inferred;
+            let mut segment_tags: Vec<String> =
+                key_tag.iter().chain(map_tag.iter()).cloned().collect();
+            segment_tags.push(format!("#EXTINF:{length:.3},live"));
             parsed.segments.push(ParsedSegment {
                 key,
-                tags: vec![format!("#EXTINF:{length:.3},live")],
+                tags: segment_tags,
                 uri_key: uri_key(&uri),
                 uri,
                 duration: length,
@@ -595,8 +821,11 @@ fn parse(text: &str, base: &str) -> Parsed {
                 ),
             };
             let ad = title.contains("Amazon")
-                || date.is_some_and(|date| ads.iter().any(|(start, end)| date >= *start && date < *end));
-            let mut segment_tags: Vec<String> = key_tag.iter().chain(map_tag.iter()).cloned().collect();
+                || date.is_some_and(|date| {
+                    ads.iter().any(|(start, end)| date >= *start && date < *end)
+                });
+            let mut segment_tags: Vec<String> =
+                key_tag.iter().chain(map_tag.iter()).cloned().collect();
             segment_tags.append(&mut tags);
             previous_date = date;
             parsed.segments.push(ParsedSegment {
@@ -677,7 +906,12 @@ fn start_candidates(parsed: &Parsed) -> Vec<usize> {
 impl Playlist {
     /// The first read with live content: list from a key-frame start near the
     /// live edge and remember everything older so it is never added.
-    fn begin(&mut self, parsed: Parsed, keyframes: &HashMap<usize, Option<bool>>, status: &Status) -> bool {
+    fn begin(
+        &mut self,
+        parsed: Parsed,
+        keyframes: &HashMap<usize, Option<bool>>,
+        status: &Status,
+    ) -> bool {
         let candidates = start_candidates(&parsed);
         let Some(&nearest) = candidates.first() else {
             return false;
@@ -733,7 +967,11 @@ impl Playlist {
             if let Some(&sequence) = self.seen.get(&segment.key) {
                 // Already known: keep its number, take the newest address,
                 // and Twitch's own tags once a prefetch entry is finished.
-                if let Some(kept) = self.segments.iter_mut().find(|kept| kept.sequence == sequence) {
+                if let Some(kept) = self
+                    .segments
+                    .iter_mut()
+                    .find(|kept| kept.sequence == sequence)
+                {
                     kept.uri = segment.uri;
                     kept.uri_key = segment.uri_key;
                     if kept.prefetch && !segment.prefetch {
@@ -762,7 +1000,11 @@ impl Playlist {
             self.push(segment);
         }
         while self.segments.len() > MAX_SEGMENTS {
-            if self.segments.pop_front().is_some_and(|segment| segment.discontinuity) {
+            if self
+                .segments
+                .pop_front()
+                .is_some_and(|segment| segment.discontinuity)
+            {
                 self.discontinuity_sequence += 1;
             }
         }
@@ -772,8 +1014,8 @@ impl Playlist {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
         self.remember(segment.key, sequence);
-        let discontinuity = (segment.discontinuity || self.pending_discontinuity)
-            && !self.segments.is_empty();
+        let discontinuity =
+            (segment.discontinuity || self.pending_discontinuity) && !self.segments.is_empty();
         self.pending_discontinuity = false;
         self.segments.push_back(Segment {
             sequence,
@@ -878,7 +1120,9 @@ mod tests {
     /// Twitch's hints for the next segments, numbered after the listed ones.
     fn with_prefetch(mut text: String, numbers: &[u64]) -> String {
         for n in numbers {
-            text.push_str(&format!("#EXT-X-TWITCH-PREFETCH:https://cdn.example/{n}.ts?sig=p\n"));
+            text.push_str(&format!(
+                "#EXT-X-TWITCH-PREFETCH:https://cdn.example/{n}.ts?sig=p\n"
+            ));
         }
         text
     }
@@ -908,14 +1152,35 @@ mod tests {
     fn fragmented_mp4_never_starts_on_a_fragment_being_written() {
         let status = Status::default();
         let mut list = Playlist::default();
-        let first = with_prefetch(playlist(0, &[("live", ""); 10]), &[10, 11])
-            .replacen("#EXT-X-MEDIA-SEQUENCE", "#EXT-X-MAP:URI=\"https://cdn.example/init.mp4\"
-#EXT-X-MEDIA-SEQUENCE", 1);
+        let first = with_prefetch(playlist(0, &[("live", ""); 10]), &[10, 11]).replacen(
+            "#EXT-X-MEDIA-SEQUENCE",
+            "#EXT-X-MAP:URI=\"https://cdn.example/init.mp4\"
+#EXT-X-MEDIA-SEQUENCE",
+            1,
+        );
         assert!(list.begin(parse(&first, "https://up/x.m3u8"), &HashMap::new(), &status));
         let (start, uris) = sequences(&list.render().unwrap());
         // 5 s back counting the two prefetch entries, on a finished fragment.
         assert_eq!(uris, ["9.ts", "10.ts", "11.ts"]);
         assert_eq!(start, 9);
+    }
+    #[test]
+    fn prefetch_entries_inherit_the_active_initialization_and_encryption_tags() {
+        let text = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXT-X-MAP:URI=\"https://cdn.example/init.mp4\"\n#EXT-X-KEY:METHOD=AES-128,URI=\"key\"\n#EXTINF:2,live\nhttps://cdn.example/1.mp4\n#EXT-X-TWITCH-PREFETCH:https://cdn.example/2.mp4\n";
+        let parsed = parse(text, "https://cdn.example/live.m3u8");
+        assert_eq!(parsed.segments.len(), 2);
+        assert!(
+            parsed.segments[1]
+                .tags
+                .iter()
+                .any(|tag| tag.starts_with("#EXT-X-MAP:"))
+        );
+        assert!(
+            parsed.segments[1]
+                .tags
+                .iter()
+                .any(|tag| tag.starts_with("#EXT-X-KEY:"))
+        );
     }
 
     fn sequences(body: &str) -> (u64, Vec<String>) {
@@ -928,7 +1193,15 @@ mod tests {
         let uris = body
             .lines()
             .filter(|line| line.starts_with("https://"))
-            .map(|line| line.split('?').next().unwrap().rsplit('/').next().unwrap().to_owned())
+            .map(|line| {
+                line.split('?')
+                    .next()
+                    .unwrap()
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
             .collect();
         (first, uris)
     }
@@ -938,13 +1211,20 @@ mod tests {
         let status = Status::default();
         let mut list = Playlist::default();
         let live: Vec<(&str, &str)> = vec![("live", ""); 10];
-        assert!(list.begin(parse(&playlist(100, &live), "https://up/x.m3u8"), &HashMap::new(), &status));
+        assert!(list.begin(
+            parse(&playlist(100, &live), "https://up/x.m3u8"),
+            &HashMap::new(),
+            &status
+        ));
         let (first, uris) = sequences(&list.render().unwrap());
         // 5 s of 2 s segments from the end: the last three.
         assert_eq!(uris, ["107.ts", "108.ts", "109.ts"]);
         assert_eq!(first, 107);
         // The next read has the old window plus one more; nothing old returns.
-        list.merge(parse(&playlist(101, &[("live", ""); 10]), "https://up/x.m3u8"), &status);
+        list.merge(
+            parse(&playlist(101, &[("live", ""); 10]), "https://up/x.m3u8"),
+            &status,
+        );
         let (first, uris) = sequences(&list.render().unwrap());
         assert_eq!(first, 107);
         assert_eq!(uris, ["107.ts", "108.ts", "109.ts", "110.ts"]);
@@ -969,7 +1249,11 @@ mod tests {
     fn drops_ads_and_marks_where_the_stream_resumes() {
         let status = Status::default();
         let mut list = Playlist::default();
-        assert!(list.begin(parse(&playlist(0, &[("live", ""); 6]), "https://up/x.m3u8"), &HashMap::new(), &status));
+        assert!(list.begin(
+            parse(&playlist(0, &[("live", ""); 6]), "https://up/x.m3u8"),
+            &HashMap::new(),
+            &status
+        ));
         let mut next: Vec<(&str, &str)> = vec![("live", ""); 5];
         next.push(("Amazon|123", ""));
         next.push(("Amazon|123", ""));
@@ -977,7 +1261,11 @@ mod tests {
         list.merge(parse(&playlist(1, &next), "https://up/x.m3u8"), &status);
         let body = list.render().unwrap();
         assert!(!body.contains("6.ts") && !body.contains("7.ts"));
-        assert!(body.contains("#EXT-X-DISCONTINUITY\n#EXT-X-PROGRAM-DATE-TIME:2026-11-12T10:00:08.000Z"));
+        assert!(
+            body.contains(
+                "#EXT-X-DISCONTINUITY\n#EXT-X-PROGRAM-DATE-TIME:2026-11-12T10:00:08.000Z"
+            )
+        );
         assert_eq!(status.ads_skipped.load(Ordering::Acquire), 2);
         // Local numbers stay contiguous across the gap.
         let (first, uris) = sequences(&body);
@@ -990,7 +1278,11 @@ mod tests {
         let status = Status::default();
         let mut list = Playlist::default();
         let first: Vec<(&str, &str)> = vec![("live", ""); 6];
-        assert!(list.begin(parse(&playlist(0, &first), "https://up/x.m3u8"), &HashMap::new(), &status));
+        assert!(list.begin(
+            parse(&playlist(0, &first), "https://up/x.m3u8"),
+            &HashMap::new(),
+            &status
+        ));
         let mut next: Vec<(&str, &str)> = vec![("live", ""); 6];
         next.extend([("Amazon|1", ""), ("live", "")]);
         list.merge(parse(&playlist(0, &next), "https://up/x.m3u8"), &status);
@@ -1005,7 +1297,11 @@ mod tests {
         let status = Status::default();
         let mut list = Playlist::default();
         let ads: Vec<(&str, &str)> = vec![("Amazon|1", ""); 4];
-        assert!(!list.begin(parse(&playlist(0, &ads), "https://up/x.m3u8"), &HashMap::new(), &status));
+        assert!(!list.begin(
+            parse(&playlist(0, &ads), "https://up/x.m3u8"),
+            &HashMap::new(),
+            &status
+        ));
         assert!(list.render().is_none());
     }
 
@@ -1013,7 +1309,10 @@ mod tests {
     fn stitched_ad_date_ranges_mark_segments_as_ads() {
         let range = "#EXT-X-DATERANGE:ID=\"stitched-ad-1\",CLASS=\"twitch-stitched-ad\",START-DATE=\"2026-11-12T10:00:02.000Z\",DURATION=4.0\n";
         let parsed = parse(
-            &playlist(0, &[("live", range), ("live", ""), ("live", ""), ("live", "")]),
+            &playlist(
+                0,
+                &[("live", range), ("live", ""), ("live", ""), ("live", "")],
+            ),
             "https://up/x.m3u8",
         );
         // The test playlist dates segment n at n seconds: 2 and 3 fall in
@@ -1030,6 +1329,7 @@ mod tests {
             agent: ureq::Agent::new_with_defaults(),
             sessions: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
+            requests: AtomicU32::new(0),
         };
         assert!(relay.respond("/wrong/1/live.m3u8").is_none());
         assert!(relay.respond("/abc/2/live.m3u8").is_none());

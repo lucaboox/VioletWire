@@ -24,11 +24,56 @@ use std::{
 const MAX_MESSAGES: usize = 500;
 const MAX_IMAGES: usize = 400;
 const MAX_IMAGE_BYTES: usize = 96 * 1024 * 1024;
-/// A titled group of emotes in the picker (Electron's picker sections).
+/// What a section shows on the picker's side rail (Electron's `vw-emote-rail`).
+#[derive(Clone)]
+enum RailMark {
+    Avatar(String),
+    Glyph(&'static str),
+    Letter(String),
+    Global,
+    Effects,
+    Favorites,
+}
+
+/// A titled group of emotes in the picker (Electron's picker sections). An
+/// emoji entry's "url" is `emoji:` followed by its name.
 struct PickerSection {
     label: String,
     avatar: Option<String>,
+    mark: RailMark,
+    /// Effect emotes change a neighbour; picking one keeps the picker open.
+    effects: bool,
     emotes: Vec<(String, String)>,
+}
+
+/// Electron's emoji groups (emojibase), in its order.
+const EMOJI_GROUPS: [(u8, &str, &str); 9] = [
+    (0, "Smileys & emotion", "😀"),
+    (1, "People & body", "👋"),
+    (3, "Animals & nature", "🐱"),
+    (4, "Food & drink", "🍎"),
+    (5, "Travel & places", "🏠"),
+    (6, "Activities", "⚽"),
+    (7, "Objects", "📝"),
+    (8, "Symbols", "⛔"),
+    (9, "Flags", "🏁"),
+];
+
+/// Unicode emoji Windows 10's emoji font can draw (up to Emoji 12.1), from
+/// emojibase's data (MIT), as Electron's picker used: group, emoji, name,
+/// shortcodes.
+fn emoji() -> &'static [(u8, &'static str, &'static str, &'static str)] {
+    static EMOJI: std::sync::OnceLock<Vec<(u8, &'static str, &'static str, &'static str)>> =
+        std::sync::OnceLock::new();
+    EMOJI.get_or_init(|| {
+        include_str!("../../assets/emoji.tsv")
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split('\t');
+                Some((fields.next()?.parse().ok()?, fields.next()?, fields.next()?, fields.next().unwrap_or("")))
+            })
+            .collect()
+    })
 }
 type PickerCache = (String, &'static str, Arc<Vec<PickerSection>>);
 
@@ -72,6 +117,7 @@ pub struct Chat {
     picker: bool,
     picker_provider: &'static str,
     picker_cache: Option<PickerCache>,
+    picker_scroll: gpui::UniformListScrollHandle,
     notice: Option<SharedString>,
     last_send: Option<Instant>,
     sending: bool,
@@ -473,6 +519,14 @@ impl Chat {
         }
     }
     pub fn probe_layout(&mut self, picker: bool, extras: bool, cx: &mut Context<Self>) {
+        // `VIOLETWIRE_PROBE_PICKER=Emoji` (or a provider) picks the tab shown.
+        if let Ok(tab) = std::env::var("VIOLETWIRE_PROBE_PICKER")
+            && let Some(tab) = ["Favorites", "7TV", "Twitch", "FFZ", "BTTV", "Emoji"]
+                .into_iter()
+                .find(|known| *known == tab)
+        {
+            self.picker_provider = tab;
+        }
         if extras
             && self.replying.is_none()
             && let Some(message) = self.messages.back()
@@ -565,6 +619,7 @@ impl Chat {
             picker: false,
             picker_provider: "7TV",
             picker_cache: None,
+            picker_scroll: gpui::UniformListScrollHandle::new(),
             notice: None,
             last_send: None,
             sending: false,
@@ -764,10 +819,16 @@ impl Chat {
         let room = self.room.clone();
         let session = self.session.clone();
         self._metadata = Some(cx.spawn(async move |this, cx| {
+            // The saved lists first, so emotes show at once, then the network.
+            for offline in [true, false] {
+            let (room, session) = (room.clone(), session.clone());
             let result = cx
                 .background_executor()
-                .spawn(async move { assets::load(&room, session.as_ref()) })
+                .spawn(async move { assets::load(&room, session.as_ref(), offline) })
                 .await;
+            if offline && result.emotes.is_empty() && result.badges.is_empty() {
+                continue;
+            }
             let _ = this.update(cx, |this, cx| {
                 // A reload (token renewal, say) where one source failed keeps
                 // what that source gave before, rather than blanking it.
@@ -781,11 +842,16 @@ impl Chat {
                 if result.emotes.len() < this.assets.emotes.len() / 2 {
                     result.emotes = std::mem::take(&mut this.assets.emotes);
                 }
+                if result.twitch.is_empty() {
+                    result.twitch = std::mem::take(&mut this.assets.twitch);
+                    result.owners = std::mem::take(&mut this.assets.owners);
+                }
                 this.assets = result;
                 this.picker_cache = None;
                 this.invalidate_messages();
                 cx.notify();
             });
+            }
         }));
     }
     fn evict_image(&mut self, cx: &mut Context<Self>) {
@@ -1443,7 +1509,31 @@ impl Chat {
                     .filter(|name| matches(name))
                     .filter_map(|name| Some((name.clone(), self.assets.emotes.get(name)?.clone())))
                     .collect();
-                sections.push(PickerSection { label: "Favorites".into(), avatar: None, emotes });
+                sections.push(PickerSection {
+                    label: "Favorites".into(),
+                    avatar: None,
+                    mark: RailMark::Favorites,
+                    effects: false,
+                    emotes,
+                });
+            }
+            "Emoji" => {
+                for (group, label, glyph) in EMOJI_GROUPS {
+                    let emotes: Vec<(String, String)> = emoji()
+                        .iter()
+                        .filter(|(kind, _, name, codes)| {
+                            *kind == group && (query.is_empty() || name.contains(query) || codes.contains(query))
+                        })
+                        .map(|(_, character, name, _)| ((*character).to_owned(), format!("emoji:{name}")))
+                        .collect();
+                    sections.push(PickerSection {
+                        label: label.into(),
+                        avatar: None,
+                        mark: RailMark::Glyph(glyph),
+                        effects: false,
+                        emotes,
+                    });
+                }
             }
             "Twitch" => {
                 let mut groups: HashMap<&str, Vec<(String, String)>> = HashMap::new();
@@ -1472,7 +1562,12 @@ impl Chat {
                             .unwrap_or_else(|| ("Channel emotes".to_owned(), None))
                     };
                     let emotes = sorted(groups.remove(owner).unwrap_or_default());
-                    sections.push(PickerSection { label, avatar, emotes });
+                    let mark = match (&avatar, owner.is_empty()) {
+                        (_, true) => RailMark::Global,
+                        (Some(url), false) => RailMark::Avatar(url.clone()),
+                        (None, false) => RailMark::Letter(label.chars().next().map(String::from).unwrap_or_default()),
+                    };
+                    sections.push(PickerSection { label, avatar, mark, effects: false, emotes });
                 }
             }
             provider => {
@@ -1495,9 +1590,31 @@ impl Chat {
                         global.push(entry);
                     }
                 }
-                sections.push(PickerSection { label: self.channel.clone(), avatar: None, emotes: sorted(channel) });
-                sections.push(PickerSection { label: "Global emotes".into(), avatar: None, emotes: sorted(global) });
-                sections.push(PickerSection { label: "Effects".into(), avatar: None, emotes: sorted(effects) });
+                let channel_avatar = self.assets.owners.get(&self.room).and_then(|(_, image)| image.clone());
+                sections.push(PickerSection {
+                    label: self.channel.clone(),
+                    avatar: channel_avatar.clone(),
+                    mark: match channel_avatar {
+                        Some(url) => RailMark::Avatar(url),
+                        None => RailMark::Letter(self.channel.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default()),
+                    },
+                    effects: false,
+                    emotes: sorted(channel),
+                });
+                sections.push(PickerSection {
+                    label: "Global emotes".into(),
+                    avatar: None,
+                    mark: RailMark::Global,
+                    effects: false,
+                    emotes: sorted(global),
+                });
+                sections.push(PickerSection {
+                    label: "Effects".into(),
+                    avatar: None,
+                    mark: RailMark::Effects,
+                    effects: true,
+                    emotes: sorted(effects),
+                });
             }
         }
         sections.retain(|section| !section.emotes.is_empty());
@@ -1517,7 +1634,9 @@ impl Chat {
             sections
         };
         let count: usize = sections.iter().map(|section| section.emotes.len()).sum();
-        let columns = ((f32::from(self.list.viewport_bounds().size.width) - 40.) / 42.)
+        // The side rail takes 44 px when it shows.
+        let rail_width = if query.is_empty() && sections.len() > 1 { 44. } else { 0. };
+        let columns = ((f32::from(self.list.viewport_bounds().size.width) - 40. - rail_width) / 42.)
             .floor()
             .clamp(1., 12.) as usize;
         let mut rows = Vec::new();
@@ -1530,8 +1649,15 @@ impl Chat {
                 start = end;
             }
         }
+        // Each section's header row, for the side rail's jumps.
+        let section_rows: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(row, kind)| matches!(kind, PickerRow::Header(_)).then_some(row))
+            .collect();
         let rows = Arc::new(rows);
         let favorites: HashSet<String> = self.preferences.emote_favorites.iter().cloned().collect();
+        let rail_sections = sections.clone();
         let grid = gpui::uniform_list(
             SharedString::from(format!("emote-grid-{}-{}", self.picker_provider, query)),
             rows.len(),
@@ -1573,8 +1699,10 @@ impl Chat {
                         }
                         PickerRow::Emotes(index, span) => {
                             let mut line = div().id(row).h(px(44.)).px_2().flex().items_center().gap_1();
+                            let keep_open = sections[*index].effects;
                             for (name, url) in &sections[*index].emotes[span.clone()] {
-                                let image = this.image(url, false, cx);
+                                let emoji_name = url.strip_prefix("emoji:").map(str::to_owned);
+                                let image = if emoji_name.is_some() { None } else { this.image(url, false, cx) };
                                 let label = name.clone();
                                 let insert = name.clone();
                                 let starred = favorites.contains(name);
@@ -1594,6 +1722,14 @@ impl Chat {
                                                     .object_fit(ObjectFit::Contain),
                                             )
                                         })
+                                        .when(emoji_name.is_some(), |v| {
+                                            v.flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .text_size(px(24.))
+                                                .font_family("Segoe UI Emoji")
+                                                .child(name.clone())
+                                        })
                                         .when(starred, |v| {
                                             v.child(
                                                 ui::icon(Icon::StarFilled, 10.)
@@ -1604,8 +1740,13 @@ impl Chat {
                                             )
                                         })
                                         .tooltip(move |_, cx| {
-                                            cx.new(|_| ui::Tooltip(format!("{label} · Alt+click to favorite").into()))
-                                                .into()
+                                            let label = emoji_name.clone().unwrap_or_else(|| label.clone());
+                                            cx.new(|_| {
+                                                ui::Tooltip(
+                                                    format!("{label} · Ctrl+click keeps the picker open · Alt+click to favorite").into(),
+                                                )
+                                            })
+                                            .into()
                                         })
                                         .on_click(cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                                             if event.modifiers().alt {
@@ -1616,7 +1757,11 @@ impl Chat {
                                                 input.append(&format!("{insert} "), cx);
                                                 window.focus(&gpui::Focusable::focus_handle(input, cx));
                                             });
-                                            this.picker = false;
+                                            // Electron: Ctrl+click inserts and keeps the picker
+                                            // open; so does an effect, which needs an emote next.
+                                            if !event.modifiers().control && !keep_open {
+                                                this.picker = false;
+                                            }
                                             cx.notify();
                                         })),
                                 );
@@ -1627,8 +1772,73 @@ impl Chat {
                     .collect::<Vec<_>>()
             }),
         )
+        .track_scroll(self.picker_scroll.clone())
         .flex_1()
         .min_h_0();
+        let sections = rail_sections;
+        let rail = (query.is_empty() && sections.len() > 1).then(|| {
+            div()
+                .id("emote-rail")
+                .w(px(44.))
+                .flex_none()
+                .h_full()
+                .overflow_y_scroll()
+                .py_1()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(4.))
+                .border_l_1()
+                .border_color(theme::border())
+                .children(sections.iter().zip(section_rows).enumerate().map(|(index, (section, row))| {
+                    let label = section.label.clone();
+                    let mark = match &section.mark {
+                        RailMark::Avatar(url) => match self.image(url, false, cx) {
+                            Some(image) => img(ImageSource::Render(image)).size(px(24.)).rounded_full().into_any_element(),
+                            None => div().size(px(24.)).rounded_full().bg(theme::surface_hover()).into_any_element(),
+                        },
+                        RailMark::Glyph(glyph) => div()
+                            .text_size(px(18.))
+                            .font_family("Segoe UI Emoji")
+                            .child(*glyph)
+                            .into_any_element(),
+                        RailMark::Letter(letter) => div()
+                            .size(px(24.))
+                            .rounded_full()
+                            .bg(theme::selected())
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::BOLD)
+                            .child(letter.clone())
+                            .into_any_element(),
+                        RailMark::Global => ui::icon(Icon::Globe, 18.).into_any_element(),
+                        RailMark::Effects => ui::icon(Icon::Sparkles, 18.).into_any_element(),
+                        RailMark::Favorites => ui::icon(Icon::StarFilled, 18.).text_color(rgb(0xfacc15)).into_any_element(),
+                    };
+                    let scroll = self.picker_scroll.clone();
+                    div()
+                        .id(index)
+                        .size(px(34.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(7.))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme::surface_hover()))
+                        .child(mark)
+                        .tooltip(move |_, cx| cx.new(|_| ui::Tooltip(label.clone().into())).into())
+                        .on_click(move |_, _, _| scroll.scroll_to_item(row, gpui::ScrollStrategy::Top))
+                }))
+        });
+        let grid = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .child(div().flex_1().min_w_0().h_full().flex().flex_col().child(grid))
+            .when_some(rail, |row, rail| row.child(rail));
         div()
             .absolute()
             .occlude()
@@ -1675,6 +1885,7 @@ impl Chat {
                         ("twitch-emotes", "Twitch"),
                         ("ffz-emotes", "FFZ"),
                         ("bttv-emotes", "BTTV"),
+                        ("emoji-tab", "Emoji"),
                     ]
                     .into_iter()
                     .map(|(id, provider)| {
@@ -1693,6 +1904,7 @@ impl Chat {
                         .text_size(px(11.))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.picker_provider = provider;
+                            this.picker_scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
                             cx.notify();
                         }))
                     }),

@@ -61,6 +61,7 @@ pub struct Player {
     /// them (see vendor/GPUI-PATCH.md); this remains a safety net.
     poll_generation: u64,
     last_polled: std::time::Instant,
+    last_stats_refresh: std::time::Instant,
     login: String,
     gpu: Option<GpuPlayback>,
     gpu_frame: Option<gpui::WindowsSurface>,
@@ -130,7 +131,8 @@ impl Player {
             let (width, height) = gpu.video_size();
             let stats = gpu.last_stats();
             format!(
-                "backend=gpu frames={} fps={:.1} size={width}x{height} cpu_frame_uploads=0 resolved_ms={:?} first_frame_ms={:?} quality={} latency={:?} broadcast={:?} buffer={:?} dropped={:?} recoveries={} compressor_active={}",
+                "backend=gpu input={} frames={} fps={:.1} size={width}x{height} cpu_frame_uploads=0 resolved_ms={:?} first_frame_ms={:?} quality={} latency={:?} broadcast={:?} buffer={:?} dropped={:?} recoveries={} compressor_active={}",
+                gpu.input_kind(),
                 gpu.frames,
                 stats.fps,
                 gpu.resolved_ms,
@@ -178,6 +180,7 @@ impl Player {
             poll_scheduled: false,
             poll_generation: 0,
             last_polled: std::time::Instant::now(),
+            last_stats_refresh: std::time::Instant::now(),
             login: login.to_owned(),
             gpu: None,
             gpu_frame: None,
@@ -432,7 +435,11 @@ impl Player {
                     .child(
                         div()
                             .h_full()
-                            .w(gpui::relative(if self.muted { 0. } else { self.volume as f32 }))
+                            .w(gpui::relative(if self.muted {
+                                0.
+                            } else {
+                                self.volume as f32
+                            }))
                             .rounded_full()
                             .bg(theme::violet_hover()),
                     ),
@@ -475,7 +482,9 @@ impl Player {
         let behind = self.paused
             || stats.is_some_and(|stats| match stats.broadcast_latency {
                 Some(seconds) => seconds > BEHIND_BROADCAST_SECONDS,
-                None => stats.latency.is_some_and(|latency| latency > BEHIND_LIVE_SECONDS),
+                None => stats
+                    .latency
+                    .is_some_and(|latency| latency > BEHIND_LIVE_SECONDS),
             });
         let live_label = if self.paused {
             "Paused"
@@ -604,24 +613,29 @@ impl Player {
             })
             .when(self.gpu.is_some(), |bar| {
                 bar.child(
-                    ui::video_button("quality", Icon::Quality, "Stream quality", self.quality_menu)
-                        .w_auto()
-                        .px(px(9.))
-                        .gap(px(6.))
-                        .when(width >= 560., |button| {
-                            button.child(
-                                div()
-                                    .text_size(px(10.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme::text())
-                                    .child(self.quality_text()),
-                            )
-                        })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.quality_menu = !this.quality_menu;
-                            this.stats_hovered = false;
-                            cx.notify();
-                        })),
+                    ui::video_button(
+                        "quality",
+                        Icon::Quality,
+                        "Stream quality",
+                        self.quality_menu,
+                    )
+                    .w_auto()
+                    .px(px(9.))
+                    .gap(px(6.))
+                    .when(width >= 560., |button| {
+                        button.child(
+                            div()
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme::text())
+                                .child(self.quality_text()),
+                        )
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.quality_menu = !this.quality_menu;
+                        this.stats_hovered = false;
+                        cx.notify();
+                    })),
                 )
             })
             .child(
@@ -678,7 +692,12 @@ impl Player {
     }
 
     /// Gauge plus the latency read-out; hover for a summary, click for the panel.
-    fn stats_button(&self, stats: Option<&Stats>, show_latency: bool, cx: &Context<Self>) -> AnyElement {
+    fn stats_button(
+        &self,
+        stats: Option<&Stats>,
+        show_latency: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let latency = stats
             .and_then(|stats| stats.broadcast_latency.or(stats.latency))
             .map(|latency| format!("{latency:.2}s"));
@@ -773,6 +792,18 @@ impl Player {
             "Waiting for audio".into()
         };
         vec![
+            (
+                "Playback input",
+                self.gpu
+                    .as_ref()
+                    .map_or("Starting", |gpu| match gpu.input_kind() {
+                        "compressed-samples" => "Progressive TS (experimental)",
+                        "compressed-fmp4" => "Progressive fMP4 (experimental)",
+                        "hls-parts" => "Short HLS segments (experimental)",
+                        _ => "Windows HLS",
+                    })
+                    .into(),
+            ),
             ("Latency to broadcaster", seconds(stats.broadcast_latency)),
             ("Latency", seconds(stats.latency)),
             ("Buffer size", seconds(stats.buffer)),
@@ -787,9 +818,10 @@ impl Player {
             ("Framerate", format!("{:.0}", stats.fps)),
             (
                 "Bitrate",
-                stats
-                    .bitrate_kbps
-                    .map_or_else(|| "Measuring".into(), |kbps| format!("{} kbps", compact_count(kbps.round() as u64))),
+                stats.bitrate_kbps.map_or_else(
+                    || "Measuring".into(),
+                    |kbps| format!("{} kbps", compact_count(kbps.round() as u64)),
+                ),
             ),
             (
                 "Dropped frames",
@@ -801,7 +833,10 @@ impl Player {
             ("Stall recoveries", stats.stall_recoveries.to_string()),
             (
                 "Ad segments skipped",
-                self.gpu.as_ref().map_or(0, GpuPlayback::ads_skipped).to_string(),
+                self.gpu
+                    .as_ref()
+                    .map_or(0, GpuPlayback::ads_skipped)
+                    .to_string(),
             ),
             ("Audio compression", normaliser),
             ("Video", "Windows Media Engine (GPU)".into()),
@@ -883,14 +918,20 @@ impl Player {
                             .justify_center()
                             .rounded(px(4.))
                             .border_1()
-                            .border_color(if checked { theme::violet() } else { rgb(0x52525b) })
+                            .border_color(if checked {
+                                theme::violet()
+                            } else {
+                                rgb(0x52525b)
+                            })
                             .bg(if checked { theme::violet() } else { rgba(0) })
                             .when(checked, |box_| {
                                 box_.child(ui::icon(Icon::Check, 11.).text_color(rgb(0xffffff)))
                             }),
                     )
                     .child("Show FPS in the corner")
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_fps_overlay(!checked, cx))),
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.set_fps_overlay(!checked, cx)),
+                    ),
             )
             .into_any_element()
     }
@@ -912,7 +953,11 @@ impl Player {
         div()
             .id("quality-menu")
             .absolute()
-            .right(px(if self.presentation.0 && self.presentation.1 { 370. } else { 112. }))
+            .right(px(if self.presentation.0 && self.presentation.1 {
+                370.
+            } else {
+                112.
+            }))
             .bottom(px(58.))
             .w(px(230.))
             .rounded(px(11.))
@@ -969,13 +1014,19 @@ impl Player {
                             .gap(px(9.))
                             .rounded(px(7.))
                             .text_size(px(11.))
-                            .text_color(if selected { rgb(0xffffff) } else { rgb(0xc4c4cc) })
+                            .text_color(if selected {
+                                rgb(0xffffff)
+                            } else {
+                                rgb(0xc4c4cc)
+                            })
                             .when(selected, |option| option.bg(rgba(0x352d3fe0)))
                             .hover(|style| style.bg(rgba(0x352d3fe0)).text_color(rgb(0xffffff)))
                             .cursor_pointer()
                             .child(div().flex_1().child(label))
                             .when(selected, |option| {
-                                option.child(ui::icon(Icon::Check, 15.).text_color(theme::violet_hover()))
+                                option.child(
+                                    ui::icon(Icon::Check, 15.).text_color(theme::violet_hover()),
+                                )
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.select_quality(name.clone(), cx)
@@ -1023,7 +1074,11 @@ fn stat_rows(rows: &[(&'static str, String)], size: f32, compact: bool) -> gpui:
                     .child(
                         div()
                             .flex_none()
-                            .text_color(if compact { rgb(0xd4d4d8) } else { rgb(0xa1a1aa) })
+                            .text_color(if compact {
+                                rgb(0xd4d4d8)
+                            } else {
+                                rgb(0xa1a1aa)
+                            })
                             .child(*label),
                     )
                     .child(
@@ -1052,12 +1107,27 @@ impl Render for Player {
                         .await;
                     if this
                         .update(cx, |this, cx| {
+                            // Statistics must keep updating independently of
+                            // decoded frames, including while paused/stalled.
+                            if (this.stats_open
+                                || this.stats_hovered
+                                || this.controls_visible
+                                || this.fps_overlay)
+                                && this.last_stats_refresh.elapsed()
+                                    >= std::time::Duration::from_millis(500)
+                                && let Some(gpu) = &mut this.gpu
+                            {
+                                gpu.stats();
+                                this.last_stats_refresh = std::time::Instant::now();
+                                cx.notify();
+                            }
                             // Polling should run every display frame. If the
                             // scheduled poll was lost, start a new one (the
                             // next render schedules it).
                             if this.gpu.is_some()
                                 && this.poll_scheduled
-                                && this.last_polled.elapsed() > std::time::Duration::from_millis(750)
+                                && this.last_polled.elapsed()
+                                    > std::time::Duration::from_millis(750)
                             {
                                 this.poll_generation += 1;
                                 this.poll_scheduled = false;
@@ -1098,7 +1168,14 @@ impl Render for Player {
         if self.gpu.is_some() {
             if self.gpu_frame.is_none() {
                 starting = true;
-                status = Some(if ad_wait { "Ad break" } else { "Loading stream…" }.into());
+                status = Some(
+                    if ad_wait {
+                        "Ad break"
+                    } else {
+                        "Loading stream…"
+                    }
+                    .into(),
+                );
             }
             self.schedule_gpu_poll(window, cx);
         }

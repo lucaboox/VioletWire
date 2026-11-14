@@ -582,6 +582,20 @@ fn emotes_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoEl
     );
     section("EMOTES", "Emote providers", "Provider sets load with each channel.")
         .child(card("Emote size", "Height of emotes in chat, in pixels.", size))
+        .child(card(
+            "Emote cache",
+            format!(
+                "{:.0} MB on disk. Emote images and channel emote lists load from here first.",
+                crate::cache::size() as f64 / (1024. * 1024.)
+            ),
+            ui::button("clear-emote-cache", "Clear", None, ButtonStyle::Secondary)
+                .px_3()
+                .h(px(30.))
+                .on_click(cx.listener(|_, _, _, cx| {
+                    crate::cache::clear();
+                    cx.notify();
+                })),
+        ))
         .children([
             ("7TV", "Global and channel emotes, zero-width overlays."),
             ("FrankerFaceZ", "Global and channel emotes, modifier effects."),

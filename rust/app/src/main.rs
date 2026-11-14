@@ -1,6 +1,7 @@
 // Release builds are a windowed app with no console.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cache;
 mod chat;
 mod format;
 mod http;
@@ -34,6 +35,11 @@ fn main() {
     let probe_seconds = arguments
         .windows(2)
         .find(|pair| pair[0] == "--video-probe-seconds")
+        .and_then(|pair| pair[1].parse::<u64>().ok())
+        .map(|seconds| seconds.clamp(5, 120));
+    let app_probe = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--app-probe-seconds")
         .and_then(|pair| pair[1].parse::<u64>().ok())
         .map(|seconds| seconds.clamp(5, 120));
     if arguments.iter().any(|arg| arg == "--chat-probe") {
@@ -123,6 +129,13 @@ fn main() {
         .run(move |cx: &mut App| {
             input::init(cx);
             preferences::initialize(cx);
+            // Keep the emote caches within their size limits.
+            std::thread::spawn(cache::prune);
+            if (probe_seconds.is_some() || ui_probe.is_some() || app_probe.is_some())
+                && arguments.iter().any(|arg| arg == "--probe-balanced")
+            {
+                playback::relay::set_low_latency(false);
+            }
             cx.on_window_closed(|cx| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -141,23 +154,24 @@ fn main() {
             );
             // Reopen where the window was last, if that monitor is still
             // there and the window would be visible on it.
-            let restored = (probe_seconds.is_none() && ui_probe.is_none())
-                .then(|| preferences::get(cx).window)
-                .flatten()
-                .and_then(|placement| {
-                    let displays = cx.displays();
-                    let display = displays.iter().find(|display| {
-                        placement.display.as_deref()
-                            == display.uuid().ok().map(|uuid| uuid.to_string()).as_deref()
-                    })?;
-                    let saved = Bounds::new(
-                        gpui::point(px(placement.x), px(placement.y)),
-                        size(px(placement.width), px(placement.height)),
-                    );
-                    let visible = display.bounds().intersect(&saved);
-                    (visible.size.width > px(200.) && visible.size.height > px(120.))
-                        .then_some((display.id(), saved, placement.maximized))
-                });
+            let restored =
+                (probe_seconds.is_none() && ui_probe.is_none())
+                    .then(|| preferences::get(cx).window)
+                    .flatten()
+                    .and_then(|placement| {
+                        let displays = cx.displays();
+                        let display = displays.iter().find(|display| {
+                            placement.display.as_deref()
+                                == display.uuid().ok().map(|uuid| uuid.to_string()).as_deref()
+                        })?;
+                        let saved = Bounds::new(
+                            gpui::point(px(placement.x), px(placement.y)),
+                            size(px(placement.width), px(placement.height)),
+                        );
+                        let visible = display.bounds().intersect(&saved);
+                        (visible.size.width > px(200.) && visible.size.height > px(120.))
+                            .then_some((display.id(), saved, placement.maximized))
+                    });
             let options = WindowOptions {
                 show: probe_seconds.is_none() && ui_probe.is_none(),
                 focus: probe_seconds.is_none() && ui_probe.is_none(),
@@ -303,7 +317,20 @@ fn main() {
                     .find(|pair| pair[0] == "--probe-quality")
                     .map(|pair| pair[1].clone());
                 let window = cx
-                    .open_window(options, |_, cx| cx.new(|cx| player::Player::new(&login, &crate::preferences::get(cx))))
+                    .open_window(options, |_, cx| {
+                        cx.new(|cx| {
+                            let mut preferences = crate::preferences::get(cx);
+                            if let Some(quality) = arguments
+                                .windows(2)
+                                .find(|pair| pair[0] == "--probe-initial-quality")
+                                .map(|pair| pair[1].as_str())
+                                .filter(|quality| playback::resolver::is_quality(quality))
+                            {
+                                preferences.player_quality = quality.to_owned();
+                            }
+                            player::Player::new(&login, &preferences)
+                        })
+                    })
                     .expect("Could not open probe window");
                 cx.spawn(async move |cx| {
                     let started = std::time::Instant::now();
@@ -372,17 +399,54 @@ fn main() {
                 .detach();
                 return;
             }
-            if cx
-                .open_window(options, |_, cx| cx.new(|cx| Root::new(play, cx)))
-                .is_err()
-            {
+            let Ok(window) = cx.open_window(options, |_, cx| cx.new(|cx| Root::new(play, cx)))
+            else {
                 cx.quit();
                 return;
+            };
+            if let Some(seconds) = app_probe {
+                // A normal visible window: natural display-driven rendering,
+                // real chat and sidebar, without the hidden probe's forced ticks.
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(seconds))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        let _ = window.update(cx, |root, window, cx| {
+                            println!("{}", root.diagnostics(cx));
+                            probe_result.store(
+                                root.probe_succeeded(cx),
+                                std::sync::atomic::Ordering::Release,
+                            );
+                            if let Some(directory) = &snapshot_dir {
+                                let saved = window.capture_rendered_frame().and_then(
+                                    |(width, height, pixels)| {
+                                        std::fs::create_dir_all(directory)?;
+                                        image::save_buffer(
+                                            directory.join("app.png"),
+                                            &pixels,
+                                            width,
+                                            height,
+                                            image::ColorType::Rgba8,
+                                        )?;
+                                        Ok(())
+                                    },
+                                );
+                                if saved.is_err() {
+                                    eprintln!("App snapshot failed.");
+                                }
+                            }
+                        });
+                        cx.quit();
+                    });
+                })
+                .detach();
+            } else {
+                cx.activate(true);
             }
-            cx.activate(true);
         });
     playback::resolver::shutdown();
-    if (probe_seconds.is_some() || ui_probe.is_some())
+    if (probe_seconds.is_some() || ui_probe.is_some() || app_probe.is_some())
         && !probe_passed.load(std::sync::atomic::Ordering::Acquire)
     {
         std::process::exit(1);
@@ -403,7 +467,9 @@ pub mod render_stats {
     impl Drop for Timer {
         fn drop(&mut self) {
             let took = self.1.elapsed();
-            let mut stats = STATS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut stats = STATS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let (since, entries) = stats.get_or_insert_with(|| (Instant::now(), Vec::new()));
             match entries.iter_mut().find(|entry| entry.0 == self.0) {
                 Some(entry) => {
@@ -415,7 +481,9 @@ pub mod render_stats {
             if since.elapsed() > Duration::from_secs(2) {
                 let line: Vec<String> = entries
                     .iter()
-                    .map(|(name, count, total)| format!("{name} {count}x {:.1}ms", total.as_secs_f64() * 1000.))
+                    .map(|(name, count, total)| {
+                        format!("{name} {count}x {:.1}ms", total.as_secs_f64() * 1000.)
+                    })
                     .collect();
                 eprintln!("[renders] {}", line.join(", "));
                 *stats = None;

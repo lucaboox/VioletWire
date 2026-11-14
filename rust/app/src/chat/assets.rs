@@ -83,17 +83,28 @@ pub(super) fn helix_json(
     session: &Session,
     params: &[(&str, &str)],
 ) -> Option<Value> {
-    json_query(agent, url, Some(session), params)
+    json_query(agent, url, Some(session), params, false)
 }
-fn json(agent: &ureq::Agent, url: &str, session: Option<&Session>) -> Option<Value> {
-    json_query(agent, url, session, &[])
+fn json(agent: &ureq::Agent, url: &str, session: Option<&Session>, offline: bool) -> Option<Value> {
+    json_query(agent, url, session, &[], offline)
 }
+/// `offline` reads the copy saved by the last successful request (Electron's
+/// persisted emote sets) instead of the network; a network answer is saved.
 fn json_query(
     agent: &ureq::Agent,
     url: &str,
     session: Option<&Session>,
     params: &[(&str, &str)],
+    offline: bool,
 ) -> Option<Value> {
+    let key = std::iter::once(url.to_owned())
+        .chain(params.iter().map(|(name, value)| format!("{name}={value}")))
+        .chain(session.map(|session| format!("user={}", session.identity.user_id)))
+        .collect::<Vec<_>>()
+        .join("&");
+    if offline {
+        return serde_json::from_slice(&crate::cache::read(crate::cache::Kind::EmoteSets, &key)?).ok();
+    }
     let mut request = agent.get(url).config().max_redirects(0).build();
     if let Some(s) = session {
         if !url.starts_with("https://api.twitch.tv/helix/")
@@ -118,7 +129,9 @@ fn json_query(
         .limit(2 * 1024 * 1024)
         .read_to_vec()
         .ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let value = serde_json::from_slice(&bytes).ok()?;
+    crate::cache::write(crate::cache::Kind::EmoteSets, &key, &bytes);
+    Some(value)
 }
 fn insert(map: &mut HashMap<String, String>, name: &str, url: String) {
     if !name.is_empty()
@@ -155,7 +168,7 @@ fn logical(width: &Value, height: &Value, fallback: f32) -> (f32, f32) {
     }
 }
 
-pub fn load(room: &str, session: Option<&Session>) -> Assets {
+pub fn load(room: &str, session: Option<&Session>, offline: bool) -> Assets {
     if !room.bytes().all(|b| b.is_ascii_digit()) || room.is_empty() {
         return Assets::default();
     }
@@ -170,7 +183,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
             .into_iter()
             .enumerate()
             {
-                if let Some(v) = json(&agent, &endpoint, None) {
+                if let Some(v) = json(&agent, &endpoint, None, offline) {
                     let list: Vec<&Value> = if let Some(a) = v.as_array() {
                         a.iter().collect()
                     } else {
@@ -212,7 +225,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
             .into_iter()
             .enumerate()
             {
-                if let Some(v) = json(&agent, &endpoint, None)
+                if let Some(v) = json(&agent, &endpoint, None, offline)
                     && let Some(sets) = v["sets"].as_object()
                 {
                     for set in sets.values() {
@@ -264,7 +277,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
             .into_iter()
             .enumerate()
             {
-                if let Some(v) = json(&agent, &endpoint, None) {
+                if let Some(v) = json(&agent, &endpoint, None, offline) {
                     let data = if v.get("emote_set").is_some() {
                         &v["emote_set"]
                     } else {
@@ -305,7 +318,7 @@ pub fn load(room: &str, session: Option<&Session>) -> Assets {
             }
             emotes
         });
-        let twitch = scope.spawn(|| twitch_assets(&agent, room, session));
+        let twitch = scope.spawn(|| twitch_assets(&agent, room, session, offline));
         let mut result = twitch.join().unwrap_or_default();
         // Electron's precedence: 7TV, then FFZ, then BTTV; within each, the
         // channel's set over the global one (listed later, so it replaces).
@@ -335,7 +348,7 @@ fn seven_zero_width(emote: &Value) -> bool {
         })
 }
 
-fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>) -> Assets {
+fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>, offline: bool) -> Assets {
     let mut result = Assets::default();
     let Some(session) = session else {
         return result;
@@ -344,7 +357,7 @@ fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>) -> 
         "https://api.twitch.tv/helix/chat/badges/global".into(),
         format!("https://api.twitch.tv/helix/chat/badges?broadcaster_id={room}"),
     ] {
-        if let Some(value) = json(agent, &endpoint, Some(session)) {
+        if let Some(value) = json(agent, &endpoint, Some(session), offline) {
             for set in value["data"].as_array().into_iter().flatten() {
                 let Some(name) = set["set_id"].as_str() else {
                     continue;
@@ -378,6 +391,7 @@ fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>) -> 
             "https://api.twitch.tv/helix/chat/emotes/user",
             Some(session),
             &params,
+            offline,
         ) else {
             break;
         };
@@ -395,6 +409,7 @@ fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>) -> 
             agent,
             "https://api.twitch.tv/helix/chat/emotes/global",
             Some(session),
+            offline,
         )
     {
         add_twitch_emotes(&mut result.emotes, &mut result.twitch, &value);
@@ -411,7 +426,7 @@ fn twitch_assets(agent: &ureq::Agent, room: &str, session: Option<&Session>) -> 
     let mut found = HashMap::new();
     for chunk in owners.chunks(100) {
         let params: Vec<(&str, &str)> = chunk.iter().map(|id| ("id", *id)).collect();
-        if let Some(value) = json_query(agent, "https://api.twitch.tv/helix/users", Some(session), &params) {
+        if let Some(value) = json_query(agent, "https://api.twitch.tv/helix/users", Some(session), &params, offline) {
             for user in value["data"].as_array().into_iter().flatten() {
                 if let (Some(id), Some(name)) = (user["id"].as_str(), user["display_name"].as_str()) {
                     let image = user["profile_image_url"]

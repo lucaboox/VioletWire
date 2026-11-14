@@ -30,7 +30,7 @@ pub fn probe(login: &str) -> anyhow::Result<()> {
         }
     }
     drop(connection);
-    let assets = assets::load(&room, None);
+    let assets = assets::load(&room, None, false);
     println!(
         "chat_connected={connected} messages={count} native_emote_ranges={emotes} provider_emotes={}",
         assets.emotes.len()

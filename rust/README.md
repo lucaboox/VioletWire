@@ -75,6 +75,24 @@ The first build compiles GPUI and takes a few minutes. Later builds take seconds
 - Media Engine runs without `MF_MEDIA_ENGINE_REAL_TIME_MODE`: its low-latency
   decoding skips B-frame reordering, and streams that use B-frames smeared into
   blocks until the next key frame.
+- Experimental short TS pieces (`VIOLETWIRE_PARTS=1`, off by default). The relay
+  cuts the growing fragment at safe video/PES boundaries, adds PAT/PMT tables,
+  and serves immutable ordinary HLS segments from a 30-second / 48 MiB ring.
+  Live tests reduced measured latency by about 0.9–1.4 s while keeping native
+  video framerate, but did not reach the handoff's 3–3.5 s target. Startup varied
+  between roughly 2.8 and 4.2 s. Balanced and fMP4 retain the existing path.
+  Automatic settling is separately opt-in: it caused pauses in testing.
+  See [the experiment results](docs/low-latency-parts-results.md) for measurements,
+  limits and the separate dev-build launcher.
+- A second opt-in trial bypasses Media Engine's HLS frontend using a custom
+  compressed-sample source, retaining GPU decode/rendering. Two one-minute TS
+  runs reported 2.93–3.90 s broadcast latency without post-start stalls;
+  a 1440p60 HEVC fMP4 run reported 4.42 s with zero dropped frames over a minute.
+  Balanced retains HLS. This is not enabled in the normal build.
+  See [progressive source results](docs/progressive-source-results.md) and
+  [fMP4 / 1440p results](docs/progressive-mp4-results.md), plus
+  `scripts/start-progressive-source-trial.ps1` for the separate trial launcher
+  and outstanding long-session validation.
 - Clip: Twitch's official Create Clip API (`clips:edit`), then Twitch's editor in
   the browser.
 - Keyboard and mouse shortcuts as in Electron: Space, M or middle-click, F or
@@ -253,8 +271,9 @@ This workspace now patches GPUI 0.2.2 locally to draw
 Windows GPU textures; see [the patch notes](vendor/GPUI-PATCH.md).
 Remaining pieces to port from Electron:
 
-- **The rest of the relay logic**: LL-HLS parts and keyframe-safe cuts. The
-  Rust relay has Electron's stable numbering, ad filtering and key-frame start. Media Engine
+- **Lower-latency delivery**: short ordinary TS segments are implemented as an
+  opt-in experiment; fMP4 subdivision and a satisfactory startup/settling policy
+  remain. The Rust relay has stable numbering, ad filtering and key-frame start. Media Engine
   ignores `EXT-X-START`; it always begins at the first listed segment, which is
   what the relay's trimmed first response relies on.
 

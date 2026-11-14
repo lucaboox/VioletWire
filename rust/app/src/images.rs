@@ -62,6 +62,12 @@ pub fn fetch_chat(agent: &ureq::Agent, url: &str, animated: bool) -> Result<Arc<
     if !crate::chat::is_image_url(url) {
         bail!("Invalid emote image host.");
     }
+    // Emote and badge images never change for one URL: keep them on disk.
+    if let Some(bytes) = crate::cache::read(crate::cache::Kind::Images, url)
+        && let Ok(image) = decode_chat(&bytes, animated)
+    {
+        return Ok(image);
+    }
     let mut response = agent
         .get(url)
         .config()
@@ -78,7 +84,9 @@ pub fn fetch_chat(agent: &ureq::Agent, url: &str, animated: bool) -> Result<Arc<
         .with_config()
         .limit(512 * 1024)
         .read_to_vec()?;
-    decode_chat(&bytes, animated)
+    let image = decode_chat(&bytes, animated)?;
+    crate::cache::write(crate::cache::Kind::Images, url, &bytes);
+    Ok(image)
 }
 
 fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
@@ -97,7 +105,15 @@ fn decode_chat(bytes: &[u8], animated: bool) -> Result<Arc<RenderImage>> {
     let cursor = std::io::Cursor::new(bytes);
     let frames: Box<dyn Iterator<Item = image::ImageResult<Frame>>> = match format {
         ImageFormat::Gif => Box::new(GifDecoder::new(cursor)?.into_frames()),
-        ImageFormat::Webp => Box::new(WebPDecoder::new(cursor)?.into_frames()),
+        ImageFormat::Webp => {
+            let mut decoder = WebPDecoder::new(cursor)?;
+            if decoder.has_animation() {
+                // image-webp leaves disposal disabled without an explicit
+                // background. Emotes clear disposed regions to transparency.
+                decoder.set_background_color(image::Rgba([0, 0, 0, 0]))?;
+            }
+            Box::new(decoder.into_frames())
+        }
         _ => Box::new(std::iter::once(
             image::load_from_memory(bytes).map(|image| Frame::new(image.into_rgba8())),
         )),
@@ -157,7 +173,10 @@ pub fn transformed(
     let mut frames = Vec::with_capacity(image.frame_count());
     for index in 0..image.frame_count() {
         let size = image.size(index);
-        let (width, height) = (u32::try_from(size.width.0).ok()?, u32::try_from(size.height.0).ok()?);
+        let (width, height) = (
+            u32::try_from(size.width.0).ok()?,
+            u32::try_from(size.height.0).ok()?,
+        );
         let buffer = image::RgbaImage::from_raw(width, height, image.as_bytes(index)?.to_vec())?;
         let mut buffer = match rotate {
             1 => image::imageops::rotate90(&buffer),
@@ -185,10 +204,123 @@ pub fn decoded_bytes(image: &RenderImage) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn animated_webp(canvas: (u32, u32), frames: &[(image::RgbaImage, u32, u32, bool)]) -> Vec<u8> {
+        fn uint24(out: &mut Vec<u8>, value: u32) {
+            out.extend_from_slice(&value.to_le_bytes()[..3]);
+        }
+        fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], bytes: &[u8]) {
+            out.extend_from_slice(kind);
+            out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            out.extend_from_slice(bytes);
+            if !bytes.len().is_multiple_of(2) {
+                out.push(0);
+            }
+        }
+        let mut body = b"WEBP".to_vec();
+        let mut header = vec![0x12, 0, 0, 0]; // Animation and alpha.
+        uint24(&mut header, canvas.0 - 1);
+        uint24(&mut header, canvas.1 - 1);
+        chunk(&mut body, b"VP8X", &header);
+        chunk(&mut body, b"ANIM", &[0; 6]);
+        for (pixels, left, top, dispose) in frames {
+            let mut encoded = Vec::new();
+            image::codecs::webp::WebPEncoder::new_lossless(&mut encoded)
+                .encode(
+                    pixels.as_raw(),
+                    pixels.width(),
+                    pixels.height(),
+                    image::ExtendedColorType::Rgba8,
+                )
+                .unwrap();
+            let mut frame = Vec::new();
+            uint24(&mut frame, left / 2);
+            uint24(&mut frame, top / 2);
+            uint24(&mut frame, pixels.width() - 1);
+            uint24(&mut frame, pixels.height() - 1);
+            uint24(&mut frame, 50);
+            frame.push(u8::from(*dispose)); // Alpha blend; optional disposal.
+            frame.extend_from_slice(&encoded[12..]);
+            chunk(&mut body, b"ANMF", &frame);
+        }
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&body);
+        bytes
+    }
+    fn pixel(image: &RenderImage, frame: usize, x: usize, y: usize) -> &[u8] {
+        let offset = (y * image.size(frame).width.0 as usize + x) * 4;
+        &image.as_bytes(frame).unwrap()[offset..offset + 4]
+    }
+    fn assert_opaque_color(actual: &[u8], expected: [u8; 3]) {
+        assert_eq!(actual[3], 255);
+        // WebP's integer alpha blending can round an opaque channel down by 1.
+        assert!(
+            actual[..3]
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| actual.abs_diff(expected) <= 1),
+            "unexpected color {actual:?}"
+        );
+    }
+    #[test]
+    fn animated_webp_disposal_clears_old_pixels_without_erasing_kept_regions() {
+        let mut base = image::RgbaImage::new(4, 2);
+        base.put_pixel(3, 0, image::Rgba([0, 0, 255, 255]));
+        let mut red = image::RgbaImage::new(2, 2);
+        red.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        let mut green = image::RgbaImage::new(2, 2);
+        green.put_pixel(0, 0, image::Rgba([0, 255, 0, 255]));
+        let bytes = animated_webp(
+            (4, 2),
+            &[(base, 0, 0, false), (red, 0, 0, true), (green, 2, 0, false)],
+        );
+        let image = decode_chat(&bytes, true).unwrap();
+        assert_eq!(image.frame_count(), 3);
+        assert_opaque_color(pixel(&image, 1, 0, 0), [0, 0, 255]);
+        assert_eq!(
+            pixel(&image, 2, 0, 0),
+            &[0, 0, 0, 0],
+            "disposed red pixels must not ghost into the next frame"
+        );
+        assert_opaque_color(pixel(&image, 2, 2, 0), [0, 255, 0]);
+        assert_opaque_color(pixel(&image, 2, 3, 0), [255, 0, 0]);
+        assert_eq!(image.delay(2).numer_denom_ms(), (50, 1));
+    }
+    #[test]
+    fn animated_webp_keep_preserves_pixels_needed_by_delta_frames() {
+        let mut red = image::RgbaImage::new(4, 2);
+        red.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        let mut green = image::RgbaImage::new(4, 2);
+        green.put_pixel(2, 0, image::Rgba([0, 255, 0, 255]));
+        let image = decode_chat(
+            &animated_webp((4, 2), &[(red, 0, 0, false), (green, 0, 0, false)]),
+            true,
+        )
+        .unwrap();
+        assert_opaque_color(pixel(&image, 1, 0, 0), [0, 0, 255]);
+        assert_opaque_color(pixel(&image, 1, 2, 0), [0, 255, 0]);
+    }
+    #[test]
+    fn animated_webp_full_frame_disposal_removes_transparent_trails() {
+        let mut red = image::RgbaImage::new(4, 2);
+        red.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        let mut green = image::RgbaImage::new(4, 2);
+        green.put_pixel(2, 0, image::Rgba([0, 255, 0, 255]));
+        let image = decode_chat(
+            &animated_webp((4, 2), &[(red, 0, 0, true), (green, 0, 0, true)]),
+            true,
+        )
+        .unwrap();
+        assert_eq!(pixel(&image, 1, 0, 0), &[0, 0, 0, 0]);
+        assert_opaque_color(pixel(&image, 1, 2, 0), [0, 255, 0]);
+    }
     #[test]
     #[ignore = "decodes files named in VIOLETWIRE_TEST_IMAGES"]
     fn decodes_listed_files() {
-        for path in std::env::var("VIOLETWIRE_TEST_IMAGES").unwrap_or_default().split(';') {
+        for path in std::env::var("VIOLETWIRE_TEST_IMAGES")
+            .unwrap_or_default()
+            .split(';')
+        {
             if path.is_empty() {
                 continue;
             }
