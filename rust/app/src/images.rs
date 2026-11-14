@@ -442,10 +442,20 @@ mod tests {
     #[test]
     fn emotes_reject_large_decoded_dimensions() {
         let mut bytes = std::io::Cursor::new(Vec::new());
-        image::RgbaImage::new(1600, 1)
+        image::RgbaImage::new(2100, 1)
             .write_to(&mut bytes, image::ImageFormat::Png)
             .unwrap();
         assert!(decode_chat(bytes.get_ref(), true).is_err());
+    }
+    #[test]
+    fn large_emotes_are_shrunk_to_chat_size() {
+        // Kick's collectibles are 500 px square.
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::new(500, 500)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let emote = decode_chat(bytes.get_ref(), true).unwrap();
+        assert_eq!((emote.size(0).width.0, emote.size(0).height.0), (128, 128));
     }
     #[test]
     fn accepts_wide_emotes_with_a_bounded_pixel_count() {
