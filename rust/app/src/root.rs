@@ -1573,12 +1573,13 @@ impl Root {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .text_xs()
-                    .text_color(theme::text_dim())
+                    // Electron's `.rail-heading`.
+                    .text_size(px(12.))
+                    .text_color(rgb(0x9b9ba6))
                     .when(!collapsed, |v| {
                         v.child(
                             div()
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(FontWeight::BOLD)
                                 .child("FOLLOWED CHANNELS"),
                         )
                     })
@@ -1652,8 +1653,8 @@ impl Root {
                         .flex()
                         .justify_between()
                         .text_size(px(11.))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(theme::text_dim())
+                        .font_weight(FontWeight::EXTRA_BOLD)
+                        .text_color(rgb(0x85858f))
                         .child("LIVE")
                         .child(format!("{live}")),
                 )
@@ -1687,8 +1688,8 @@ impl Root {
                                             .border_t_1()
                                             .border_color(theme::border())
                                             .text_size(px(11.))
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(theme::text_dim())
+                                            .font_weight(FontWeight::EXTRA_BOLD)
+                                            .text_color(rgb(0x85858f))
                                             .flex()
                                             .justify_between()
                                             .child("OFFLINE")
@@ -1850,17 +1851,20 @@ impl Root {
                         .min_w_0()
                         .flex()
                         .flex_col()
+                        // Electron's `.followed-copy`: 14 px name, 13 px line.
                         .child(
                             div()
                                 .truncate()
+                                .text_size(px(14.))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(channel.display_name.clone()),
                         )
                         .child(
                             div()
+                                .mt(px(2.))
                                 .truncate()
-                                .text_xs()
-                                .text_color(theme::text_dim())
+                                .text_size(px(13.))
+                                .text_color(rgb(0x9696a0))
                                 .child(subtitle),
                         ),
                 )
@@ -1873,10 +1877,12 @@ impl Root {
                             .flex_none()
                             .flex()
                             .items_center()
-                            .gap_1()
-                            .text_xs()
-                            .text_color(theme::text_dim())
-                            .child(div().size(px(6.)).rounded_full().bg(theme::live_dot()))
+                            .gap(px(5.))
+                            // Electron's `.viewer-count`.
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(0xc3c3ca))
+                            .child(div().size(px(6.)).rounded_full().bg(if kick { rgb(0x34d399) } else { theme::live_dot() }))
                             .child(compact_count(stream.viewer_count)),
                     )
                 },
@@ -2340,14 +2346,16 @@ impl Root {
                     })
                     .child(
                         pill("LIVE")
-                            .bg(theme::live())
-                            .font_weight(FontWeight::BOLD)
+                            .bg(rgb(0xe91916))
+                            .font_weight(FontWeight::EXTRA_BOLD)
                             .absolute()
                             .top_2()
                             .left_2(),
                     )
                     .child(
                         pill(format!("{} viewers", compact_count(stream.viewer_count)))
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .absolute()
                             .bottom_2()
                             .left_2(),
@@ -2360,7 +2368,8 @@ impl Root {
                 div()
                     .flex()
                     .gap_2p5()
-                    .child(self.avatar(channel.profile_image_url.as_deref(), 36.))
+                    .child(self.avatar(channel.profile_image_url.as_deref(), 38.))
+                    // Electron's `.stream-card-copy`.
                     .child(
                         div()
                             .flex_1()
@@ -2370,20 +2379,25 @@ impl Root {
                             .child(
                                 div()
                                     .truncate()
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(0xeeeef0))
                                     .child(SharedString::from(stream.title.clone())),
                             )
                             .child(
                                 div()
+                                    .mt(px(3.))
                                     .truncate()
-                                    .text_color(theme::text_dim())
+                                    .text_size(px(13.))
+                                    .text_color(rgb(0x9a9aa5))
                                     .child(channel.display_name.clone()),
                             )
                             .child(
                                 div()
+                                    .mt(px(2.))
                                     .truncate()
-                                    .text_xs()
-                                    .text_color(theme::text_dim())
+                                    .text_size(px(13.))
+                                    .text_color(rgb(0x777781))
                                     .child(category),
                             )
                             .when(!tags.is_empty(), |text| {
@@ -2395,13 +2409,13 @@ impl Root {
                                         .gap(px(5.))
                                         .children(tags.into_iter().map(|tag| {
                                             div()
-                                                .px(px(7.))
-                                                .py(px(2.))
-                                                .rounded(px(5.))
-                                                .bg(theme::button())
-                                                .text_size(px(11.))
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .text_color(theme::text_secondary())
+                                                .px(px(8.))
+                                                .py(px(4.))
+                                                .rounded_full()
+                                                .bg(rgb(0x29292f))
+                                                .text_size(px(10.5))
+                                                .font_weight(FontWeight::BOLD)
+                                                .text_color(rgb(0xb9b9c2))
                                                 .child(tag)
                                         })),
                                 )
@@ -2549,6 +2563,7 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::set_scale(window.scale_factor());
         let _timer = crate::render_stats::start("root");
         if self.hwnd.is_none()
             && let Ok(handle) = wry::raw_window_handle::HasWindowHandle::window_handle(window)
@@ -3251,13 +3266,14 @@ fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<Div>
     )
 }
 
+/// Electron's `.stream-card-viewers` / `-uptime` overlay labels.
 fn pill(text: impl Into<SharedString>) -> Div {
     div()
-        .px_1p5()
-        .py_0p5()
-        .rounded_sm()
-        .bg(rgba(0x000000c0))
-        .text_xs()
+        .px(px(6.))
+        .py(px(4.))
+        .rounded(px(4.))
+        .bg(rgba(0x000000bb))
+        .text_size(px(11.))
         .text_color(gpui::white())
         .child(text.into())
 }

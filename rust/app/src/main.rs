@@ -133,6 +133,12 @@ fn main() {
     Application::new()
         .with_assets(ui::Assets)
         .run(move |cx: &mut App| {
+            if let Err(error) = cx
+                .text_system()
+                .add_fonts(theme::FONTS.iter().map(|font| std::borrow::Cow::Borrowed(*font)).collect())
+            {
+                eprintln!("Could not load the UI font: {error}");
+            }
             input::init(cx);
             preferences::initialize(cx);
             // Keep the emote caches within their size limits.

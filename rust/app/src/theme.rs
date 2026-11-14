@@ -102,6 +102,19 @@ pub fn accent_text() -> Rgba {
 pub fn live_dot() -> Rgba {
     rgb(0xf43f5e)
 }
-pub const UI_FONT: &str = "Segoe UI Variable";
+/// Electron's UI font: Inter at a 14 px base (`@fontsource-variable/inter`).
+/// Inter's tall lower case reads larger than Segoe UI at the same size, so
+/// the app ships it rather than looking a size smaller than Electron.
+pub const UI_FONT: &str = "Inter";
+
+/// Inter's weights the UI uses, cut from Electron's variable font (SIL OFL;
+/// see `assets/fonts/Inter-LICENSE.txt`).
+pub const FONTS: [&[u8]; 5] = [
+    include_bytes!("../assets/fonts/Inter-Regular.ttf"),
+    include_bytes!("../assets/fonts/Inter-Medium.ttf"),
+    include_bytes!("../assets/fonts/Inter-SemiBold.ttf"),
+    include_bytes!("../assets/fonts/Inter-Bold.ttf"),
+    include_bytes!("../assets/fonts/Inter-ExtraBold.ttf"),
+];
 /// Caption-button glyphs. Present on Windows 10 and 11.
 pub const ICON_FONT: &str = "Segoe MDL2 Assets";

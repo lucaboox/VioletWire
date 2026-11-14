@@ -67,15 +67,53 @@ pub fn provider_logo(kick: bool, size: f32) -> gpui::Svg {
 pub const TWITCH_PURPLE: u32 = 0xa970ff;
 pub const KICK_GREEN: u32 = 0x53fc18;
 
+/// The window's display scale, kept so artwork can be drawn at its exact
+/// pixel size (set each frame by the root view).
+static SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+
+pub fn set_scale(scale: f32) {
+    SCALE.store(scale.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The app icon, as Electron's `.brand-mark`. The artwork is 1080 px; GPUI
+/// samples a big shrink coarsely, so it is shrunk once here with a proper
+/// filter to the exact pixels shown, as the browser does.
 pub fn brand(size: f32) -> impl IntoElement {
-    use gpui::{Image, ImageFormat, img};
-    img(std::sync::Arc::new(Image::from_bytes(
-        ImageFormat::Png,
-        include_bytes!("../assets/violetwire-icon.png").to_vec(),
-    )))
-    .size(px(size))
-    .rounded(px(size * 0.3))
-    .flex_none()
+    use gpui::{ImageSource, RenderImage, img};
+    use std::{cell::RefCell, collections::HashMap, sync::Arc};
+    thread_local! {
+        static SIZES: RefCell<HashMap<u32, Arc<RenderImage>>> = RefCell::new(HashMap::new());
+    }
+    let scale = f32::from_bits(SCALE.load(std::sync::atomic::Ordering::Relaxed)).clamp(0.5, 4.);
+    let pixels = (size * scale).round().max(1.) as u32;
+    let image = SIZES.with_borrow_mut(|sizes| {
+        sizes
+            .entry(pixels)
+            .or_insert_with(|| {
+                let art = image::load_from_memory(include_bytes!("../assets/violetwire-icon.png"))
+                    .map(|art| art.into_rgba8())
+                    .unwrap_or_else(|_| image::RgbaImage::new(1, 1));
+                let mut small = image::imageops::resize(&art, pixels, pixels, image::imageops::FilterType::Lanczos3);
+                for pixel in small.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+                Arc::new(RenderImage::new(vec![image::Frame::new(small)]))
+            })
+            .clone()
+    });
+    div()
+        .size(px(size))
+        .flex_none()
+        .rounded(px(9.))
+        .overflow_hidden()
+        // Electron's `box-shadow: 0 6px 20px #7c3aed55`.
+        .shadow(vec![gpui::BoxShadow {
+            color: gpui::hsla(262. / 360., 0.83, 0.58, 0.33),
+            offset: gpui::point(px(0.), px(6.)),
+            blur_radius: px(20.),
+            spread_radius: px(0.),
+        }])
+        .child(img(ImageSource::Render(image)).size_full())
 }
 
 #[derive(Clone, Copy)]
