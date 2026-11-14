@@ -275,6 +275,8 @@ impl Root {
                     this.settings.update(cx, |_, cx| cx.notify());
                 }
                 crate::settings::Event::KickSignIn => this.kick_sign_in(cx),
+                crate::settings::Event::LoadChatColors => this.load_chat_colors(cx),
+                &crate::settings::Event::SetChatColor { kick, name, hex } => this.set_chat_color(kick, name, hex, cx),
                 crate::settings::Event::KickSignOut => this.kick_sign_out(cx),
             }
             cx.notify();
@@ -560,6 +562,123 @@ impl Root {
             chat,
             _controls: controls,
             _chat_controls: chat_controls,
+        }
+    }
+
+    // ----- Chat name colours ------------------------------------------------
+
+    fn show_color(&mut self, kick: bool, color: crate::settings::ChatColor, cx: &mut Context<Self>) {
+        self.settings.update(cx, |settings, cx| settings.set_chat_color(kick, color, cx));
+    }
+
+    /// Twitch's colour through Helix, Kick's from the signed-in Kick page
+    /// (Electron's `getChatColor`).
+    fn load_chat_colors(&mut self, cx: &mut Context<Self>) {
+        if let Auth::SignedIn(session) = &self.auth {
+            let user_id = session.identity.user_id.clone();
+            let task = self.helix_task(
+                cx,
+                move |helix| helix.chat_color(&user_id),
+                |this, result, cx| {
+                    let color = match result {
+                        Ok(color) => crate::settings::ChatColor { color: Some(color), ..Default::default() },
+                        Err(error) => crate::settings::ChatColor { note: Some(error.to_string()), ..Default::default() },
+                    };
+                    this.show_color(false, color, cx);
+                },
+            );
+            if let Some(task) = task {
+                task.detach();
+            }
+        }
+        if crate::preferences::get(cx).kick_account.is_some() {
+            cx.spawn(async move |this, cx| {
+                let color = async {
+                    let (status, user) = crate::kick_web::request(cx, "GET", "/api/v1/user", None).await?;
+                    anyhow::ensure!(status == 200, "Kick answered {status}.");
+                    let id = anyhow::Context::context(user["id"].as_u64(), "Kick sent no account.")?;
+                    let (_, identity) = crate::kick_web::request(
+                        cx,
+                        "GET",
+                        &format!("/api/internal/v1/chatroom/users/{id}/identity"),
+                        None,
+                    )
+                    .await?;
+                    let color = [&identity["color"], &identity["data"]["color"], &user["identity"]["color"], &user["chat_color"]]
+                        .into_iter()
+                        .find_map(|value| value.as_str().filter(|color| is_hex_color(color)))
+                        .unwrap_or_default()
+                        .to_owned();
+                    anyhow::Ok(color)
+                }
+                .await;
+                this.update(cx, |this, cx| {
+                    let color = match color {
+                        Ok(color) => crate::settings::ChatColor { color: Some(color), ..Default::default() },
+                        Err(error) => crate::settings::ChatColor { note: Some(error.to_string()), ..Default::default() },
+                    };
+                    this.show_color(true, color, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    fn set_chat_color(&mut self, kick: bool, name: &'static str, hex: &'static str, cx: &mut Context<Self>) {
+        self.show_color(kick, crate::settings::ChatColor { busy: true, ..Default::default() }, cx);
+        if kick {
+            cx.spawn(async move |this, cx| {
+                let body = serde_json::json!({ "color": hex });
+                let result = crate::kick_web::request(cx, "PUT", "/api/internal/v1/chatroom/identity", Some(&body)).await;
+                this.update(cx, |this, cx| {
+                    let color = match result {
+                        Ok((200..=299, _)) => crate::settings::ChatColor { color: Some(hex.to_owned()), ..Default::default() },
+                        Ok((401 | 403 | 419, _)) => crate::settings::ChatColor {
+                            note: Some("Kick rejected the session. Sign in to Kick again.".into()),
+                            ..Default::default()
+                        },
+                        Ok(_) => crate::settings::ChatColor {
+                            note: Some("Kick would not change the name colour.".into()),
+                            ..Default::default()
+                        },
+                        Err(error) => crate::settings::ChatColor { note: Some(error.to_string()), ..Default::default() },
+                    };
+                    this.show_color(true, color, cx);
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+        let Auth::SignedIn(session) = &self.auth else { return };
+        // A sign-in from before this permission was asked for cannot change it;
+        // asking Twitch anyway would read as a lost session.
+        if !session.token.scopes.iter().any(|scope| scope == "user:manage:chat_color") {
+            self.show_color(
+                false,
+                crate::settings::ChatColor {
+                    note: Some("Sign out and in with Twitch once to let VioletWire change your colour.".into()),
+                    ..Default::default()
+                },
+                cx,
+            );
+            return;
+        }
+        let user_id = session.identity.user_id.clone();
+        let task = self.helix_task(
+            cx,
+            move |helix| helix.set_chat_color(&user_id, name),
+            move |this, result, cx| {
+                let color = match result {
+                    Ok(()) => crate::settings::ChatColor { color: Some(hex.to_owned()), ..Default::default() },
+                    Err(error) => crate::settings::ChatColor { note: Some(error.to_string()), ..Default::default() },
+                };
+                this.show_color(false, color, cx);
+            },
+        );
+        if let Some(task) = task {
+            task.detach();
         }
     }
 
@@ -2514,6 +2633,15 @@ impl Render for Root {
                 self.activate_tile(0, cx);
             });
         }
+        // Debug aid: `VIOLETWIRE_PROBE_CHAT_SETTINGS=1` opens Settings > Chat.
+        if std::env::var_os("VIOLETWIRE_PROBE_CHAT_SETTINGS").is_some() && self.loaded {
+            static OPENED: std::sync::Once = std::sync::Once::new();
+            OPENED.call_once(|| {
+                self.settings_open = true;
+                self.settings.update(cx, |settings, cx| settings.probe_section(crate::settings::Section::Chat, cx));
+                self.load_chat_colors(cx);
+            });
+        }
         // Debug aid: `VIOLETWIRE_PROBE_PREVIEW=url` previews a link in chat.
         if let Ok(url) = std::env::var("VIOLETWIRE_PROBE_PREVIEW")
             && let Some(playing) = self.current()
@@ -3136,6 +3264,10 @@ fn banner(message: SharedString) -> Div {
         .border_color(rgba(0xeb040066))
         .text_color(rgb(0xfca5a5))
         .child(message)
+}
+
+fn is_hex_color(text: &str) -> bool {
+    text.len() == 7 && text.starts_with('#') && text[1..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn open_channel(login: &str, cx: &mut App) {

@@ -323,6 +323,44 @@ impl<'a> Helix<'a> {
             .context("Twitch did not create the clip.")
     }
 
+    /// The account's chat name colour (`#RRGGBB`, or empty if never set).
+    pub fn chat_color(&self, user_id: &str) -> Result<String> {
+        #[derive(Deserialize)]
+        struct Color {
+            #[serde(default)]
+            color: String,
+        }
+        let page: Page<Color> = self.get("/chat/color", &[("user_id", user_id)])?;
+        Ok(page.data.into_iter().next().map(|color| color.color).unwrap_or_default())
+    }
+
+    /// Sets the chat name colour: one of Twitch's named colours (or a hex
+    /// colour with Turbo or Prime). Needs `user:manage:chat_color`.
+    pub fn set_chat_color(&self, user_id: &str, color: &str) -> Result<()> {
+        let mut response = self
+            .agent
+            .put(format!("{HELIX}/chat/color"))
+            .query("user_id", user_id)
+            .query("color", color)
+            .header("Client-Id", CLIENT_ID)
+            .header("Authorization", format!("Bearer {}", self.access_token))
+            .send_empty()
+            .context("Could not reach Twitch.")?;
+        match response.status().as_u16() {
+            200..=299 => Ok(()),
+            401 => Err(Unauthorized.into()),
+            status => {
+                let message = response
+                    .body_mut()
+                    .read_json::<serde_json::Value>()
+                    .ok()
+                    .and_then(|body| body.get("message").and_then(|m| m.as_str()).map(short_message))
+                    .unwrap_or_default();
+                bail!("Twitch returned {status}. {message}")
+            }
+        }
+    }
+
     /// The signed-in account's profile picture, for the account chip.
     pub fn profile_image(&self, id: &str) -> Result<Option<String>> {
         Ok(self.profile_images(&[id])?.remove(id).filter(|url| is_twitch_image_url(url)))

@@ -14,6 +14,38 @@ pub enum Event {
     UnlinkPlayback,
     KickSignIn,
     KickSignOut,
+    /// Look up the Twitch and Kick name colours (the Chat section opened).
+    LoadChatColors,
+    /// Set a name colour: Twitch's colour name and its hex value.
+    SetChatColor { kick: bool, name: &'static str, hex: &'static str },
+}
+
+/// Electron's `TWITCH_CHAT_COLORS`: Twitch's named chat colours, which Kick
+/// is offered too.
+pub const CHAT_COLORS: [(&str, &str, &str); 15] = [
+    ("Blue", "blue", "#0000FF"),
+    ("Blue violet", "blue_violet", "#8A2BE2"),
+    ("Cadet blue", "cadet_blue", "#5F9EA0"),
+    ("Chocolate", "chocolate", "#D2691E"),
+    ("Coral", "coral", "#FF7F50"),
+    ("Dodger blue", "dodger_blue", "#1E90FF"),
+    ("Firebrick", "firebrick", "#B22222"),
+    ("Golden rod", "golden_rod", "#DAA520"),
+    ("Green", "green", "#008000"),
+    ("Hot pink", "hot_pink", "#FF69B4"),
+    ("Orange red", "orange_red", "#FF4500"),
+    ("Red", "red", "#FF0000"),
+    ("Sea green", "sea_green", "#2E8B57"),
+    ("Spring green", "spring_green", "#00FF7F"),
+    ("Yellow green", "yellow_green", "#9ACD32"),
+];
+
+/// A service's name colour as the Chat section shows it.
+#[derive(Clone, Default)]
+pub struct ChatColor {
+    pub color: Option<String>,
+    pub note: Option<String>,
+    pub busy: bool,
 }
 /// Electron's settings sections, in its order.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -40,12 +72,55 @@ pub struct Settings {
     section: Section,
     /// The signed-in Twitch login, shown under Account.
     account: Option<String>,
+    twitch_color: ChatColor,
+    kick_color: ChatColor,
 }
 
 impl Settings {
     pub fn probe_section(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
         cx.notify();
+    }
+
+    pub fn set_chat_color(&mut self, kick: bool, color: ChatColor, cx: &mut Context<Self>) {
+        if kick {
+            self.kick_color = color;
+        } else {
+            self.twitch_color = color;
+        }
+        cx.notify();
+    }
+
+    /// Electron's `TwitchChatColorControls`: the current colour and the
+    /// named ones to pick from.
+    fn color_card(&self, kick: bool, cx: &Context<Self>) -> impl IntoElement {
+        let state = if kick { &self.kick_color } else { &self.twitch_color };
+        let current = state.color.clone().unwrap_or_default().to_ascii_uppercase();
+        let swatches = div().flex().flex_wrap().gap(px(5.)).max_w(px(330.)).children(CHAT_COLORS.iter().map(|(label, name, hex)| {
+            let active = current == *hex;
+            let value = u32::from_str_radix(&hex[1..], 16).unwrap_or(0);
+            div()
+                .id(gpui::SharedString::from(format!("color-{}-{name}", if kick { "kick" } else { "twitch" })))
+                .size(px(20.))
+                .rounded(px(5.))
+                .bg(rgb(value))
+                .border_2()
+                .border_color(if active { gpui::white() } else { gpui::transparent_black() })
+                .cursor_pointer()
+                .tooltip(move |_, cx| cx.new(|_| ui::Tooltip((*label).into())).into())
+                .on_click(cx.listener(move |_, _, _, cx| cx.emit(Event::SetChatColor { kick, name, hex })))
+        }));
+        let description = match (&state.note, &state.color, state.busy) {
+            (Some(note), _, _) => note.clone(),
+            (None, _, true) => "Working…".to_owned(),
+            (None, Some(color), false) if !color.is_empty() => format!("Your name shows in {color}."),
+            _ => "Pick the colour your name shows in chat.".to_owned(),
+        };
+        card(
+            if kick { "Username color · Kick" } else { "Username color · Twitch" },
+            description,
+            swatches,
+        )
     }
 
     pub fn set_account(&mut self, account: Option<String>, cx: &mut Context<Self>) {
@@ -126,7 +201,14 @@ impl Render for Settings {
         let content = match self.section {
             Section::Account => self.account_section(cx).into_any_element(),
             Section::Playback => playback_section(&settings, cx).into_any_element(),
-            Section::Chat => chat_section(&settings, cx).into_any_element(),
+            Section::Chat => div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(chat_section(&settings, cx))
+                .when(self.account.is_some(), |v| v.child(self.color_card(false, cx)))
+                .when(settings.kick_account.is_some(), |v| v.child(self.color_card(true, cx)))
+                .into_any_element(),
             Section::Emotes => emotes_section(&settings, cx).into_any_element(),
             Section::Appearance => appearance_section(&settings, cx).into_any_element(),
             Section::About => about_section().into_any_element(),
@@ -152,6 +234,9 @@ impl Render for Settings {
                 .child(ui::icon(icon, 17.).when(active, |icon| icon.text_color(rgb(0xb794f6))))
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    if section == Section::Chat && this.section != Section::Chat {
+                        cx.emit(Event::LoadChatColors);
+                    }
                     this.section = section;
                     cx.notify();
                 }))
