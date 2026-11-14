@@ -175,6 +175,11 @@ pub struct Chat {
     list: ListState,
     input: Entity<TextInput>,
     picker_input: Entity<TextInput>,
+    /// Electron's "Users in chat" list, and its search box.
+    user_list: bool,
+    user_search: Entity<TextInput>,
+    /// The message whose reply thread is open (Electron's `ReplyThread`).
+    thread: Option<String>,
     picker: bool,
     picker_provider: &'static str,
     picker_cache: Option<PickerCache>,
@@ -346,6 +351,25 @@ impl Chat {
         std::rc::Rc::new(move |login, at, _, cx| {
             let _ = view.update(cx, |chat, cx| chat.open_card(login, at, cx));
         })
+    }
+
+    /// Debug aid: opens the user list or a reply thread once chat has some
+    /// messages; true once done.
+    pub fn probe_panel(&mut self, which: &str, cx: &mut Context<Self>) -> bool {
+        if self.messages.len() < 30 {
+            return false;
+        }
+        match which {
+            "thread" => {
+                let Some(id) = self.messages.iter().rev().find(|message| message.reply.is_some()).map(|message| message.id.clone()) else {
+                    return false;
+                };
+                self.thread = Some(id);
+            }
+            _ => self.user_list = true,
+        }
+        cx.notify();
+        true
     }
 
     /// Debug aid: shows the preview for `url` as if it were hovered.
@@ -790,6 +814,8 @@ impl Chat {
         let submitted = cx.subscribe(&input, |this, _, _: &Submitted, cx| this.send(cx));
         let input_changed = cx.observe(&input, |_, _, cx| cx.notify());
         let picker_changed = cx.observe(&picker_input, |_, _, cx| cx.notify());
+        let user_search = cx.new(|cx| TextInput::new("Search users", cx));
+        let search_changed = cx.observe(&user_search, |_, _, cx| cx.notify());
         let release = cx.on_release(|this, cx| {
             for image in this.images.drain().filter_map(|(_, image)| image) {
                 cx.defer(move |cx| cx.drop_image(image, None));
@@ -823,6 +849,9 @@ impl Chat {
             list: ListState::new(0, ListAlignment::Bottom, px(150.)),
             input,
             picker_input,
+            user_list: false,
+            user_search,
+            thread: None,
             picker: false,
             picker_provider: "7TV",
             picker_cache: None,
@@ -845,7 +874,7 @@ impl Chat {
             _pins: None,
             link_hover: None,
             history_loaded: 0,
-            _subscriptions: vec![submitted, picker_changed, input_changed, release],
+            _subscriptions: vec![submitted, picker_changed, input_changed, search_changed, release],
         };
         let view = cx.entity().downgrade();
         this.list.set_scroll_handler(move |event, _, cx| {
@@ -1725,7 +1754,7 @@ impl Chat {
                 )
             })
             .when_some(message.reply.as_ref(), |v, reply| {
-                let id = reply.id.clone();
+                let id = message.id.clone();
                 v.child(
                     div()
                         .id("reply-parent")
@@ -1738,14 +1767,11 @@ impl Chat {
                         .cursor_pointer()
                         .truncate()
                         .child(format!("Replying to @{}: {}", reply.name, reply.text))
+                        .tooltip(|_, cx| cx.new(|_| ui::Tooltip("Open the reply thread".into())).into())
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(index) =
-                                this.messages.iter().position(|message| message.id == id)
-                            {
-                                this.paused = true;
-                                this.list.scroll_to_reveal_item(index);
-                                cx.notify();
-                            }
+                            this.thread = Some(id.clone());
+                            this.user_list = false;
+                            cx.notify();
                         })),
                 )
             })
@@ -1788,6 +1814,358 @@ impl Chat {
             )
             .into_any_element()
     }
+    /// The open thread: its root, every reply to it, and the selected
+    /// message, oldest first (Electron's `getThreadMessages`).
+    fn thread_messages(&self, selected: &Message) -> Vec<Message> {
+        let root = selected.reply.as_ref().map_or(selected.id.as_str(), |reply| reply.id.as_str());
+        self.messages
+            .iter()
+            .filter(|message| {
+                message.id == root
+                    || message.id == selected.id
+                    || message.reply.as_ref().is_some_and(|reply| reply.id == root)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Electron's `ReplyThread` panel over the lower part of chat.
+    fn thread_panel(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let selected_id = self.thread.clone()?;
+        let Some(selected) = self.messages.iter().find(|message| message.id == selected_id).cloned() else {
+            self.thread = None;
+            return None;
+        };
+        let thread = self.thread_messages(&selected);
+        let parent_kept = selected
+            .reply
+            .as_ref()
+            .is_some_and(|reply| self.messages.iter().any(|message| message.id == reply.id));
+        let older = selected.reply.clone().filter(|_| !parent_kept);
+        let mut rows: Vec<AnyElement> = Vec::new();
+        if let Some(reply) = older {
+            rows.push(
+                div()
+                    .p(px(8.))
+                    .rounded(px(7.))
+                    .bg(theme::surface_hover())
+                    .opacity(0.8)
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .items_center()
+                            .child(div().font_weight(FontWeight::BOLD).text_size(px(12.)).child(reply.name.clone()))
+                            .child(div().text_size(px(10.)).text_color(theme::text_dim()).child("Older context")),
+                    )
+                    .child(div().text_size(px(12.)).text_color(theme::text_secondary()).child(if reply.text.is_empty() {
+                        "The earlier message is no longer available.".to_owned()
+                    } else {
+                        reply.text.clone()
+                    }))
+                    .into_any_element(),
+            );
+        }
+        for message in thread {
+            let chosen = message.id == selected.id;
+            let login = message.login.clone();
+            let replying_to = message.clone();
+            let name_color = rgb(message.color);
+            let name = message.name.clone();
+            let deleted = message.deleted;
+            let body = self.card_message(message, cx);
+            rows.push(
+                div()
+                    .id(SharedString::from(format!("thread-{}", replying_to.id)))
+                    .p(px(8.))
+                    .rounded(px(7.))
+                    .when(chosen, |row| row.bg(theme::selected()).border_1().border_color(theme::selected_border()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("thread-name-{}", replying_to.id)))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_size(px(12.))
+                                    .text_color(name_color)
+                                    .cursor_pointer()
+                                    .child(name)
+                                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                                        this.open_card(&login, event.position(), cx)
+                                    })),
+                            )
+                            .when(!deleted, |row| {
+                                row.child(
+                                    ui::icon_button("thread-reply", Icon::Reply, "Reply", false)
+                                        .w(px(24.))
+                                        .h(px(24.))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.start_reply(&replying_to, window, cx);
+                                        })),
+                                )
+                            }),
+                    )
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        Some(
+            div()
+                .absolute()
+                .left(px(8.))
+                .right(px(8.))
+                .bottom(px(8.))
+                .max_h(gpui::relative(0.6))
+                .flex()
+                .flex_col()
+                .occlude()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(theme::button_border())
+                .bg(theme::popup())
+                .shadow_xl()
+                .child(
+                    div()
+                        .flex_none()
+                        .px_3()
+                        .py_2()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .border_b_1()
+                        .border_color(theme::border())
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::BOLD)
+                                .child(ui::icon(Icon::Reply, 15.))
+                                .child("Reply thread"),
+                        )
+                        .child(
+                            ui::icon_button("close-thread", Icon::Close, "Close · Escape", false)
+                                .w(px(26.))
+                                .h(px(26.))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.thread = None;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("thread-messages")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .p_2()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Who spoke in recent chat, by role (Electron's `ChatUserList`, which
+    /// is also built from observed messages rather than an API).
+    fn user_list_panel(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.user_list {
+            return None;
+        }
+        let query = self.user_search.read(cx).content.trim().to_ascii_lowercase();
+        let role = |message: &Message| -> usize {
+            let has = |names: &[&str]| {
+                message.badges.iter().any(|badge| {
+                    names.iter().any(|name| {
+                        badge.starts_with(&format!("{name}/"))
+                            || badge == &format!("kick-badge:{name}")
+                            || badge.ends_with(&format!("/Badges/{name}.svg"))
+                    })
+                })
+            };
+            if has(&["broadcaster"]) {
+                0
+            } else if has(&["moderator"]) {
+                1
+            } else if has(&["vip"]) {
+                2
+            } else {
+                3
+            }
+        };
+        let mut seen = HashSet::new();
+        let mut sections: [Vec<(String, String, u32)>; 4] = Default::default();
+        for message in self.messages.iter().rev() {
+            if message.system.is_some() || message.login.is_empty() || !seen.insert(message.login.clone()) {
+                continue;
+            }
+            if !query.is_empty()
+                && !message.login.contains(&query)
+                && !message.name.to_ascii_lowercase().contains(&query)
+            {
+                continue;
+            }
+            if seen.len() > 500 {
+                break;
+            }
+            sections[role(message)].push((message.login.clone(), message.name.clone(), message.color));
+        }
+        const LABELS: [&str; 4] = ["Broadcaster", "Moderators", "VIPs", "Recently active"];
+        // The service's own badge marks each role, as Electron does.
+        let marks: [Option<String>; 4] = if self.kick {
+            [
+                Some("https://cdn.kicktalk.app/Badges/broadcaster.svg".to_owned()),
+                Some("kick-badge:moderator".to_owned()),
+                Some("kick-badge:vip".to_owned()),
+                None,
+            ]
+        } else {
+            [
+                self.badge_url("broadcaster/1"),
+                self.badge_url("moderator/1"),
+                self.badge_url("vip/1"),
+                None,
+            ]
+        };
+        let mut body: Vec<AnyElement> = Vec::new();
+        for (index, users) in sections.iter().enumerate() {
+            if users.is_empty() {
+                continue;
+            }
+            let mark = marks[index].clone().and_then(|url| self.image(&url, false, cx));
+            body.push(
+                div()
+                    .px_2()
+                    .pt_3()
+                    .pb_1()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme::text_dim())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .when_some(mark, |row, image| row.child(img(ImageSource::Render(image)).size(px(14.))))
+                            .child(LABELS[index].to_uppercase()),
+                    )
+                    .child(users.len().to_string())
+                    .into_any_element(),
+            );
+            for (login, name, color) in users {
+                let open = login.clone();
+                body.push(
+                    div()
+                        .id(SharedString::from(format!("chatter-{login}")))
+                        .px_2()
+                        .py(px(5.))
+                        .flex()
+                        .items_baseline()
+                        .gap_2()
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme::surface_hover()))
+                        .child(div().font_weight(FontWeight::BOLD).text_size(px(13.)).text_color(rgb(*color)).child(name.clone()))
+                        .when(!name.eq_ignore_ascii_case(login), |row| {
+                            row.child(div().text_size(px(11.)).text_color(theme::text_dim()).child(format!("@{login}")))
+                        })
+                        .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                            // Stays open, so several users can be opened in turn.
+                            this.open_card(&open, event.position(), cx);
+                        }))
+                        .into_any_element(),
+                );
+            }
+        }
+        if body.is_empty() {
+            body.push(
+                div()
+                    .p_3()
+                    .text_size(px(12.))
+                    .text_color(theme::text_dim())
+                    .child("No recently active users match that search.")
+                    .into_any_element(),
+            );
+        }
+        Some(
+            div()
+                .absolute()
+                .top(px(if self.overlay { 8. } else { 58. }))
+                .left(px(8.))
+                .right(px(8.))
+                .max_h(gpui::relative(0.75))
+                .flex()
+                .flex_col()
+                .occlude()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(theme::button_border())
+                .bg(theme::popup())
+                .shadow_xl()
+                .child(
+                    div()
+                        .flex_none()
+                        .px_3()
+                        .py_2()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .text_size(px(13.))
+                                .font_weight(FontWeight::BOLD)
+                                .child(ui::icon(Icon::Users, 16.))
+                                .child("Users in chat"),
+                        )
+                        .child(
+                            ui::icon_button("close-users", Icon::Close, "Close · Escape", false)
+                                .w(px(26.))
+                                .h(px(26.))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.user_list = false;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(div().flex_none().px_2().pb_2().child(self.user_search.clone()))
+                .child(
+                    div()
+                        .id("chatters")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .px_1()
+                        .pb_2()
+                        .children(body),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .px_3()
+                        .py_2()
+                        .border_t_1()
+                        .border_color(theme::border())
+                        .text_size(px(11.))
+                        .text_color(theme::text_dim())
+                        .child("Showing users seen in recent chat"),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn start_reply(&mut self, message: &Message, window: &mut Window, cx: &mut Context<Self>) {
         if message.deleted || !model::asset_id(&message.id) {
             return;
@@ -2398,6 +2776,8 @@ impl Render for Chat {
         let picker = self.picker.then(|| self.picker(cx));
         let card = self.user_card(cx);
         let pinned = self.pinned_banner(cx);
+        let thread = self.thread_panel(cx);
+        let users = self.user_list_panel(cx);
         let link_preview = self.link_preview();
         let pin_hidden = self.pinned.as_ref().is_some_and(|pin| self.pinned_hidden.as_deref() == Some(pin.message.id.as_str()));
         let menu = self
@@ -2443,9 +2823,21 @@ impl Render for Chat {
             }))
             .when_some(card, |v, card| v.child(card))
             .when_some(link_preview, |v, preview| v.child(preview))
+            // Painted after the messages, which come later in this column.
+            .when_some(users, |v, panel| v.child(gpui::deferred(panel).with_priority(2)))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" && this.card.is_some() {
                     this.close_card(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                if event.keystroke.key == "escape" && (this.user_list || this.thread.is_some()) {
+                    if this.user_list {
+                        this.user_list = false;
+                    } else {
+                        this.thread = None;
+                    }
+                    cx.notify();
                     cx.stop_propagation();
                     return;
                 }
@@ -2494,6 +2886,22 @@ impl Render for Chat {
                                 .child("Stream Chat"),
                         )
                         .child(
+                            ui::icon_button("chat-users", Icon::Users, "Users in chat", self.user_list)
+                                .w(px(30.))
+                                .h(px(30.))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.user_list = !this.user_list;
+                                    this.thread = None;
+                                    if this.user_list {
+                                        this.user_search.update(cx, |input, cx| {
+                                            input.clear(cx);
+                                            window.focus(&gpui::Focusable::focus_handle(input, cx));
+                                        });
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
                             div()
                                 .id("chat-status")
                                 .flex_none()
@@ -2517,7 +2925,16 @@ impl Render for Chat {
                 )
             })
             .children(pinned)
-            .child(div().flex_1().min_h_0().flex().flex_col().child(list))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(list)
+                    .when_some(thread, |v, panel| v.child(panel)),
+            )
             .when(self.paused, |v| {
                 v.child(
                     ui::button(

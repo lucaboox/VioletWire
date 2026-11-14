@@ -2642,6 +2642,18 @@ impl Render for Root {
                 self.load_chat_colors(cx);
             });
         }
+        // Debug aid: `VIOLETWIRE_PROBE_CHAT_PANEL=users|thread` opens that chat panel.
+        if let Ok(which) = std::env::var("VIOLETWIRE_PROBE_CHAT_PANEL")
+            && let Some(playing) = self.current()
+        {
+            static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !DONE.load(std::sync::atomic::Ordering::Relaxed) {
+                let chat = playing.chat.clone();
+                if chat.update(cx, |chat, cx| chat.probe_panel(&which, cx)) {
+                    DONE.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
         // Debug aid: `VIOLETWIRE_PROBE_PREVIEW=url` previews a link in chat.
         if let Ok(url) = std::env::var("VIOLETWIRE_PROBE_PREVIEW")
             && let Some(playing) = self.current()
