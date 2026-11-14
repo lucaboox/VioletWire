@@ -133,8 +133,20 @@ actions!(
         Cut,
         Copy,
         Submit,
+        Complete,
+        SuggestUp,
+        SuggestDown,
     ]
 );
+
+/// Keys the chat composer hands to its owner for name and emote completion.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ComposerKey {
+    Tab,
+    Up,
+    Down,
+}
+impl gpui::EventEmitter<ComposerKey> for TextInput {}
 
 pub struct Submitted;
 impl gpui::EventEmitter<Submitted> for TextInput {}
@@ -188,6 +200,44 @@ impl TextInput {
         if !same {
             self.emotes = emotes;
             cx.notify();
+        }
+    }
+
+    /// Where the caret is (the end of any selection).
+    pub fn caret(&self) -> usize {
+        self.selected_range.end
+    }
+
+    /// Replaces `range` with `text` and puts the caret after it.
+    pub fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        if range.start > range.end
+            || range.end > self.content.len()
+            || !self.content.is_char_boundary(range.start)
+            || !self.content.is_char_boundary(range.end)
+        {
+            return;
+        }
+        let text = inserted_text(&self.content, &range, text);
+        self.content = (self.content[..range.start].to_owned() + &text + &self.content[range.end..]).into();
+        let caret = range.start + text.len();
+        self.selected_range = caret..caret;
+        self.marked_range = None;
+        cx.notify();
+    }
+
+    fn complete(&mut self, _: &Complete, _: &mut Window, cx: &mut Context<Self>) {
+        if self.composer {
+            cx.emit(ComposerKey::Tab);
+        }
+    }
+    fn suggest_up(&mut self, _: &SuggestUp, _: &mut Window, cx: &mut Context<Self>) {
+        if self.composer {
+            cx.emit(ComposerKey::Up);
+        }
+    }
+    fn suggest_down(&mut self, _: &SuggestDown, _: &mut Window, cx: &mut Context<Self>) {
+        if self.composer {
+            cx.emit(ComposerKey::Down);
         }
     }
 
@@ -790,6 +840,9 @@ impl Render for TextInput {
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::submit))
+            .on_action(cx.listener(Self::complete))
+            .on_action(cx.listener(Self::suggest_up))
+            .on_action(cx.listener(Self::suggest_down))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
@@ -853,6 +906,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("home", Home, Some("TextInput")),
         KeyBinding::new("end", End, Some("TextInput")),
         KeyBinding::new("enter", Submit, Some("TextInput")),
+        KeyBinding::new("tab", Complete, Some("TextInput")),
+        KeyBinding::new("up", SuggestUp, Some("TextInput")),
+        KeyBinding::new("down", SuggestDown, Some("TextInput")),
     ]);
 }
 

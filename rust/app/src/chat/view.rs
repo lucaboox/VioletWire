@@ -35,6 +35,30 @@ enum RailMark {
     Favorites,
 }
 
+/// What the composer would complete: recent chatters, or matching emotes,
+/// and the text they would replace.
+enum Suggest {
+    Mentions { people: Vec<(String, String, u32)>, range: std::ops::Range<usize> },
+    Emotes { emotes: Vec<(String, String)>, range: std::ops::Range<usize> },
+}
+
+impl Suggest {
+    fn len(&self) -> usize {
+        match self {
+            Self::Mentions { people, .. } => people.len(),
+            Self::Emotes { emotes, .. } => emotes.len(),
+        }
+    }
+}
+
+struct EmoteCycle {
+    start: usize,
+    /// What was typed before the first Tab.
+    query: String,
+    /// The composer text right after the last completion.
+    completed: String,
+}
+
 struct LinkHover {
     url: String,
     at: gpui::Point<gpui::Pixels>,
@@ -180,6 +204,13 @@ pub struct Chat {
     user_search: Entity<TextInput>,
     /// The message whose reply thread is open (Electron's `ReplyThread`).
     thread: Option<String>,
+    /// The highlighted name or emote suggestion.
+    suggest_index: usize,
+    /// A Tab completion in progress, which further Tabs cycle.
+    emote_cycle: Option<EmoteCycle>,
+    /// The composer text the suggestions were dismissed for (Escape).
+    suggest_dismissed: Option<String>,
+    composer_seen: String,
     picker: bool,
     picker_provider: &'static str,
     picker_cache: Option<PickerCache>,
@@ -358,6 +389,15 @@ impl Chat {
     pub fn probe_panel(&mut self, which: &str, cx: &mut Context<Self>) -> bool {
         if self.messages.len() < 30 {
             return false;
+        }
+        if let Some(text) = which.strip_prefix("type:") {
+            let text = text.to_owned();
+            self.input.update(cx, |input, cx| {
+                input.clear(cx);
+                input.append(&text, cx);
+            });
+            cx.notify();
+            return true;
         }
         match which {
             "thread" => {
@@ -811,7 +851,15 @@ impl Chat {
     pub fn new(login: &str, session: Option<Session>, cx: &mut Context<Self>) -> Self {
         let input = cx.new(TextInput::composer);
         let picker_input = cx.new(|cx| TextInput::new("Search emotes", cx));
-        let submitted = cx.subscribe(&input, |this, _, _: &Submitted, cx| this.send(cx));
+        let submitted = cx.subscribe(&input, |this, _, _: &Submitted, cx| {
+            // Enter takes a half-typed name rather than sending it.
+            if let Some(Suggest::Mentions { .. }) = this.suggestions(cx) {
+                this.accept_suggestion(cx);
+            } else {
+                this.send(cx);
+            }
+        });
+        let composer_keys = cx.subscribe(&input, |this, _, key: &crate::input::ComposerKey, cx| this.composer_key(*key, cx));
         let input_changed = cx.observe(&input, |_, _, cx| cx.notify());
         let picker_changed = cx.observe(&picker_input, |_, _, cx| cx.notify());
         let user_search = cx.new(|cx| TextInput::new("Search users", cx));
@@ -852,6 +900,10 @@ impl Chat {
             user_list: false,
             user_search,
             thread: None,
+            suggest_index: 0,
+            emote_cycle: None,
+            suggest_dismissed: None,
+            composer_seen: String::new(),
             picker: false,
             picker_provider: "7TV",
             picker_cache: None,
@@ -874,7 +926,7 @@ impl Chat {
             _pins: None,
             link_hover: None,
             history_loaded: 0,
-            _subscriptions: vec![submitted, picker_changed, input_changed, search_changed, release],
+            _subscriptions: vec![submitted, composer_keys, picker_changed, input_changed, search_changed, release],
         };
         let view = cx.entity().downgrade();
         this.list.set_scroll_handler(move |event, _, cx| {
@@ -2166,6 +2218,269 @@ impl Chat {
         )
     }
 
+    /// Electron's composer suggestions: recent chatters after `@`, otherwise
+    /// emotes matching the word before the caret.
+    fn suggestions(&self, cx: &gpui::App) -> Option<Suggest> {
+        let input = self.input.read(cx);
+        let text = input.content.to_string();
+        if self.suggest_dismissed.as_deref() == Some(text.as_str()) {
+            return None;
+        }
+        let caret = input.caret().min(text.len());
+        if !text.is_char_boundary(caret) {
+            return None;
+        }
+        let before = &text[..caret];
+        let word_start = before.rfind(char::is_whitespace).map_or(0, |at| at + before[at..].chars().next().map_or(1, char::len_utf8));
+        let word = &before[word_start..];
+        if let Some(query) = word.strip_prefix('@')
+            && query.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            let query = query.to_ascii_lowercase();
+            let mut seen = HashSet::new();
+            let people: Vec<(String, String, u32)> = self
+                .messages
+                .iter()
+                .rev()
+                .filter(|message| message.system.is_none() && !message.login.is_empty())
+                .filter(|message| seen.insert(message.login.clone()))
+                .filter(|message| {
+                    query.is_empty() || message.login.starts_with(&query) || message.name.to_ascii_lowercase().starts_with(&query)
+                })
+                .take(8)
+                .map(|message| (message.login.clone(), message.name.clone(), message.color))
+                .collect();
+            return (!people.is_empty()).then_some(Suggest::Mentions { people, range: word_start..caret });
+        }
+        let (start, query) = match &self.emote_cycle {
+            Some(cycle) => (cycle.start, cycle.query.clone()),
+            None => {
+                let valid = word.len() >= 2
+                    && word.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    && word.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b':' || b == b'-');
+                if !valid {
+                    return None;
+                }
+                (word_start, word.to_owned())
+            }
+        };
+        let substring = crate::preferences::get(cx).emote_autocomplete_match == "substring";
+        let target = query.to_ascii_lowercase();
+        let mut emotes: Vec<(String, String)> = self
+            .assets
+            .emotes
+            .iter()
+            .filter(|(name, _)| {
+                let lower = name.to_ascii_lowercase();
+                if substring { lower.contains(&target) } else { lower.starts_with(&target) }
+            })
+            .map(|(name, url)| (name.clone(), url.clone()))
+            .collect();
+        emotes.sort_by(|(a, _), (b, _)| {
+            let rank = |name: &str| {
+                let lower = name.to_ascii_lowercase();
+                if lower == target { 0 } else if lower.starts_with(&target) { 1 } else { 2 }
+            };
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()))
+                // Names differing only in case keep one order between runs.
+                .then_with(|| a.cmp(b))
+        });
+        emotes.truncate(100);
+        (!emotes.is_empty()).then_some(Suggest::Emotes { emotes, range: start..caret })
+    }
+
+    fn composer_key(&mut self, key: crate::input::ComposerKey, cx: &mut Context<Self>) {
+        let Some(suggest) = self.suggestions(cx) else { return };
+        let count = suggest.len();
+        match key {
+            crate::input::ComposerKey::Up => self.suggest_index = (self.suggest_index + count - 1) % count,
+            crate::input::ComposerKey::Down => self.suggest_index = (self.suggest_index + 1) % count,
+            crate::input::ComposerKey::Tab => {
+                if self.emote_cycle.is_some() {
+                    self.suggest_index = (self.suggest_index + 1) % count;
+                }
+                self.accept_suggestion(cx);
+                return;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Completes the highlighted suggestion. An emote stays open to Tab
+    /// through the other matches, as Electron's does.
+    fn accept_suggestion(&mut self, cx: &mut Context<Self>) {
+        let Some(suggest) = self.suggestions(cx) else { return };
+        let index = self.suggest_index.min(suggest.len() - 1);
+        match suggest {
+            Suggest::Mentions { people, range } => {
+                let text = format!("@{} ", people[index].0);
+                self.input.update(cx, |input, cx| input.replace(range, &text, cx));
+                self.emote_cycle = None;
+                self.suggest_index = 0;
+            }
+            Suggest::Emotes { emotes, range } => {
+                let query = self
+                    .emote_cycle
+                    .as_ref()
+                    .map(|cycle| cycle.query.clone())
+                    .unwrap_or_else(|| self.input.read(cx).content[range.clone()].to_owned());
+                let text = format!("{} ", emotes[index].0);
+                let start = range.start;
+                self.input.update(cx, |input, cx| input.replace(range, &text, cx));
+                self.emote_cycle = Some(EmoteCycle {
+                    start,
+                    query,
+                    completed: self.input.read(cx).content.to_string(),
+                });
+                self.suggest_index = index;
+            }
+        }
+        self.composer_seen = self.input.read(cx).content.to_string();
+        cx.notify();
+    }
+
+    /// The suggestion list above the composer.
+    fn suggestion_panel(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // Typing anything else ends a completion and resets the highlight.
+        let content = self.input.read(cx).content.to_string();
+        if content != self.composer_seen {
+            if self.emote_cycle.as_ref().is_some_and(|cycle| cycle.completed != content) {
+                self.emote_cycle = None;
+            }
+            if self.suggest_dismissed.as_deref() != Some(content.as_str()) {
+                self.suggest_dismissed = None;
+            }
+            self.suggest_index = 0;
+            self.composer_seen = content;
+        }
+        let suggest = self.suggestions(cx)?;
+        let selected = self.suggest_index.min(suggest.len() - 1);
+        let window_start = selected / 8 * 8;
+        let rows: Vec<AnyElement> = match suggest {
+            Suggest::Mentions { people, .. } => people
+                .into_iter()
+                .enumerate()
+                .map(|(index, (login, name, color))| {
+                    let initial = name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
+                    div()
+                        .id(SharedString::from(format!("mention-{login}")))
+                        .px_2()
+                        .py(px(5.))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .when(index == selected, |row| row.bg(theme::selected()))
+                        .hover(|style| style.bg(theme::surface_hover()))
+                        .child(
+                            div()
+                                .size(px(22.))
+                                .flex_none()
+                                .rounded_full()
+                                .bg(rgb(color))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0x0e0e10))
+                                .child(initial),
+                        )
+                        .child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(name.clone()))
+                        .when(!name.eq_ignore_ascii_case(&login), |row| {
+                            row.child(div().text_size(px(11.)).text_color(theme::text_dim()).child(format!("@{login}")))
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.suggest_index = index;
+                            this.accept_suggestion(cx);
+                        }))
+                        .into_any_element()
+                })
+                .collect(),
+            Suggest::Emotes { emotes, .. } => emotes
+                .into_iter()
+                .enumerate()
+                .skip(window_start)
+                .take(8)
+                .map(|(index, (name, url))| {
+                    let image = self.image(&url, false, cx);
+                    let provider = self
+                        .assets
+                        .providers
+                        .get(&name)
+                        .map_or(if self.kick { "Kick" } else { "Twitch" }, |emote| match emote.provider {
+                            assets::Provider::SevenTv => "7TV",
+                            assets::Provider::Bttv => "BTTV",
+                            assets::Provider::Ffz => "FFZ",
+                            _ => "Twitch",
+                        });
+                    div()
+                        .id(SharedString::from(format!("suggest-{name}")))
+                        .px_2()
+                        .py(px(4.))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .when(index == selected, |row| row.bg(theme::selected()))
+                        .hover(|style| style.bg(theme::surface_hover()))
+                        .child(
+                            div()
+                                .size(px(26.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when_some(image, |cell, image| {
+                                    cell.child(img(ImageSource::Render(image)).max_w_full().max_h_full().object_fit(ObjectFit::Contain))
+                                }),
+                        )
+                        .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(name))
+                        .child(div().flex_none().text_size(px(10.)).text_color(theme::text_dim()).child(provider))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.suggest_index = index;
+                            this.accept_suggestion(cx);
+                        }))
+                        .into_any_element()
+                })
+                .collect(),
+        };
+        Some(
+            gpui::deferred(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom(px(48.))
+                    .occlude()
+                    .p(px(4.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(1.))
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(theme::button_border())
+                    .bg(theme::popup())
+                    .shadow_xl()
+                    .children(rows)
+                    .child(
+                        div()
+                            .px_2()
+                            .pt(px(3.))
+                            .text_size(px(10.))
+                            .text_color(theme::text_dim())
+                            .child("Tab to complete · ↑ ↓ to choose · Esc to close"),
+                    ),
+            )
+            .with_priority(3)
+            .into_any_element(),
+        )
+    }
+
     fn start_reply(&mut self, message: &Message, window: &mut Window, cx: &mut Context<Self>) {
         if message.deleted || !model::asset_id(&message.id) {
             return;
@@ -2776,6 +3091,7 @@ impl Render for Chat {
         let picker = self.picker.then(|| self.picker(cx));
         let card = self.user_card(cx);
         let pinned = self.pinned_banner(cx);
+        let suggestions = self.suggestion_panel(cx);
         let thread = self.thread_panel(cx);
         let users = self.user_list_panel(cx);
         let link_preview = self.link_preview();
@@ -2828,6 +3144,13 @@ impl Render for Chat {
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" && this.card.is_some() {
                     this.close_card(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                if event.keystroke.key == "escape" && this.suggestions(cx).is_some() {
+                    this.suggest_dismissed = Some(this.input.read(cx).content.to_string());
+                    this.emote_cycle = None;
+                    cx.notify();
                     cx.stop_propagation();
                     return;
                 }
@@ -3021,7 +3344,7 @@ impl Render for Chat {
                             )
                         })
                         .child(
-                            div().relative().child(self.input.clone()).child(
+                            div().relative().child(self.input.clone()).children(suggestions).child(
                                 ui::icon_button(
                                     "emotes",
                                     Icon::Emotes,

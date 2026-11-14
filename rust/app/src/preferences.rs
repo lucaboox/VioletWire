@@ -69,6 +69,9 @@ pub struct Preferences {
     pub generic_link_previews: bool,
     /// When a generic preview shows: `ctrl`, `alt` (held) or `hover`.
     pub generic_link_preview_activation: String,
+    /// How Tab completion matches emote names: `prefix` or `substring`
+    /// (Electron's `emoteAutocompleteMatch`).
+    pub emote_autocomplete_match: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -131,6 +134,7 @@ impl Default for Preferences {
             search_platform: "both".into(),
             generic_link_previews: false,
             generic_link_preview_activation: "ctrl".into(),
+            emote_autocomplete_match: "prefix".into(),
         }
     }
 }
@@ -186,6 +190,9 @@ impl Preferences {
             self.chat_deleted_message_style = "placeholder".into();
         }
         self.mention_sound_volume = self.mention_sound_volume.min(200);
+        if !matches!(self.emote_autocomplete_match.as_str(), "prefix" | "substring") {
+            self.emote_autocomplete_match = "prefix".into();
+        }
         if !matches!(self.generic_link_preview_activation.as_str(), "ctrl" | "alt" | "hover") {
             self.generic_link_preview_activation = "ctrl".into();
         }

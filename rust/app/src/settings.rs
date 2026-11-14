@@ -614,6 +614,16 @@ fn chat_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElem
         ))
         .child(link_preview_card(settings, cx))
         .child(card(
+            "Emote autocomplete",
+            "How a typed word is matched against emote names while completing with Tab.",
+            choice(
+                &[("complete-prefix", "prefix", "Starts with"), ("complete-substring", "substring", "Contains")],
+                if settings.emote_autocomplete_match == "substring" { "substring" } else { "prefix" },
+                |s, mode| s.emote_autocomplete_match = mode.into(),
+                cx,
+            ),
+        ))
+        .child(card(
             "Deleted messages",
             "Replace a removed message, or keep its text faded.",
             choice(
