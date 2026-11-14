@@ -14,6 +14,7 @@ use gpui::{
 };
 
 mod browse;
+mod mini;
 mod multi;
 mod popout;
 use browse::Section;
@@ -108,6 +109,12 @@ pub struct Root {
     _clock: Option<Task<()>>,
     /// The window chat was popped out into, if any.
     chat_popped: Option<gpui::AnyWindowHandle>,
+    /// The stream shrunk into the corner while browsing (Electron's mini
+    /// player); `playing` stays open underneath it.
+    mini: Option<mini::Mini>,
+    /// The chat panel's edge being dragged: where the press began, and the
+    /// width then (Electron's side-chat width drag).
+    chat_resize: Option<(gpui::Pixels, u16)>,
     /// The window the video was popped out into, if any.
     player_popped: Option<gpui::AnyWindowHandle>,
     /// A newer release found on GitHub, ready to install.
@@ -322,6 +329,8 @@ impl Root {
             settings_open: false,
             shortcuts_open: false,
             changelog_open: false,
+            mini: None,
+            chat_resize: None,
             changelog: crate::changelog::bundled(),
             changelog_task: None,
             hwnd: None,
@@ -582,6 +591,11 @@ impl Root {
         }
         if self.multi.is_some() {
             self.add_tile(login, name, cx);
+            return;
+        }
+        // The stream in the mini player comes back rather than restarting.
+        if self.mini.is_some() && self.playing.as_ref().is_some_and(|playing| playing.login == login) {
+            self.restore_player(cx);
             return;
         }
         self.close_player(window, cx);
@@ -1051,6 +1065,7 @@ impl Root {
     }
     fn close_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.theater = false;
+        self.mini = None;
         self.close_chat_window(cx);
         self.close_player_window(cx);
         if let Some(multi) = self.multi.take() {
@@ -2452,18 +2467,41 @@ impl Root {
             .when(crate::preferences::get(cx).chat_on_left, |v| v.flex_row_reverse())
             .child(player)
             .when(self.chat_in_main() && !self.overlay_chat, |v| {
+                let preferences = crate::preferences::get(cx);
+                let width = preferences.chat_sidebar_width;
+                // The edge between video and chat drags to resize the chat.
+                let handle = div()
+                    .id("chat-resize")
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(6.))
+                    .when(preferences.chat_on_left, |handle| handle.right(px(-3.)))
+                    .when(!preferences.chat_on_left, |handle| handle.left(px(-3.)))
+                    .occlude()
+                    .cursor_col_resize()
+                    .hover(|style| style.bg(rgba(0xa78bfa55)))
+                    .when(self.chat_resize.is_some(), |handle| handle.bg(rgba(0xa78bfa88)))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                            this.chat_resize = Some((event.position.x, width));
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    );
                 v.child(
                     div()
-                        .w(px(f32::from(
-                            crate::preferences::get(cx).chat_sidebar_width,
-                        )))
+                        .relative()
+                        .w(px(f32::from(width)))
                         .min_w(px(330.))
                         .h_full()
                         .flex_none()
                         .child(gpui::AnyView::from(playing.chat.clone())
                             // Re-laid out only when chat changes, not on every
                             // video frame the player draws.
-                            .cached(gpui::StyleRefinement::default().size_full())),
+                            .cached(gpui::StyleRefinement::default().size_full()))
+                        .child(handle),
                 )
             })
             .into_any_element()
@@ -2881,7 +2919,8 @@ impl Render for Root {
                 chat.set_preferences(crate::preferences::get(cx), cx);
             });
             playing.view.update(cx, |player, cx| {
-                player.set_presentation(self.chat_in_main(), self.overlay_chat, self.theater, cx)
+                player.set_presentation(self.chat_in_main(), self.overlay_chat, self.theater, cx);
+                player.set_mini(self.mini.is_some(), cx);
             });
             let controls_delay = crate::preferences::get(cx).controls_hide_delay;
             playing
@@ -2907,7 +2946,13 @@ impl Render for Root {
             static OPENED: std::sync::Once = std::sync::Once::new();
             OPENED.call_once(|| {
                 self.settings_open = true;
-                self.settings.update(cx, |settings, cx| settings.probe_section(crate::settings::Section::Chat, cx));
+                // `about` opens About; `search:<text>` types into the search.
+                let which = std::env::var("VIOLETWIRE_PROBE_CHAT_SETTINGS").unwrap_or_default();
+                self.settings.update(cx, |settings, cx| match which.strip_prefix("search:") {
+                    Some(text) => settings.probe_search(text, cx),
+                    None if which == "about" => settings.probe_section(crate::settings::Section::About, cx),
+                    None => settings.probe_section(crate::settings::Section::Chat, cx),
+                });
                 self.load_chat_colors(cx);
             });
         }
@@ -2922,6 +2967,18 @@ impl Render for Root {
                     DONE.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
+        }
+        // Debug aid: `VIOLETWIRE_PROBE_MINI=1` goes Home 6 s into a stream,
+        // leaving it in the mini player.
+        if std::env::var_os("VIOLETWIRE_PROBE_MINI").is_some() && self.playing.is_some() {
+            static MINIMIZED: std::sync::Once = std::sync::Once::new();
+            MINIMIZED.call_once(|| {
+                cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_secs(6)).await;
+                    let _ = this.update_in(cx, |this, window, cx| this.show_section(Section::Home, window, cx));
+                })
+                .detach();
+            });
         }
         // Debug aid: `VIOLETWIRE_PROBE_POPOUT=1` pops chat out once playing.
         if std::env::var_os("VIOLETWIRE_PROBE_POPOUT").is_some() && self.playing.is_some() {
@@ -3034,11 +3091,11 @@ impl Render for Root {
         let compact = f32::from(window.viewport_size().width) - sidebar_width - chat_width < 480.;
         let main = match &self.playing {
             _ if self.multi.is_some() => self.multi_panel(fullscreen, window, cx),
-            Some(playing) => self
+            Some(playing) if self.mini.is_none() => self
                 .player_panel(playing, fullscreen, compact, cx)
                 .into_any_element(),
             // Signed out, Browse (Kick's directory) and Search still work.
-            None if signed_in || self.section != Section::Home => {
+            _ if signed_in || self.section != Section::Home => {
                 let width = f32::from(window.viewport_size().width) - sidebar_width;
                 match self.section {
                     Section::Home => self.home(width, cx).into_any_element(),
@@ -3046,7 +3103,7 @@ impl Render for Root {
                     Section::Search => self.search_page(width, cx),
                 }
             }
-            None => self.welcome(cx).into_any_element(),
+            _ => self.welcome(cx).into_any_element(),
         };
         let body = div()
             .flex_1()
@@ -3141,6 +3198,10 @@ impl Render for Root {
                     window.toggle_fullscreen();
                     cx.notify();
                     cx.stop_propagation();
+                    return;
+                }
+                // The mini player has its own buttons; keys stay with the page.
+                if this.mini.is_some() {
                     return;
                 }
                 let Some(playing) = this.current() else { return };
@@ -3254,6 +3315,38 @@ impl Render for Root {
                                 .text_color(theme::text())
                                 .child(notice),
                         ),
+                )
+            })
+            .children(self.mini_player(window, cx))
+            .when_some(self.chat_resize, |root, (start, width)| {
+                // Follows the pointer anywhere in the window until release.
+                let sidebar = sidebar_width;
+                root.child(
+                    div()
+                        .id("chat-resize-layer")
+                        .absolute()
+                        .inset_0()
+                        .occlude()
+                        .cursor_col_resize()
+                        .on_mouse_move(cx.listener(move |_, event: &gpui::MouseMoveEvent, window, cx| {
+                            let left = crate::preferences::get(cx).chat_on_left;
+                            let moved = f32::from(event.position.x - start);
+                            let wanted = f32::from(width) + if left { moved } else { -moved };
+                            // Never squeeze the video below 400 px.
+                            let room = f32::from(window.viewport_size().width) - sidebar - 400.;
+                            let next = wanted.min(room).clamp(330., 600.).round() as u16;
+                            if next != crate::preferences::get(cx).chat_sidebar_width {
+                                crate::preferences::update(cx, |s| s.chat_sidebar_width = next);
+                            }
+                        }))
+                        .on_mouse_up(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                            this.chat_resize = None;
+                            cx.notify();
+                        }))
+                        .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                            this.chat_resize = None;
+                            cx.notify();
+                        })),
                 )
             })
             .when(self.shortcuts_open, |v| {

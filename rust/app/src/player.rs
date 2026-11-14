@@ -44,6 +44,8 @@ pub struct Player {
     controls_hovered: bool,
     controls_width: f32,
     presentation: (bool, bool, bool),
+    /// Shown as the corner mini player: no controls of its own.
+    mini: bool,
     controls_hide_delay: std::time::Duration,
     paused: bool,
     muted: bool,
@@ -168,6 +170,7 @@ impl Player {
             controls_hovered: false,
             controls_width: 0.,
             presentation: (true, false, false),
+            mini: false,
             controls_hide_delay: std::time::Duration::from_millis(5000),
             paused: false,
             muted: false,
@@ -325,6 +328,19 @@ impl Player {
             self.presentation = mode;
             cx.notify();
         }
+    }
+    pub fn set_mini(&mut self, mini: bool, cx: &mut Context<Self>) {
+        if self.mini != mini {
+            self.mini = mini;
+            self.quality_menu = false;
+            cx.notify();
+        }
+    }
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+    pub fn muted(&self) -> bool {
+        self.muted
     }
     /// Multistream mutes every tile but the active one.
     pub fn set_muted(&mut self, muted: bool, cx: &mut Context<Self>) {
@@ -1172,7 +1188,7 @@ impl Render for Player {
             }));
         }
         let stats = self.gpu.as_mut().map(GpuPlayback::stats);
-        let show_controls = self.controls_visible || self.paused || self.quality_menu;
+        let show_controls = !self.mini && (self.controls_visible || self.paused || self.quality_menu);
         let controls = show_controls.then(|| self.controls(stats.as_ref(), window, cx));
         let mut status = self.failure.clone();
         let mut starting = false;
@@ -1226,7 +1242,7 @@ impl Render for Player {
             .track_focus(&focus)
             // Electron hides the pointer with the controls; moving it brings
             // both back.
-            .when(!self.controls_visible, |video| video.cursor(gpui::CursorStyle::None))
+            .when(!self.controls_visible && !self.mini, |video| video.cursor(gpui::CursorStyle::None))
             .capture_any_mouse_down(move |_, window, _| window.focus(&focus))
             .on_mouse_move(cx.listener(|this, _, _, cx| {
                 this.last_pointer = std::time::Instant::now();

@@ -121,7 +121,12 @@ impl Root {
     // ----- Navigation ----------------------------------------------------
 
     pub(super) fn show_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_player(window, cx);
+        // A single stream keeps playing in the corner; multistream closes.
+        if self.playing.is_some() && self.multi.is_none() {
+            self.minimize_player(window, cx);
+        } else {
+            self.close_player(window, cx);
+        }
         self.section = section;
         self.search.open = false;
         if section == Section::Browse {

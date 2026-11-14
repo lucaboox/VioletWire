@@ -32,8 +32,8 @@ SidebarClose=>"panel-left-close", SidebarOpen=>"panel-left-open",
     ChevronDown=>"chevron-down", Scissors=>"scissors", Star=>"star", StarFilled=>"star-filled",
     Keyboard=>"keyboard", Monitor=>"monitor", Info=>"info", Globe=>"globe", Sparkles=>"sparkles", Grid=>"layout-grid",
     Twitch=>"twitch", Kick=>"kick", Pin=>"pin",
-    ChevronLeft=>"chevron-left", Heart=>"heart", HeartFilled=>"heart-filled", PopOut=>"app-window",
-    Lock=>"lock", Changelog=>"scroll-text", Grip=>"grip-vertical",
+    ChevronLeft=>"chevron-left", ChevronRight=>"chevron-right", Heart=>"heart", HeartFilled=>"heart-filled", PopOut=>"app-window",
+    Lock=>"lock", Changelog=>"scroll-text", Grip=>"grip-vertical", Resize=>"move-diagonal-2",
 }
 pub struct Assets;
 impl AssetSource for Assets {

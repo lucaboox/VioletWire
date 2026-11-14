@@ -2402,6 +2402,13 @@ impl Chat {
             crate::input::ComposerKey::Up => self.suggest_index = (self.suggest_index + count - 1) % count,
             crate::input::ComposerKey::Down => self.suggest_index = (self.suggest_index + 1) % count,
             crate::input::ComposerKey::Tab => {
+                // Electron's "Tab while naming someone": move to the next
+                // name rather than fill this one in.
+                if matches!(suggest, Suggest::Mentions { .. }) && self.preferences.mention_tab_behavior == "cycle" {
+                    self.suggest_index = (self.suggest_index + 1) % count;
+                    cx.notify();
+                    return;
+                }
                 if self.emote_cycle.is_some() {
                     self.suggest_index = (self.suggest_index + 1) % count;
                 }
@@ -2736,13 +2743,34 @@ impl Chat {
     }
 
     fn picker_sections(&self, query: &str) -> Vec<PickerSection> {
+        if self.search_all(query) {
+            // Every provider's matches, each section named for its provider.
+            let mut sections = Vec::new();
+            for provider in ["7TV", "Twitch", "FFZ", "BTTV", "Emoji"] {
+                let name = if self.kick && provider == "Twitch" { "Kick" } else { provider };
+                for mut section in self.provider_sections(provider, query) {
+                    section.label = format!("{name} · {}", section.label);
+                    sections.push(section);
+                }
+            }
+            return sections;
+        }
+        self.provider_sections(self.picker_provider, query)
+    }
+
+    /// Searching every provider: the setting is on and something is typed.
+    fn search_all(&self, query: &str) -> bool {
+        self.preferences.emote_search_all_providers && !query.is_empty()
+    }
+
+    fn provider_sections(&self, provider: &str, query: &str) -> Vec<PickerSection> {
         let matches = |name: &str| query.is_empty() || name.to_ascii_lowercase().contains(query);
         let sorted = |mut emotes: Vec<(String, String)>| {
             emotes.sort_by_key(|(name, _)| name.to_ascii_lowercase());
             emotes
         };
         let mut sections = Vec::new();
-        match self.picker_provider {
+        match provider {
             "Favorites" => {
                 let emotes: Vec<(String, String)> = self
                     .preferences
@@ -2865,14 +2893,15 @@ impl Chat {
 
     fn picker(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let query = self.picker_input.read(cx).content.to_ascii_lowercase();
+        let tab = if self.search_all(&query) { "All" } else { self.picker_provider };
         let sections = if let Some((cached_query, provider, sections)) = &self.picker_cache
             && cached_query == &query
-            && *provider == self.picker_provider
+            && *provider == tab
         {
             sections.clone()
         } else {
             let sections = Arc::new(self.picker_sections(&query));
-            self.picker_cache = Some((query.clone(), self.picker_provider, sections.clone()));
+            self.picker_cache = Some((query.clone(), tab, sections.clone()));
             sections
         };
         let count: usize = sections.iter().map(|section| section.emotes.len()).sum();
@@ -3168,7 +3197,24 @@ impl Chat {
                     .p_2()
                     .border_t_1()
                     .border_color(theme::border())
-                    .child(self.picker_input.clone()),
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(div().flex_1().min_w_0().child(self.picker_input.clone()))
+                    .child({
+                        let all = self.preferences.emote_search_all_providers;
+                        ui::icon_button(
+                            "emote-search-all",
+                            Icon::Globe,
+                            if all { "Searching all providers" } else { "Search all providers" },
+                            all,
+                        )
+                        .w(px(32.))
+                        .h(px(32.))
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            crate::preferences::update(cx, |s| s.emote_search_all_providers = !s.emote_search_all_providers)
+                        }))
+                    }),
             )
             .child(
                 div()

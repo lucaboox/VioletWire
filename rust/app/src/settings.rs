@@ -84,8 +84,50 @@ const SECTIONS: [(Section, &str, Icon); 5] = [
     (Section::Appearance, "Appearance", Icon::Star),
 ];
 
+/// Electron's settings search index: what each card is called, says, and
+/// might be searched for.
+const INDEX: &[(Section, &str, &str, &str)] = &[
+    (Section::Account, "Twitch API account", "Sign in, refresh OAuth permissions, or sign out.", "login oauth authorization scopes"),
+    (Section::Account, "Kick account", "Connect or remove the Kick account used for follows and chat.", "login sign in following"),
+    (Section::Account, "Twitch website session", "Link playback access for Source and higher stream qualities.", "1440p source quality authentication ads"),
+    (Section::Playback, "Low latency", "Play closer to live, or steadier when a stream hiccups.", "buffer hls prefetch reliable fast latency balanced"),
+    (Section::Playback, "Controls auto-hide delay", "Change how quickly player controls disappear.", "cursor timeout seconds"),
+    (Section::Playback, "Volume normalizer", "Even out loud and quiet moments.", "audio compression compressor loudness"),
+    (Section::Playback, "FPS in the corner", "Show the video's frame rate over the player.", "frames overlay performance"),
+    (Section::Playback, "Keyboard shortcuts", "See every shortcut, or press ? anywhere outside a text box.", "keys hotkeys keybinds fullscreen theater mute space"),
+    (Section::Chat, "Username color", "Change the color of your username in chat.", "prime turbo custom color"),
+    (Section::Chat, "Chat timestamps", "Show the sent time beside chat messages.", "time messages"),
+    (Section::Chat, "Blocked chatters", "Hide a viewer's messages everywhere chat appears.", "block ignore mute hide user unblock blocklist"),
+    (Section::Chat, "Subscriber GIFs", "Draw the GIFs higher-tier subscribers send in chat.", "gif giphy animated tier 2 3 subscriber"),
+    (Section::Chat, "Mention sound", "Configure mention alerts, sound, and volume.", "ping notification audio test"),
+    (Section::Chat, "Deleted messages", "Choose whether removed messages are dimmed or replaced.", "moderation timeout ban placeholder"),
+    (Section::Chat, "Emote autocomplete", "Match emote names by prefix, or anywhere in the name.", "tab complete suggestion starts with contains substring"),
+    (Section::Chat, "Tab while naming someone", "Fill in the highlighted @name, or move through the names.", "mention tab cycle complete"),
+    (Section::Chat, "Chat layout", "Move chat to the left or adjust overlay opacity.", "position side overlay transparency"),
+    (Section::Chat, "Chat sizing and history", "Adjust message font, chat width, and loaded history.", "text messages count width"),
+    (Section::Chat, "Generic link previews", "Preview metadata from public websites on hover.", "embed open graph privacy ip ctrl alt tooltip"),
+    (Section::Emotes, "Third-party emotes", "Review 7TV, FrankerFaceZ, and BetterTTV providers.", "7tv ffz bttv cache channel global size"),
+    (Section::Appearance, "OLED mode", "Use true-black backgrounds throughout VioletWire.", "theme black dark appearance"),
+    (Section::About, "Updates and version history", "Check for updates or read the VioletWire changelog.", "release version latest install changelog"),
+    (Section::About, "Project and support links", "Open the website, GitHub, Ko-fi, sponsors, or issue tracker.", "lucaboox donate bugs help source"),
+    (Section::About, "Dependencies and licenses", "Review core dependencies and third-party notices.", "rust gpui streamlink credits licenses"),
+];
+
+fn section_name(section: Section) -> &'static str {
+    match section {
+        Section::Account => "Account",
+        Section::Playback => "Playback",
+        Section::Chat => "Chat",
+        Section::Emotes => "Emotes",
+        Section::Appearance => "Appearance",
+        Section::About => "About",
+    }
+}
+
 #[derive(Default)]
 pub struct Settings {
+    /// Electron's "Search settings" box, made on first draw.
+    search: Option<gpui::Entity<crate::input::TextInput>>,
     section: Section,
     /// The signed-in Twitch login, shown under Account.
     account: Option<String>,
@@ -97,6 +139,14 @@ pub struct Settings {
 impl Settings {
     pub fn probe_section(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
+        cx.notify();
+    }
+
+    pub fn probe_search(&mut self, text: &str, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| crate::input::TextInput::new("Search settings", cx));
+        input.update(cx, |input, cx| input.append(text, cx));
+        cx.observe(&input, |_, _, cx| cx.notify()).detach();
+        self.search = Some(input);
         cx.notify();
     }
 
@@ -262,7 +312,19 @@ impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = preferences::get(cx);
         let viewport = window.viewport_size();
-        let content = match self.section {
+        let search = self
+            .search
+            .get_or_insert_with(|| {
+                let input = cx.new(|cx| crate::input::TextInput::new("Search settings", cx));
+                cx.observe(&input, |_, _, cx| cx.notify()).detach();
+                input
+            })
+            .clone();
+        let query = search.read(cx).content.trim().to_lowercase();
+        let content = if !query.is_empty() {
+            self.search_results(&query, &search, cx).into_any_element()
+        } else {
+            match self.section {
             Section::Account => self.account_section(cx).into_any_element(),
             Section::Playback => playback_section(&settings, cx).into_any_element(),
             Section::Chat => div()
@@ -281,10 +343,15 @@ impl Render for Settings {
                 .gap_3()
                 .child(about_section())
                 .child(self.update_card(cx))
+                .child(links_card(cx))
+                .child(dependencies_card(cx))
                 .into_any_element(),
+            }
         };
+        let searching = !query.is_empty();
         let nav_button = |section: Section, label: &'static str, icon: Icon, id: &'static str, cx: &mut Context<Self>| {
-            let active = self.section == section;
+            let active = self.section == section && !searching;
+            let search = search.clone();
             div()
                 .id(id)
                 .h(px(40.))
@@ -308,6 +375,7 @@ impl Render for Settings {
                         cx.emit(Event::LoadChatColors);
                     }
                     this.section = section;
+                    search.update(cx, |input, cx| input.clear(cx));
                     cx.notify();
                 }))
         };
@@ -359,8 +427,15 @@ impl Render for Settings {
                             ),
                     )
                     .child(
-                        ui::icon_button("close-settings", Icon::Close, "Close settings · Escape", false)
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Closed))),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(div().w(px(280.)).child(search.clone()))
+                            .child(
+                                ui::icon_button("close-settings", Icon::Close, "Close settings · Escape", false)
+                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Closed))),
+                            ),
                     ),
             )
             .child(
@@ -414,6 +489,162 @@ impl Render for Settings {
                     ),
             )
     }
+}
+
+impl Settings {
+    /// Electron's settings search results: each matching card, and its
+    /// section, which a click opens.
+    fn search_results(
+        &self,
+        query: &str,
+        search: &gpui::Entity<crate::input::TextInput>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let results: Vec<_> = INDEX
+            .iter()
+            .filter(|(section, title, description, keywords)| {
+                [*title, *description, *keywords, section_name(*section)]
+                    .iter()
+                    .any(|text| text.to_lowercase().contains(query))
+            })
+            .collect();
+        let summary = match results.len() {
+            1 => "1 matching setting".to_owned(),
+            count => format!("{count} matching settings"),
+        };
+        section("SEARCH", "Settings results", "").child(div().text_size(px(12.)).text_color(theme::text_dim()).child(summary)).children(
+            results.into_iter().enumerate().map(|(index, (target, title, description, _))| {
+                let (target, search) = (*target, search.clone());
+                div()
+                    .id(("settings-result", index))
+                    .px(px(16.))
+                    .py(px(12.))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(theme::border())
+                    .bg(theme::surface())
+                    .cursor_pointer()
+                    .hover(|style| style.border_color(rgb(0x6d4b91)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .child(div().text_size(px(13.)).font_weight(gpui::FontWeight::BOLD).child(*title))
+                            .child(div().text_size(px(12.)).text_color(theme::text_dim()).child(*description)),
+                    )
+                    .child(div().text_size(px(11.)).text_color(rgb(0xb794f6)).child(section_name(target)))
+                    .child(ui::icon(Icon::ChevronRight, 16.))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if target == Section::Chat {
+                            cx.emit(Event::LoadChatColors);
+                        }
+                        this.section = target;
+                        search.update(cx, |input, cx| input.clear(cx));
+                        cx.notify();
+                    }))
+            }),
+        )
+    }
+}
+
+/// Electron's project and support links, opened in the default browser.
+fn links_card(cx: &Context<Settings>) -> impl IntoElement {
+    const LINKS: [(&str, &str, &str); 6] = [
+        ("VioletWire website", "violetwire.lucaboox.win", "https://violetwire.lucaboox.win"),
+        ("Source code", "github.com/lucaboox/VioletWire", "https://github.com/lucaboox/VioletWire"),
+        ("lucaboox on GitHub", "Projects and profile", "https://github.com/lucaboox"),
+        ("Help and bug reports", "VioletWire Issues", "https://github.com/lucaboox/VioletWire/issues"),
+        ("Support on Ko-fi", "ko-fi.com/W7W3D7V7U", "https://ko-fi.com/W7W3D7V7U"),
+        ("GitHub Sponsors", "github.com/sponsors/lucaboox", "https://github.com/sponsors/lucaboox"),
+    ];
+    div().flex().flex_wrap().gap(px(10.)).children(LINKS.iter().enumerate().map(|(index, (label, detail, url))| {
+        let url = *url;
+        div()
+            .id(("about-link", index))
+            .w(px(240.))
+            .flex_grow()
+            .px(px(14.))
+            .py(px(11.))
+            .flex()
+            .items_center()
+            .gap(px(11.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(theme::border())
+            .bg(theme::surface())
+            .cursor_pointer()
+            .hover(|style| style.border_color(rgb(0x6d4b91)))
+            .child(ui::icon(Icon::External, 16.).text_color(rgb(0xb794f6)))
+            .child(
+                div()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(div().text_size(px(13.)).font_weight(gpui::FontWeight::BOLD).child(*label))
+                    .child(div().truncate().text_size(px(11.)).text_color(theme::text_dim()).child(*detail)),
+            )
+            .on_click(cx.listener(move |_, _, _, cx| cx.open_url(url)))
+    }))
+}
+
+/// Electron's "Core dependencies" card, for the Rust build.
+fn dependencies_card(cx: &Context<Settings>) -> impl IntoElement {
+    const ROWS: [(&str, &str); 4] = [
+        ("Desktop", "Rust · GPUI"),
+        ("Bundled resolver", "Streamlink portable runtime"),
+        ("Video playback", "Media Foundation · Direct3D 11"),
+        ("Chat and emotes", "Twitch · Kick · 7TV · FrankerFaceZ · BetterTTV"),
+    ];
+    div()
+        .px(px(18.))
+        .py(px(16.))
+        .flex()
+        .flex_col()
+        .gap(px(10.))
+        .rounded(px(12.))
+        .border_1()
+        .border_color(theme::border())
+        .bg(theme::surface())
+        .child(div().text_size(px(14.)).font_weight(gpui::FontWeight::BOLD).child("Core dependencies"))
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(theme::text_dim())
+                .child("Software and services that make VioletWire possible."),
+        )
+        .children(ROWS.iter().map(|(term, value)| {
+            div()
+                .flex()
+                .gap_3()
+                .text_size(px(12.))
+                .child(div().w(px(140.)).flex_none().text_color(theme::text_dim()).child(*term))
+                .child(div().min_w_0().child(*value))
+        }))
+        .child(
+            div()
+                .id("third-party-notices")
+                .mt(px(4.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(px(12.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(0xb794f6))
+                .cursor_pointer()
+                .hover(|style| style.text_color(rgb(0xd8b4fe)))
+                .child("View licenses and third-party notices")
+                .child(ui::icon(Icon::External, 14.).text_color(rgb(0xb794f6)))
+                .on_click(cx.listener(|_, _, _, cx| {
+                    cx.open_url("https://github.com/lucaboox/VioletWire/blob/main/THIRD_PARTY_NOTICES.md")
+                })),
+        )
 }
 
 /// Electron's `settings-section-heading`: a small label, a title and a line.
@@ -690,6 +921,20 @@ fn chat_section(settings: &Preferences, cx: &Context<Settings>) -> impl IntoElem
                 &[("complete-prefix", "prefix", "Starts with"), ("complete-substring", "substring", "Contains")],
                 if settings.emote_autocomplete_match == "substring" { "substring" } else { "prefix" },
                 |s, mode| s.emote_autocomplete_match = mode.into(),
+                cx,
+            ),
+        ))
+        .child(card(
+            "Tab while naming someone",
+            if settings.mention_tab_behavior == "cycle" {
+                "Tab steps through the names after @; Enter fills in the one highlighted."
+            } else {
+                "Tab fills in the highlighted name after @; the arrow keys move the highlight."
+            },
+            choice(
+                &[("mention-complete", "complete", "Fill in"), ("mention-cycle", "cycle", "Move through")],
+                if settings.mention_tab_behavior == "cycle" { "cycle" } else { "complete" },
+                |s, mode| s.mention_tab_behavior = mode.into(),
                 cx,
             ),
         ))

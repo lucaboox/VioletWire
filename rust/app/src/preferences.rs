@@ -75,6 +75,12 @@ pub struct Preferences {
     /// Draw the GIFs higher-tier subscribers send (Electron's `chatShowGifs`);
     /// off shows the description Twitch sends in their place.
     pub chat_show_gifs: bool,
+    /// The emote picker's search covers every provider, not just the open
+    /// tab (Electron's `emoteSearchAllProviders`).
+    pub emote_search_all_providers: bool,
+    /// Tab on a highlighted @name: `complete` fills it in, `cycle` moves to
+    /// the next (Electron's `mentionTabBehavior`).
+    pub mention_tab_behavior: String,
     /// The newest version whose changes were shown (Electron's
     /// `lastSeenChangelogVersion`); empty until the first launch records one.
     pub last_seen_changelog_version: String,
@@ -142,6 +148,8 @@ impl Default for Preferences {
             generic_link_preview_activation: "ctrl".into(),
             emote_autocomplete_match: "prefix".into(),
             chat_show_gifs: true,
+            emote_search_all_providers: false,
+            mention_tab_behavior: "complete".into(),
             last_seen_changelog_version: String::new(),
         }
     }
@@ -200,6 +208,9 @@ impl Preferences {
         self.mention_sound_volume = self.mention_sound_volume.min(200);
         if !matches!(self.emote_autocomplete_match.as_str(), "prefix" | "substring") {
             self.emote_autocomplete_match = "prefix".into();
+        }
+        if !matches!(self.mention_tab_behavior.as_str(), "complete" | "cycle") {
+            self.mention_tab_behavior = "complete".into();
         }
         if self.last_seen_changelog_version.len() > 64 {
             self.last_seen_changelog_version.clear();
