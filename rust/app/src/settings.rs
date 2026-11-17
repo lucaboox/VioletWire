@@ -409,6 +409,9 @@ impl Render for Settings {
                     .justify_between()
                     .border_b_1()
                     .border_color(rgb(0x2e2a33))
+                    // Clipping is rectangular, so the header rounds its own
+                    // top corners to sit inside the dialog's.
+                    .rounded_t(px(15.))
                     .bg(gpui::linear_gradient(
                         100.,
                         gpui::linear_color_stop(rgb(0x23152e), 0.),
@@ -462,6 +465,7 @@ impl Render for Settings {
                             .gap(px(4.))
                             .border_r_1()
                             .border_color(rgb(0x29272e))
+                            .rounded_bl(px(15.))
                             .bg(rgba(0x0d0d10c7))
                             .children(SECTIONS.iter().map(|(section, label, icon)| {
                                 let id = match section {
