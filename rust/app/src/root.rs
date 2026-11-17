@@ -95,6 +95,8 @@ pub struct Root {
     /// The version history (Electron's changelog modal), and its entries:
     /// the bundled file until GitHub's release notes arrive.
     changelog_open: bool,
+    /// Which of the dialogs above were open when Root last took focus.
+    modals_focused: (bool, bool, bool),
     changelog: Vec<crate::changelog::Entry>,
     changelog_task: Option<Task<()>>,
     /// This window's handle, to own the twitch.tv sign-in window.
@@ -126,6 +128,7 @@ pub struct Root {
     /// A newer release found on GitHub, ready to install.
     update: Option<crate::updates::Update>,
     update_task: Option<Task<()>>,
+    _update_checks: Option<Task<()>>,
     /// Refusals in a row of the stored Kick account; three sign it out.
     kick_refusals: u8,
     _kick_info: Option<Task<()>>,
@@ -289,9 +292,9 @@ impl Root {
         let settings = cx.new(|_| crate::settings::Settings::default());
         let settings_close = crate::settings::subscribe(&settings, cx, |this, event, cx| {
             match event {
-                crate::settings::Event::Closed => this.settings_open = false,
+                crate::settings::Event::Closed => this.close_settings(cx),
                 crate::settings::Event::Shortcuts => {
-                    this.settings_open = false;
+                    this.close_settings(cx);
                     this.shortcuts_open = true;
                 }
                 crate::settings::Event::LinkPlayback => this.link_playback(cx),
@@ -306,7 +309,7 @@ impl Root {
                 crate::settings::Event::LoadChatColors => this.load_chat_colors(cx),
                 crate::settings::Event::CheckForUpdates => this.check_updates(false, cx),
                 crate::settings::Event::Changelog => {
-                    this.settings_open = false;
+                    this.close_settings(cx);
                     this.open_changelog(cx);
                 }
                 crate::settings::Event::InstallUpdate => this.install_update(cx),
@@ -335,6 +338,7 @@ impl Root {
             settings_open: false,
             shortcuts_open: false,
             changelog_open: false,
+            modals_focused: (false, false, false),
             mini: None,
             chat_resize: None,
             overlay_drag: None,
@@ -352,6 +356,7 @@ impl Root {
             player_popped: None,
             update: None,
             update_task: None,
+            _update_checks: None,
             kick_refusals: 0,
             _kick_info: None,
             account_image: None,
@@ -383,10 +388,19 @@ impl Root {
         root.restore(cx);
         root.start_kick(cx);
         root.changelog_after_update(cx);
-        // A quiet look for updates shortly after launch.
-        root.update_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(20)).await;
-            let _ = this.update(cx, |this, cx| this.check_updates(true, cx));
+        // Quiet looks for updates shortly after launch, then every six hours
+        // as Electron does. They stay off `update_task`, so a manual check or
+        // an install in progress is never cancelled by them.
+        root._update_checks = Some(cx.spawn(async move |this, cx| {
+            let mut wait = Duration::from_secs(20);
+            loop {
+                cx.background_executor().timer(wait).await;
+                wait = Duration::from_secs(6 * 60 * 60);
+                let result = cx.background_executor().spawn(async { crate::updates::check() }).await;
+                if this.update(cx, |this, cx| this.update_checked(result, true, cx)).is_err() {
+                    break;
+                }
+            }
         }));
         // Closing the main window takes the chat window with it.
         cx.on_release(|this, cx| {
@@ -557,6 +571,11 @@ impl Root {
         }));
     }
 
+    fn close_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_open = false;
+        self.settings.update(cx, |settings, cx| settings.clear_search(cx));
+    }
+
     /// Signs out (or reacts to Twitch ending the session): forgets the token
     /// on this PC, revokes it, and drops everything tied to the account.
     fn end_session(&mut self, message: Option<&str>, cx: &mut Context<Self>) {
@@ -571,8 +590,16 @@ impl Root {
         self.refresh_task = None;
         self.account_image = None;
         self.account_image_task = None;
-        // Dropping the player stops Streamlink and FFmpeg.
+        // Dropping the players stops Streamlink and FFmpeg; a popped-out
+        // player window holds its player too, so it closes as well.
+        self.close_chat_window(cx);
+        self.close_player_window(cx);
         self.playing = None;
+        self.multi = None;
+        self.mini = None;
+        self.chat_resize = None;
+        self.overlay_drag = None;
+        self.overlay_live = None;
         self.clip_task = None;
         self.message = message.map(|text| SharedString::from(text.to_string()));
         if let Auth::SignedIn(session) = previous {
@@ -655,21 +682,32 @@ impl Root {
         }
         self.update_task = Some(cx.spawn(async move |this, cx| {
             let result = cx.background_executor().spawn(async { crate::updates::check() }).await;
-            let _ = this.update(cx, |this, cx| {
-                use crate::settings::UpdateState;
-                match result {
-                    Ok(Some(update)) => {
-                        let version = update.version.clone();
-                        this.update = Some(update);
-                        this.show_update(UpdateState::Available(version.clone()), cx);
-                        this.show_notice(format!("VioletWire {version} is available. Install it from Settings > About."), cx);
-                    }
-                    Ok(None) if !quiet => this.show_update(UpdateState::UpToDate, cx),
-                    Err(error) if !quiet => this.show_update(UpdateState::Failed(error.to_string()), cx),
-                    _ => {}
-                }
-            });
+            let _ = this.update(cx, |this, cx| this.update_checked(result, quiet, cx));
         }));
+    }
+
+    fn update_checked(
+        &mut self,
+        result: anyhow::Result<Option<crate::updates::Update>>,
+        quiet: bool,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::settings::UpdateState;
+        match result {
+            // A quiet check leaves an already announced release alone: no
+            // second notice, and an install under way keeps its state.
+            Ok(Some(update))
+                if quiet && self.update.as_ref().is_some_and(|known| known.version == update.version) => {}
+            Ok(Some(update)) => {
+                let version = update.version.clone();
+                self.update = Some(update);
+                self.show_update(UpdateState::Available(version.clone()), cx);
+                self.show_notice(format!("VioletWire {version} is available. Install it from Settings > About."), cx);
+            }
+            Ok(None) if !quiet => self.show_update(UpdateState::UpToDate, cx),
+            Err(error) if !quiet => self.show_update(UpdateState::Failed(error.to_string()), cx),
+            _ => {}
+        }
     }
 
     /// Electron opens the changelog once per release. A first launch only
@@ -2906,7 +2944,11 @@ impl Render for Root {
                 cx.observe(&self.category_input, |this, _, cx| this.category_query_changed(cx)),
             ];
         }
-        if self.settings_open || self.shortcuts_open || self.changelog_open || window.focused(cx).is_none() {
+        // Root takes focus as a dialog opens or closes, not on every render:
+        // that would pull it out of the settings search box while typing.
+        let modals = (self.settings_open, self.shortcuts_open, self.changelog_open);
+        if modals != self.modals_focused || window.focused(cx).is_none() {
+            self.modals_focused = modals;
             window.focus(&self.focus);
         }
         if let Some(playing) = &self.playing {
@@ -3194,7 +3236,7 @@ impl Render for Root {
                 }
                 if this.settings_open || this.shortcuts_open || this.changelog_open {
                     if key == "escape" {
-                        this.settings_open = false;
+                        this.close_settings(cx);
                         this.shortcuts_open = false;
                         this.changelog_open = false;
                         cx.notify();
@@ -3435,7 +3477,7 @@ impl Render for Root {
                                 .inset_0()
                                 .bg(rgba(0x00000099))
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.settings_open = false;
+                                    this.close_settings(cx);
                                     cx.notify();
                                 })),
                         )

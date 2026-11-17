@@ -120,13 +120,18 @@ impl Root {
 
     // ----- Navigation ----------------------------------------------------
 
-    pub(super) fn show_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
-        // A single stream keeps playing in the corner; multistream closes.
+    /// Browsing away from the player: a single stream keeps playing in the
+    /// corner, as Electron's mini player does; multistream closes.
+    fn leave_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.playing.is_some() && self.multi.is_none() {
             self.minimize_player(window, cx);
         } else {
             self.close_player(window, cx);
         }
+    }
+
+    pub(super) fn show_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_player(window, cx);
         self.section = section;
         self.search.open = false;
         if section == Section::Browse {
@@ -264,7 +269,7 @@ impl Root {
     }
 
     pub(super) fn open_category(&mut self, category: Category, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_player(window, cx);
+        self.leave_player(window, cx);
         // Back from a category returns to that service's categories.
         let kick = category.id.starts_with(crate::kick::PREFIX);
         if kick != self.browse.kick {
@@ -515,7 +520,7 @@ impl Root {
         if query.chars().count() < 2 {
             return;
         }
-        self.close_player(window, cx);
+        self.leave_player(window, cx);
         self.section = Section::Search;
         self.search.open = false;
         self.search.query = query;

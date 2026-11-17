@@ -64,6 +64,12 @@ impl Root {
         if self.multi.is_some() {
             return;
         }
+        // The stream becomes a tile: a pop-out window would keep drawing the
+        // same player and chat, and the mini player would block the tiles'
+        // shortcuts and come back on exit.
+        self.close_chat_window(cx);
+        self.close_player_window(cx);
+        self.mini = None;
         let tiles: Vec<Playing> = self.playing.take().into_iter().collect();
         self.multi = Some(Multi {
             tiles,

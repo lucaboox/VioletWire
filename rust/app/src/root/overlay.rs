@@ -88,23 +88,32 @@ impl Root {
                 cx.notify();
             }
         };
+        // Only the centred grip takes presses: it is invisible until hovered,
+        // and chat under the rest of the top edge stays clickable.
         let strip = div()
-            .id("overlay-move")
             .absolute()
             .top_0()
-            .left(px(34.))
-            .right(px(34.))
+            .left_0()
+            .right_0()
             .h(px(18.))
             .flex()
             .justify_center()
-            .items_center()
-            .occlude()
-            .cursor_grab()
-            .opacity(0.)
-            .group_hover("chat-overlay", |style| style.opacity(1.))
-            .child(div().w(px(46.)).h(px(4.)).rounded_full().bg(rgba(0xffffff55)))
-            .tooltip(|_, cx| cx.new(|_| ui::Tooltip("Drag to move the chat".into())).into())
-            .on_mouse_down(MouseButton::Left, cx.listener(begin(Mode::Move)));
+            .child(
+                div()
+                    .id("overlay-move")
+                    .w(px(120.))
+                    .h_full()
+                    .flex()
+                    .justify_center()
+                    .items_center()
+                    .occlude()
+                    .cursor_grab()
+                    .opacity(0.)
+                    .group_hover("chat-overlay", |style| style.opacity(1.))
+                    .child(div().w(px(46.)).h(px(4.)).rounded_full().bg(rgba(0xffffff55)))
+                    .tooltip(|_, cx| cx.new(|_| ui::Tooltip("Drag to move the chat".into())).into())
+                    .on_mouse_down(MouseButton::Left, cx.listener(begin(Mode::Move))),
+            );
         let handle = div()
             .id("overlay-resize")
             .absolute()

@@ -150,6 +150,13 @@ impl Settings {
         cx.notify();
     }
 
+    /// Electron opens Settings with an empty search each time.
+    pub fn clear_search(&mut self, cx: &mut Context<Self>) {
+        if let Some(search) = &self.search {
+            search.update(cx, |input, cx| input.clear(cx));
+        }
+    }
+
     pub fn set_update(&mut self, update: UpdateState, cx: &mut Context<Self>) {
         self.update = update;
         cx.notify();
