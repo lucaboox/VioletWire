@@ -1,0 +1,5 @@
+# The Visual C++ runtime is linked into the executable, so VioletWire starts
+# on a PC that has never had the redistributable installed (Electron ships
+# its own; the installer does not carry one).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

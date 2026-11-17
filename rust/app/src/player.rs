@@ -74,6 +74,8 @@ pub struct Player {
     pipeline: Option<Pipeline>,
     frame: Option<Arc<RenderImage>>,
     failure: Option<SharedString>,
+    /// Keeps the display on while video plays (see `update_awake`).
+    awake: Option<crate::power::KeepAwake>,
 }
 
 impl Player {
@@ -194,6 +196,7 @@ impl Player {
             pipeline: None,
             frame: None,
             failure: None,
+            awake: None,
         }
     }
 
@@ -209,6 +212,7 @@ impl Player {
                 Ok(gpu) => {
                     player.gpu = Some(gpu);
                     player.configure(preferences);
+                    player.update_awake();
                     return player;
                 }
                 // The CPU path is Twitch-only (Streamlink's CLI): a Kick
@@ -225,7 +229,20 @@ impl Player {
             Err(error) => player.failure = Some(error.to_string().into()),
         }
         player.configure(preferences);
+        player.update_awake();
         player
+    }
+
+    /// Holds the screen on exactly while playback runs and is not paused:
+    /// the GPU path drops `gpu` when its stream ends or fails, the CPU path
+    /// reports it through `ended`.
+    fn update_awake(&mut self) {
+        let playing = !self.paused
+            && (self.gpu.is_some()
+                || self.pipeline.as_ref().is_some_and(|pipeline| pipeline.ended().is_none()));
+        if playing != self.awake.is_some() {
+            self.awake = playing.then(crate::power::KeepAwake::new);
+        }
     }
 
     fn schedule_gpu_poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -295,6 +312,7 @@ impl Player {
                         Err(error) => self.failure = Some(error.to_string().into()),
                     }
                 }
+                self.update_awake();
                 cx.notify();
             }
         }
@@ -314,6 +332,7 @@ impl Player {
         if let Some(cpu) = &self.pipeline {
             cpu.set_paused(self.paused);
         }
+        self.update_awake();
         cx.notify();
     }
     pub fn set_presentation(
@@ -415,6 +434,7 @@ impl Player {
                 Err(error) => self.failure = Some(error.to_string().into()),
             }
         }
+        self.update_awake();
         cx.notify();
     }
 
@@ -1077,6 +1097,7 @@ impl Player {
         self.gpu = None;
         self.gpu_frame = None;
         self.pipeline = None;
+        self.awake = None;
         if let Some(frame) = self.frame.take() {
             cx.drop_image(frame, Some(window));
         }
@@ -1223,7 +1244,10 @@ impl Render for Player {
                 let _ = window.drop_image(previous);
             }
             match pipeline.ended() {
-                Some(reason) => status = Some(reason.into()),
+                Some(reason) => {
+                    status = Some(reason.into());
+                    self.awake = None;
+                }
                 None => {
                     if !pipeline.is_playing() {
                         starting = true;

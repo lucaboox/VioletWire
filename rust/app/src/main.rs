@@ -13,6 +13,7 @@ mod kick_web;
 mod playback;
 mod playback_link;
 mod player;
+mod power;
 mod preferences;
 mod root;
 mod session;

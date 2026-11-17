@@ -4,7 +4,7 @@ use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
-    sync::{OnceLock, mpsc},
+    sync::{Mutex, OnceLock, mpsc},
     time::Duration,
 };
 
@@ -171,7 +171,7 @@ impl Preferences {
     pub fn validate(&mut self) {
         self.chat_font_size = self.chat_font_size.clamp(14, 25);
         self.chat_history_limit = self.chat_history_limit.min(500);
-        self.chat_emote_size = self.chat_emote_size.clamp(20, 40);
+        self.chat_emote_size = self.chat_emote_size.clamp(18, 48);
         self.chat_sidebar_width = self.chat_sidebar_width.clamp(330, 600);
         self.chat_overlay_opacity = self.chat_overlay_opacity.clamp(20, 100);
         self.controls_hide_delay = self.controls_hide_delay.clamp(1000, 10000);
@@ -331,6 +331,13 @@ pub fn initialize(cx: &mut App) {
     crate::theme::set_oled(settings.oled_mode);
     crate::playback::relay::set_low_latency(settings.playback_latency_mode != "balanced");
     cx.set_global(settings);
+    // The writer waits for further changes; quitting inside that wait would
+    // otherwise lose the last one.
+    cx.on_app_quit(|_| {
+        flush();
+        async {}
+    })
+    .detach();
 }
 pub fn get(cx: &App) -> Preferences {
     cx.try_global::<Preferences>().cloned().unwrap_or_default()
@@ -353,29 +360,37 @@ pub fn update(cx: &mut App, edit: impl FnOnce(&mut Preferences)) {
     if redraw {
         cx.refresh_windows();
     }
-    static WRITER: OnceLock<mpsc::Sender<Preferences>> = OnceLock::new();
+    *PENDING.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(settings);
+    static WRITER: OnceLock<mpsc::Sender<()>> = OnceLock::new();
     let writer = WRITER.get_or_init(|| {
-        let (tx, rx) = mpsc::channel::<Preferences>();
+        let (tx, rx) = mpsc::channel::<()>();
         std::thread::spawn(move || {
-            while let Ok(mut settings) = rx.recv() {
-                while let Ok(newer) = rx.recv_timeout(Duration::from_millis(300)) {
-                    settings = newer;
-                }
-                if let Some(path) = directory() {
-                    let _ = (|| -> anyhow::Result<()> {
-                        std::fs::create_dir_all(&path)?;
-                        let temporary =
-                            path.join(format!("preferences.{}.tmp", std::process::id()));
-                        std::fs::write(&temporary, serde_json::to_vec_pretty(&settings)?)?;
-                        std::fs::rename(temporary, path.join("preferences.json"))?;
-                        Ok(())
-                    })();
-                }
+            while rx.recv().is_ok() {
+                while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
+                flush();
             }
         });
         tx
     });
-    let _ = writer.send(settings);
+    let _ = writer.send(());
+}
+/// The newest preferences not yet on disk. The lock is held while writing, so
+/// the writer thread and a flush at quit never share the temporary file, and a
+/// flush waits for a write already under way.
+static PENDING: Mutex<Option<Preferences>> = Mutex::new(None);
+/// Writes any pending preferences now.
+pub fn flush() {
+    let mut pending = PENDING.lock().unwrap_or_else(|poison| poison.into_inner());
+    let Some(settings) = pending.take() else { return };
+    if let Some(path) = directory() {
+        let _ = (|| -> anyhow::Result<()> {
+            std::fs::create_dir_all(&path)?;
+            let temporary = path.join(format!("preferences.{}.tmp", std::process::id()));
+            std::fs::write(&temporary, serde_json::to_vec_pretty(&settings)?)?;
+            std::fs::rename(temporary, path.join("preferences.json"))?;
+            Ok(())
+        })();
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -386,7 +401,7 @@ mod tests {
         prefs.validate();
         assert!(prefs.oled_mode);
         assert_eq!(prefs.chat_font_size, 25);
-        assert_eq!(prefs.chat_emote_size, 20);
+        assert_eq!(prefs.chat_emote_size, 18);
         assert_eq!(prefs.player_volume, 100);
         assert!(!serde_json::to_string(&prefs).unwrap().contains("unrelated"));
     }
