@@ -93,7 +93,7 @@ fn asset_url(url: &str) -> bool {
 /// Pre-releases count while this build is one, as electron-updater does.
 pub fn check() -> Result<Option<Update>> {
     let agent = agent();
-    let releases = get_json(&agent, &format!("https://api.github.com/repos/{REPOSITORY}/releases?per_page=15"), 2 * 1024 * 1024)?;
+    let releases = get_json(&agent, &format!("https://api.github.com/repos/{REPOSITORY}/releases?per_page=50"), 2 * 1024 * 1024)?;
     let prerelease_ok = current().contains('-');
     for release in releases.as_array().into_iter().flatten() {
         if release["draft"].as_bool().unwrap_or(true) || (release["prerelease"].as_bool().unwrap_or(false) && !prerelease_ok) {
@@ -172,6 +172,21 @@ pub fn install(installer: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Downloads a real release asset and checks the hash is enforced:
+    /// `cargo test -p violetwire -- --ignored downloads_and_checks`.
+    #[test]
+    #[ignore = "uses the network"]
+    fn downloads_and_checks_release_assets() {
+        let url = format!("https://github.com/{REPOSITORY}/releases/download/v0.3.4-alpha.25/latest.yml");
+        let bytes = agent().get(&url).call().unwrap().body_mut().read_to_vec().unwrap();
+        let sha256: String = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
+        let update = |sha256: String| Update { version: "0.0.0".into(), file: "latest.yml".into(), url: url.clone(), sha256 };
+        let path = download(&update(sha256)).expect("the right hash is accepted");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let error = download(&update("0".repeat(64))).expect_err("a wrong hash is refused");
+        assert!(error.to_string().contains("checksum"));
+    }
 
     #[test]
     fn compares_versions_like_semver() {
