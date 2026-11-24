@@ -4,6 +4,21 @@ All notable changes to VioletWire are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4-alpha.26] - 2026-11-24
+
+### Improvements
+
+- VioletWire is moving to a new version of the app, rebuilt as a native
+  Windows program rather than on Electron, and this update takes you there.
+  Shortly after it opens, VioletWire downloads the new version, checks the
+  download, installs it, removes this one and opens the new app. Windows may
+  ask for administrator permission to remove the old version; if you decline,
+  the new app is still installed and opens from then on.
+
+- Your settings, favorite channels, blocked chatters and multistream line-ups
+  carry over. You will need to sign in to Twitch, and to Kick if you use it,
+  once more in the new app.
+
 ## [0.3.4-alpha.25] - 2026-11-12
 
 ### Fixes
