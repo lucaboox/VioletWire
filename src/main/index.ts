@@ -41,6 +41,7 @@ import { PlaybackSessionService } from "./playback-session";
 import { SevenTvService } from "./seven-tv-service";
 import { ThirdPartyEmoteService } from "./third-party-emote-service";
 import { TwitchChatService } from "./twitch-chat-service";
+import { RustMigrationService } from "./rust-migration";
 import { UpdateService } from "./update-service";
 import { GitHubReleaseNotesService } from "./github-release-notes";
 import { LinkPreviewService } from "./link-preview-service";
@@ -1570,8 +1571,29 @@ handleTrusted("preferences:update", async (_event, patch: unknown) => {
   return preferences;
 });
 
+/**
+ * Installed Windows builds move to the Rust version of VioletWire. Development
+ * runs, and anyone who sets VIOLETWIRE_NO_RUST_MIGRATION, stay on this one.
+ */
+const rustMigration =
+  app.isPackaged &&
+  process.platform === "win32" &&
+  process.arch === "x64" &&
+  !process.env.VIOLETWIRE_NO_RUST_MIGRATION
+    ? new RustMigrationService({
+        temporaryDirectory: path.join(app.getPath("temp"), "VioletWireMigration"),
+        ownExecutable: process.execPath,
+      })
+    : null;
+
 app.whenReady().then(async () => {
   app.setAppUserModelId("app.violetwire.viewer");
+  // Already moved (this install could not be removed then): open the Rust
+  // build rather than this one.
+  if (rustMigration && (await rustMigration.openInstalledRust().catch(() => false))) {
+    app.quit();
+    return;
+  }
   // VioletWire provides its own application UI. Removing Electron's default
   // menu also prevents Windows from revealing File/Edit/View when Alt is used
   // for emote-picker shortcuts.
@@ -1597,6 +1619,14 @@ app.whenReady().then(async () => {
   }
   await createWindow();
   updateService.initialize();
+  // The Rust installer takes over from here: it closes and removes this
+  // install, then opens the new app.
+  void rustMigration
+    ?.installRust()
+    .then((started) => {
+      if (started) app.quit();
+    })
+    .catch(() => undefined);
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) await createWindow();
   });
