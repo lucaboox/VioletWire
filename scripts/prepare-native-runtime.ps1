@@ -93,7 +93,11 @@ $streamlinkStaging = Join-Path $nativeDirectory ".streamlink-staging"
 Remove-WorkspaceDirectory $streamlinkStaging
 Remove-WorkspaceDirectory $streamlinkDirectory
 New-Item -ItemType Directory -Force -Path $streamlinkStaging, $streamlinkDirectory | Out-Null
-Expand-Archive -LiteralPath $streamlinkArchive -DestinationPath $streamlinkStaging -Force
+# .NET's own unzip rather than Expand-Archive: started from PowerShell 7 (as
+# CI does through npm), Windows PowerShell can load 7's Archive module and
+# fail with "Cannot find an overload for ExtractToDirectory".
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($streamlinkArchive, $streamlinkStaging)
 $streamlinkRoot = Get-ChildItem -LiteralPath $streamlinkStaging -Directory | Select-Object -First 1
 if (-not $streamlinkRoot) {
   throw "The Streamlink portable archive did not contain its expected root directory."
